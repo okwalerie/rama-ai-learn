@@ -92,6 +92,31 @@ install_clojure_lsp() {
   rm -f "$installer"
 }
 
+install_claude_code() {
+  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+    local installer
+    installer="$(mktemp)"
+    curl -fsSL https://deb.nodesource.com/setup_22.x -o "$installer"
+    as_root bash "$installer"
+    as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs
+    as_root rm -rf /var/lib/apt/lists/*
+    rm -f "$installer"
+  fi
+  if command -v claude >/dev/null 2>&1; then
+    echo 'Claude Code already installed.'
+  else
+    npm install --global @anthropic-ai/claude-code
+  fi
+}
+
+install_codex() {
+  if command -v codex >/dev/null 2>&1; then
+    echo 'Codex CLI already installed.'
+  else
+    npm install --global @openai/codex
+  fi
+}
+
 install_nrepl_tools() {
   export PATH="${HOME}/.local/bin:${PATH}"
   mkdir -p "${HOME}/.local/bin"
@@ -128,6 +153,8 @@ step 'Install Clojure CLI' install_clojure_cli
 step 'Install Babashka' install_babashka
 step 'Install clj-kondo' install_clj_kondo
 step 'Install clojure-lsp' install_clojure_lsp
+step 'Install Node.js and Claude Code' install_claude_code
+step 'Install Codex CLI' install_codex
 step 'Install Clojure nREPL helpers' install_nrepl_tools
 step 'Prefetch Maven and Git dependencies' prefetch_deps
 
