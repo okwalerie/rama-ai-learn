@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+log_dir="${HOME}/.cache/amp/logs"
+mkdir -p "$log_dir"
+exec > >(tee -a "$log_dir/setup.log") 2>&1
+
+step() {
+  local name="$1"
+  shift
+  printf '\n==> %s\n' "$name"
+  local start=$SECONDS
+  "$@"
+  printf '<== %s (%ss)\n' "$name" "$((SECONDS - start))"
+}
+
+as_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  else
+    sudo -n "$@"
+  fi
+}
+
+install_system_packages() {
+  local packages=()
+  local package
+  for package in curl git jq nano rlwrap unzip openjdk-17-jdk-headless; do
+    if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'install ok installed'; then
+      packages+=("$package")
+    fi
+  done
+  if [ "${#packages[@]}" -eq 0 ]; then
+    echo 'System packages already installed.'
+    return
+  fi
+  as_root apt-get update
+  as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
+  as_root rm -rf /var/lib/apt/lists/*
+}
+
+install_clojure_cli() {
+  if command -v clojure >/dev/null 2>&1 && clojure -Sdescribe >/dev/null 2>&1; then
+    echo 'Clojure CLI already installed.'
+    return
+  fi
+  local installer
+  installer="$(mktemp)"
+  curl -fsSL https://download.clojure.org/install/linux-install-1.12.0.1530.sh -o "$installer"
+  chmod +x "$installer"
+  as_root "$installer"
+  rm -f "$installer"
+}
+
+install_babashka() {
+  if command -v bb >/dev/null 2>&1; then
+    echo 'Babashka already installed.'
+    return
+  fi
+  local installer
+  installer="$(mktemp)"
+  curl -fsSL https://raw.githubusercontent.com/babashka/babashka/master/install -o "$installer"
+  chmod +x "$installer"
+  as_root "$installer"
+  rm -f "$installer"
+}
+
+install_clj_kondo() {
+  if command -v clj-kondo >/dev/null 2>&1; then
+    echo 'clj-kondo already installed.'
+    return
+  fi
+  local installer
+  installer="$(mktemp)"
+  curl -fsSL https://raw.githubusercontent.com/clj-kondo/clj-kondo/master/script/install-clj-kondo -o "$installer"
+  chmod +x "$installer"
+  (cd "$(dirname "$installer")" && as_root "$installer")
+  rm -f "$installer"
+}
+
+install_clojure_lsp() {
+  if command -v clojure-lsp >/dev/null 2>&1; then
+    echo 'clojure-lsp already installed.'
+    return
+  fi
+  local installer
+  installer="$(mktemp)"
+  curl -fsSL https://raw.githubusercontent.com/clojure-lsp/clojure-lsp/master/install -o "$installer"
+  chmod +x "$installer"
+  as_root "$installer"
+  rm -f "$installer"
+}
+
+install_nrepl_tools() {
+  export PATH="${HOME}/.local/bin:${PATH}"
+  mkdir -p "${HOME}/.local/bin"
+  if ! command -v bbin >/dev/null 2>&1; then
+    curl -fsSL https://raw.githubusercontent.com/babashka/bbin/v0.2.5/bbin -o "${HOME}/.local/bin/bbin"
+    chmod +x "${HOME}/.local/bin/bbin"
+  fi
+  if ! command -v clj-nrepl-eval >/dev/null 2>&1; then
+    bbin install https://github.com/bhauman/clojure-mcp-light.git \
+      --as clj-nrepl-eval \
+      --main-opts '["-m" "clojure-mcp-light.nrepl-eval"]'
+  fi
+  if ! command -v clj-paren-repair-claude-hook >/dev/null 2>&1; then
+    bbin install https://github.com/bhauman/clojure-mcp-light.git \
+      --as clj-paren-repair-claude-hook \
+      --main-opts '["-m" "clojure-mcp-light.hook"]'
+  fi
+}
+
+prefetch_deps() {
+  cd "$repo_root"
+  clojure -P
+  clojure -P -A:nrepl
+  while IFS= read -r -d '' deps_file; do
+    local challenge_dir
+    challenge_dir="$(dirname "$deps_file")"
+    echo "Preparing dependencies in ${challenge_dir#"$repo_root"/}"
+    (cd "$challenge_dir" && clojure -P -A:test)
+  done < <(find "$repo_root/challenges" -name deps.edn -print0 | sort -z)
+}
+
+step 'Install system packages' install_system_packages
+step 'Install Clojure CLI' install_clojure_cli
+step 'Install Babashka' install_babashka
+step 'Install clj-kondo' install_clj_kondo
+step 'Install clojure-lsp' install_clojure_lsp
+step 'Install Clojure nREPL helpers' install_nrepl_tools
+step 'Prefetch Maven and Git dependencies' prefetch_deps
+
+echo
+echo 'Orb setup complete.'
