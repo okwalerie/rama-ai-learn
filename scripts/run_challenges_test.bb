@@ -1,6 +1,7 @@
 #!/usr/bin/env bb
 
 (require '[clojure.test :refer [deftest testing is run-tests]])
+(require '[cheshire.core :as json])
 
 ;; Load the runner script to get access to its functions
 (load-file "scripts/run_challenges.bb")
@@ -147,6 +148,170 @@
                 :cache-creation-tokens 0
                 :cache-read-tokens 120}
                (parse-token-usage output)))))))
+
+(deftest normalize-agent-output-test
+  ;; Codex's native event stream is normalized before persistence so the
+  ;; transcript analyzer can consume one stable message shape. The source
+  ;; event and runner-owned timing remain available for auditability.
+  (let [output (str
+                "{\"type\":\"thread.started\",\"thread_id\":\"t-1\"}\n"
+                "{\"type\":\"item.started\",\"item\":{\"id\":\"c-1\",\"type\":\"command_execution\",\"command\":\"cat PLAN.md\",\"status\":\"in_progress\"}}\n"
+                "{\"type\":\"item.completed\",\"item\":{\"id\":\"m-1\",\"type\":\"agent_message\",\"text\":\"PHASE_VALIDATION:pass\"}}\n"
+                "{\"type\":\"item.completed\",\"item\":{\"id\":\"c-1\",\"type\":\"command_execution\",\"command\":\"cat PLAN.md\",\"aggregated_output\":\"plan\",\"exit_code\":0,\"status\":\"completed\"}}\n"
+                "{\"type\":\"item.completed\",\"item\":{\"id\":\"f-1\",\"type\":\"file_change\",\"changes\":[{\"path\":\"PLAN.md\",\"kind\":\"add\"}],\"status\":\"completed\"}}\n"
+                "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":40,\"output_tokens\":50}}\n")
+        invocation {:started-at "2026-09-16T10:00:00Z"
+                    :finished-at "2026-09-16T10:00:12Z"
+                    :duration-s 12
+                    :exit 0
+                    :timed-out? false}
+        transcript (normalize-codex-output output invocation)
+        events (mapv #(json/parse-string % true)
+                     (clojure.string/split-lines transcript))
+        messages (filter #(contains? #{"assistant" "user"} (:type %)) events)
+        tool-uses (mapcat #(filter (fn [block] (= "tool_use" (:type block)))
+                                   (get-in % [:message :content] []))
+                          messages)
+        tool-results (mapcat #(filter (fn [block] (= "tool_result" (:type block)))
+                                      (get-in % [:message :content] []))
+                             messages)
+        result (first (filter #(= "result" (:type %)) events))]
+    (testing "Claude output is already canonical"
+      (is (= "claude-output"
+             (normalize-claude-output "claude-output" invocation))))
+    (testing "Codex messages are represented in the canonical shape"
+      (is (some #(= "PHASE_VALIDATION:pass"
+                    (get-in % [:message :content 0 :text])) messages))
+      (is (some #(= "cat PLAN.md" (get-in % [:input :command])) tool-uses))
+      (is (some #(= "plan" (:content %)) tool-results))
+      (is (some #(= "FileChange" (:name %)) tool-uses)))
+    (testing "completed events do not duplicate their started command"
+      (is (= 1 (count (filter #(= "cat PLAN.md" (get-in % [:input :command]))
+                              tool-uses))))
+    (testing "runner timing, exit, and usage are explicit"
+      (is (= "2026-09-16T10:00:00Z" (:started_at (first events))))
+      (is (= "2026-09-16T10:00:12Z" (:finished_at (last events))))
+      (is (= 12000 (:duration_ms result)))
+      (is (= 100 (get-in result [:usage :input_tokens])))
+      (is (= 40 (get-in result [:usage :cached_input_tokens])))))))
+
+(deftest normalized-summary-analysis-test
+  ;; Exercise the Python consumer as well as the adapter contract.
+  (let [invocation {:started-at "2026-09-16T10:00:00Z"
+                    :finished-at "2026-09-16T10:00:12Z"
+                    :duration-s 12 :exit 0 :timed-out? false}
+        message (fn [text] {:type "item.completed"
+                            :item {:id text :type "agent_message" :text text}})
+        completed {:type "turn.completed" :usage {:input_tokens 100 :output_tokens 50}}
+        failure {:type "turn.failed" :error {:message "unique-provider-failure-detail"}}
+        normalize (fn [events overrides]
+                    (mapv #(json/parse-string % true)
+                          (str/split-lines
+                           (normalize-codex-output
+                            (str/join "\n" (map json/generate-string events))
+                            (merge invocation overrides)))))
+        result-of (fn [events] (first (filter #(= "result" (:type %)) events)))
+        summary (fn [events]
+                  (let [proc @(p/process
+                               ["python3" "-c"
+                                (str "import json, runpy, sys; "
+                                     "runpy.run_path('scripts/analyze-latest-transcript.py')"
+                                     "['cmd_summary'](json.load(sys.stdin), [])")]
+                               {:in (json/generate-string events) :out :string :err :string})]
+                    (is (= 0 (:exit proc)) (:err proc))
+                    (:out proc)))
+        success (normalize [(message "progress") completed
+                            (message "PHASE_VALIDATION:pass") completed] {})]
+    (testing "final text, turn count, and lifecycle status reach the analyzer"
+      (let [output (summary success)]
+        (is (str/includes? output "Result: PHASE_VALIDATION:pass"))
+        (is (str/includes? output "Turns: 2"))
+        (is (str/includes? output "Stop: turn.completed"))
+        (is (str/includes? output "Cost: N/A"))))
+    (testing "turn failure retains the original diagnostic and surfaces it in summary"
+      (doseq [exit [0 1]]
+        (let [events (normalize [(message (apply str (repeat 400 "x"))) failure]
+                                {:exit exit})]
+          (is (some #(= failure (:source_event %)) events))
+          (is (true? (:is_error (result-of events))))
+          (let [output (summary events)]
+            (is (str/includes? output "Result: unique-provider-failure-detail"))
+            (is (str/includes? output "Stop: error_during_execution"))))))
+    (testing "timeout preserves partial text and does not invent a turn count"
+      (let [output (summary (normalize [(message "partial response")]
+                                       {:exit 1 :timed-out? true}))]
+        (is (str/includes? output "Result: partial response"))
+        (is (str/includes? output "Turns: N/A"))
+        (is (str/includes? output "Stop: timeout"))))
+    (testing "unavailable summary fields are explicit"
+      (let [output (summary [{:type "result"}])]
+        (doseq [field ["Cost" "Turns" "Stop" "Result"]]
+          (is (str/includes? output (str field ": N/A"))))))
+    (testing "reported zero cost and turn count remain valid values"
+      (let [output (summary [{:type "result" :total_cost_usd 0 :num_turns 0
+                             :stop_reason "end_turn" :result "done"}])]
+        (is (str/includes? output "Cost: $0.00"))
+        (is (str/includes? output "Turns: 0"))
+        (is (str/includes? output "Stop: end_turn"))
+        (is (str/includes? output "Result: done"))))))
+
+(deftest normalize-malformed-codex-output-test
+  (let [transcript (normalize-codex-output
+                    "not-json\n"
+                    {:started-at "2026-09-16T10:00:00Z"
+                     :finished-at "2026-09-16T10:00:01Z"
+                     :duration-s 1
+                     :exit 1
+                     :timed-out? false})
+        events (mapv #(json/parse-string % true)
+                     (clojure.string/split-lines transcript))]
+    (is (= "not-json" (:text (second events))))
+    (is (= "error_during_execution"
+           (:subtype (first (filter #(= "result" (:type %)) events)))))))
+
+(deftest agent-adapter-contract-test
+  (testing "Claude and Codex expose the same adapter contract"
+    (doseq [agent [:claude :codex]
+            key [:phase-cmd :prompt-cmd :score-text :normalize-output :parse-token-usage
+                 :parse-tool-uses :parse-skills-used :parse-skill-refs-used :pricing]]
+      (is (fn? (get-in agent-adapters [agent key]))
+          (str (name agent) " adapter must provide " (name key)))))
+  (testing "pricing stays provider-specific behind the adapter"
+    (is (= {:input 2.00 :output 10.00 :cache-write 2.50 :cache-read 0.20}
+           ((:pricing (:claude agent-adapters)) "sonnet")))
+    (is (= {:input 10.00 :output 50.00 :cache-write 12.50 :cache-read 1.00}
+           ((:pricing (:codex agent-adapters)) "gpt-6-astra"))))
+  (testing "Codex scoring text is extracted before score parsing"
+    (is (= "ALIGNMENT_SCORE:4\nclear"
+           (codex-score-text
+            "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"ALIGNMENT_SCORE:4\\nclear\"}}\n")))))
+
+(deftest run-phase-saves-canonical-codex-transcript-test
+  ;; Exercise the actual run-phase! save boundary, not just the pure
+  ;; normalizer. This is the enforcement surface for future Codex runs.
+  (let [tmp-root (str (babashka.fs/create-temp-dir))
+        project-dir (str (babashka.fs/path tmp-root "project"))
+        implementation-dir (babashka.fs/path project-dir "implementations" "ch")
+        codex-lines ["{\"type\":\"item.completed\",\"item\":{\"id\":\"m-1\",\"type\":\"agent_message\",\"text\":\"done\"}}"
+                     "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}"]
+        shell-script (str "printf '%s\\n' "
+                          (clojure.string/join " " (map #(str "'" % "'") codex-lines)))]
+    (babashka.fs/create-dirs implementation-dir)
+    (try
+      (let [result (binding [*outer-timeout-s* 10]
+                     (run-phase! {:phase-cmd (fn [& _] ["bash" "-c" shell-script])}
+                                  "ch" 0 1 nil project-dir "codex" nil nil
+                                  (java.time.LocalDateTime/now)
+                                  (System/currentTimeMillis)))
+            saved (mapv #(json/parse-string % true)
+                        (clojure.string/split-lines
+                         (slurp (:transcript-path result))))]
+        (is (= 0 (:exit result)))
+        (is (= "run_metadata" (:type (first saved))))
+        (is (some #(= "done" (get-in % [:message :content 0 :text])) saved))
+        (is (some #(= "result" (:type %)) saved)))
+      (finally
+        (babashka.fs/delete-tree tmp-root)))))
 
 (deftest model-pricing-test
   (testing "model->pricing"

@@ -197,6 +197,12 @@
      model     (into ["--model" model])
      reasoning (into ["--effort" reasoning]))))
 
+(defn claude-prompt-cmd
+  "Build a non-phase Claude command for alignment scoring."
+  [_project-root model _prompt]
+  (cond-> ["claude" "--print"]
+    model (into ["--model" model])))
+
 (defn codex-phase-cmd
   "Build the CLI command to invoke Codex for a single phase of a challenge.
   Note: requires a $challenge-phase command in the codex skills setup."
@@ -210,9 +216,12 @@
      true      (conj (str "$challenge-phase "
                           (phase-invocation-args challenge-name phase-id subsystem))))))
 
-(def agents
-  {:claude {:phase-cmd claude-phase-cmd}
-   :codex  {:phase-cmd codex-phase-cmd}})
+(defn codex-prompt-cmd
+  "Build a non-phase Codex command for alignment scoring."
+  [project-root model _prompt]
+  (cond-> ["codex" "exec" "--json" "--dangerously-bypass-approvals-and-sandbox"
+           "-C" project-root]
+    model (into ["--model" model])))
 
 ;;; Pricing
 
@@ -239,6 +248,12 @@
     (some (fn [[k v]] (when (str/includes? (str/lower-case model) k) v))
           (concat claude-model-pricing codex-model-pricing))))
 
+(defn- pricing-from
+  [pricing model]
+  (when model
+    (some (fn [[k v]] (when (str/includes? (str/lower-case model) k) v))
+          pricing)))
+
 (defn compute-cost
   "Calculate USD cost from token usage and a pricing map.
   Returns nil when pricing is unavailable."
@@ -253,6 +268,194 @@
   "Format a cost value as a dollar string, or \"N/A\" when nil."
   [cost]
   (if cost (format "$%.4f" cost) "N/A"))
+
+;;; Transcript normalization
+
+(defn- parse-jsonl-line
+  "Parse one JSONL line, retaining malformed output for the transcript."
+  [line]
+  (try
+    {:event (json/parse-string line true)}
+    (catch Exception _
+      {:raw line})))
+
+(defn- canonical-message
+  "Build the message shape consumed by transcript analysis."
+  [timestamp role content source-event]
+  (cond-> {:type role
+           :timestamp timestamp
+           :message {:role role
+                     :content content}}
+    source-event (assoc :source_event source-event)))
+
+(defn- canonical-tool-use
+  [timestamp name input source-event]
+  (canonical-message timestamp "assistant"
+                    [{:type "tool_use" :name name :input input}]
+                    source-event))
+
+(defn- canonical-tool-result
+  [timestamp output is-error source-event]
+  (canonical-message timestamp "user"
+                    [{:type "tool_result"
+                      :content (or output "")
+                      :is_error (boolean is-error)}]
+                    source-event))
+
+(defn- codex-item->canonical
+  "Convert one Codex item event to analyzer-compatible message events.
+
+  Codex reports file changes as paths and kinds, not file contents. Preserve
+  those facts as a FileChange tool event; the accompanying command event is
+  retained separately when Codex provides it."
+  [event timestamp completed-ids]
+  (let [item (get event :item)
+        item-id (:id item)
+        item-type (:type item)
+        completed? (= "item.completed" (:type event))]
+    (when (and (map? item)
+               (or completed?
+                   (not (contains? completed-ids item-id))))
+      (case item-type
+        "agent_message"
+        (when-not (str/blank? (:text item))
+          [(canonical-message timestamp "assistant"
+                              [{:type "text" :text (:text item)}]
+                              event)])
+
+        "reasoning"
+        (let [text (or (:text item) (:summary item))]
+          (when text
+            [(canonical-message timestamp "assistant"
+                                [{:type "thinking"
+                                  :thinking (if (string? text) text (pr-str text))}]
+                                event)]))
+
+        "command_execution"
+        (let [command (:command item)
+              output (:aggregated_output item)
+              exit-code (:exit_code item)
+              status (:status item)
+              is-error (or (= "failed" status)
+                           (and (number? exit-code) (not= 0 exit-code)))]
+          (cond-> []
+            command (conj (canonical-tool-use timestamp "Bash"
+                                               {:command command}
+                                               event))
+            (or completed? output is-error)
+            (conj (canonical-tool-result timestamp output is-error event))))
+
+        "file_change"
+        [(canonical-tool-use timestamp "FileChange"
+                             {:changes (:changes item)
+                              :status (:status item)}
+                             event)]
+
+        ;; Keep lifecycle and future Codex event types auditable without
+        ;; pretending they are tool calls understood by the analyzer.
+        [{:type "codex_event"
+          :timestamp timestamp
+          :source_event event}]))))
+
+(defn- codex-usage
+  [events]
+  (reduce
+   (fn [acc event]
+     (if (= "turn.completed" (:type event))
+       (let [usage (:usage event)]
+         (-> acc
+             (update :input_tokens + (or (:input_tokens usage) 0))
+             (update :cached_input_tokens + (or (:cached_input_tokens usage) 0))
+             (update :output_tokens + (or (:output_tokens usage) 0))))
+       acc))
+   {:input_tokens 0 :cached_input_tokens 0 :output_tokens 0}
+   events))
+
+(defn normalize-claude-output
+  "Claude's stream-json output already uses the canonical transcript shape."
+  [output _invocation]
+  output)
+
+(defn normalize-codex-output
+  "Normalize Codex JSONL at the runner boundary before saving it.
+
+  Codex's native events are converted to assistant/user messages, while
+  runner-owned timing, exit, and timeout metadata is added explicitly. The
+  original Codex event remains under :source_event for auditability."
+  [output {:keys [started-at finished-at duration-s exit timed-out?]}]
+  (let [lines          (remove str/blank? (str/split-lines (or output "")))
+          parsed         (mapv parse-jsonl-line lines)
+          events         (vec (keep :event parsed))
+          completed-ids  (into #{} (keep (fn [event]
+                                           (when (= "item.completed" (:type event))
+                                             (get-in event [:item :id])))
+                                         events))
+          translated     (mapcat (fn [{:keys [event raw]}]
+                                   (if event
+                                     (cond
+                                       (= "item.completed" (:type event))
+                                       (codex-item->canonical event started-at completed-ids)
+
+                                       (= "item.started" (:type event))
+                                       (codex-item->canonical event started-at completed-ids)
+
+                                       ;; turn.completed is represented by the
+                                       ;; single canonical result below so that
+                                       ;; multi-turn usage is aggregated once.
+                                       (= "turn.completed" (:type event))
+                                       []
+
+                                       :else
+                                       [{:type "codex_event"
+                                         :timestamp started-at
+                                         :source_event event}])
+                                     [{:type "raw_output"
+                                       :timestamp started-at
+                                       :text raw}]))
+                                 parsed)
+          terminal-turns (filter #(contains? #{"turn.completed" "turn.failed"}
+                                              (:type %)) events)
+          errors         (keep #(when (= "turn.failed" (:type %))
+                                  (get-in % [:error :message])) events)
+          final-text     (last (keep #(when (and (= "item.completed" (:type %))
+                                                 (= "agent_message" (get-in % [:item :type])))
+                                        (get-in % [:item :text])) events))
+          failed?        (or timed-out? (not= 0 exit)
+                             (some #(= "turn.failed" (:type %)) terminal-turns))
+          result         {:type "result"
+                          :timestamp finished-at
+                          :subtype (if failed? "error_during_execution" "success")
+                          :is_error (boolean failed?)
+                          :duration_ms (* 1000 (or duration-s 0))
+                          :exit exit
+                          :timed_out (boolean timed-out?)
+                          :usage (codex-usage events)
+                          ;; The event stream does not report billed cost or a
+                          ;; model stop reason. Use observed lifecycle status.
+                          :total_cost_usd nil
+                          :num_turns (when (seq terminal-turns) (count terminal-turns))
+                          :stop_reason (cond
+                                         timed-out? "timeout"
+                                         failed? "error_during_execution"
+                                         (seq terminal-turns) "turn.completed")
+                          :result (str/join "\n" (remove str/blank? (concat errors [final-text])))
+                          :source "codex-runner"}
+          metadata       {:type "run_metadata"
+                          :timestamp finished-at
+                          :started_at started-at
+                          :finished_at finished-at
+                          :duration_s (or duration-s 0)
+                          :exit exit
+                          :timed_out (boolean timed-out?)}]
+      (str (str/join "\n"
+                     (map json/generate-string
+                          (concat [{:type "run_metadata"
+                                    :timestamp started-at
+                                    :event "started"
+                                    :started_at started-at}]
+                                  translated
+                                  [result metadata])))
+           "\n")))
 
 ;;; Encryption
 
@@ -321,125 +524,144 @@
 
 (def score-keys [:alignment :test-alignment])
 
-(defn parse-skills-used
-  "Extract distinct skill names from agent NDJSON output.
-  Handles Claude (Skill tool_use in assistant messages) and
-  Codex (command_execution reading SKILL.md files from skills directories)."
+(defn- parsed-json-lines
   [output]
-  (let [skills (reduce
-                (fn [acc line]
-                  (try
-                    (let [parsed (json/parse-string line true)]
-                      (cond
-                        ;; Claude: assistant event with Skill tool_use
-                        (= "assistant" (:type parsed))
-                        (reduce (fn [acc2 block]
-                                  (if (and (= "tool_use" (:type block))
-                                           (= "Skill" (:name block)))
-                                    (conj acc2 (get-in block [:input :skill]))
-                                    acc2))
-                                acc
-                                (get-in parsed [:message :content] []))
+  (keep (fn [line]
+          (try
+            (json/parse-string line true)
+            (catch Exception _ nil)))
+        (remove str/blank? (str/split-lines (or output "")))))
 
-                        ;; Codex: command_execution reading a SKILL.md file
-                        (and (= "item.started" (:type parsed))
-                             (= "command_execution" (get-in parsed [:item :type])))
-                        (let [cmd (get-in parsed [:item :command] "")]
-                          (if-let [matches (re-seq #"(?:skills|plugins)/(?:[^/]+/skills/)?([^/]+)/SKILL\.md" cmd)]
-                            (into acc (map second matches))
-                            acc))
+(defn claude-parse-skills-used
+  "Extract Skill tool calls from Claude assistant messages."
+  [output]
+  (->> (parsed-json-lines output)
+       (filter #(= "assistant" (:type %)))
+       (mapcat #(get-in % [:message :content] []))
+       (filter #(and (= "tool_use" (:type %))
+                     (= "Skill" (:name %))))
+       (keep #(get-in % [:input :skill]))
+       set
+       sort
+       vec))
 
-                        :else acc))
-                    (catch Exception _ acc)))
-                #{}
-                (remove str/blank? (str/split-lines (or output ""))))]
-    (vec (sort skills))))
+(defn codex-parse-skills-used
+  "Extract skills referenced by Codex command_execution events."
+  [output]
+  (->> (parsed-json-lines output)
+       (filter #(and (= "item.started" (:type %))
+                     (= "command_execution" (get-in % [:item :type]))))
+       (map #(get-in % [:item :command] ""))
+       (mapcat #(re-seq #"(?:skills|plugins)/(?:[^/]+/skills/)?([^/]+)/SKILL\.md" %))
+       (map second)
+       set
+       sort
+       vec))
+
+(defn parse-skills-used
+  "Compatibility helper that recognizes both supported transcript formats."
+  [output]
+  (vec (sort (into #{} (concat (claude-parse-skills-used output)
+                               (codex-parse-skills-used output))))))
+
+(defn claude-parse-skill-refs-used
+  "Extract reference filenames from Claude tool-use inputs."
+  [output]
+  (->> (parsed-json-lines output)
+       (filter #(= "assistant" (:type %)))
+       (mapcat #(get-in % [:message :content] []))
+       (filter #(= "tool_use" (:type %)))
+       (map #(json/generate-string (or (:input %) {})))
+       (mapcat #(re-seq #"references/([a-z_-]+\.md)" %))
+       (map second)
+       set
+       sort
+       vec))
+
+(defn codex-parse-skill-refs-used
+  "Extract reference filenames from Codex command_execution events."
+  [output]
+  (->> (parsed-json-lines output)
+       (filter #(and (= "item.started" (:type %))
+                     (= "command_execution" (get-in % [:item :type]))))
+       (map #(get-in % [:item :command] ""))
+       (mapcat #(re-seq #"references/([a-z_-]+\.md)" %))
+       (map second)
+       set
+       sort
+       vec))
 
 (defn parse-skill-refs-used
-  "Extract distinct skill reference filenames accessed by the agent.
-  Detects Read/Glob/Grep tool calls whose paths contain references/*.md,
-  and Codex command_execution events reading reference files."
+  "Compatibility helper that recognizes both supported transcript formats."
   [output]
-  (let [refs (reduce
-              (fn [acc line]
-                (try
-                  (let [parsed (json/parse-string line true)]
-                    (cond
-                      ;; Claude: assistant event with tool_use blocks
-                      (= "assistant" (:type parsed))
-                      (reduce (fn [acc2 block]
-                                (if (= "tool_use" (:type block))
-                                  (let [input (json/generate-string (or (:input block) {}))
-                                        matches (re-seq #"references/([a-z_-]+\.md)" input)]
-                                    (into acc2 (map second matches)))
-                                  acc2))
-                              acc
-                              (get-in parsed [:message :content] []))
+  (vec (sort (into #{} (concat (claude-parse-skill-refs-used output)
+                               (codex-parse-skill-refs-used output))))))
 
-                      ;; Codex: command_execution reading a reference file
-                      (and (= "item.started" (:type parsed))
-                           (= "command_execution" (get-in parsed [:item :type])))
-                      (let [cmd (get-in parsed [:item :command] "")]
-                        (if-let [matches (re-seq #"references/([a-z_-]+\.md)" cmd)]
-                          (into acc (map second matches))
-                          acc))
+(defn claude-parse-tool-uses
+  "Count tool_use blocks in Claude assistant messages."
+  [output]
+  (->> (parsed-json-lines output)
+       (filter #(= "assistant" (:type %)))
+       (mapcat #(get-in % [:message :content] []))
+       (filter #(= "tool_use" (:type %)))
+       count))
 
-                      :else acc))
-                  (catch Exception _ acc)))
-              #{}
-              (remove str/blank? (str/split-lines (or output ""))))]
-    (vec (sort refs))))
+(defn codex-parse-tool-uses
+  "Count started command_execution items in Codex events."
+  [output]
+  (->> (parsed-json-lines output)
+       (filter #(and (= "item.started" (:type %))
+                     (= "command_execution" (get-in % [:item :type]))))
+       count))
 
 (defn parse-tool-uses
-  "Count tool invocations from agent NDJSON output.
-  Handles Claude (assistant events with tool_use content blocks) and
-  Codex (item.started with item.type=command_execution) event formats."
+  "Compatibility helper that recognizes both supported transcript formats."
   [output]
-  (reduce
-   (fn [acc line]
-     (try
-       (let [parsed (json/parse-string line true)]
-         (cond
-           ;; Claude: assistant event with tool_use items in message.content
-           (= "assistant" (:type parsed))
-           (+ acc (count (filter #(= "tool_use" (:type %))
-                                 (get-in parsed [:message :content] []))))
-           ;; Codex: item.started with command_execution item
-           (and (= "item.started" (:type parsed))
-                (= "command_execution" (get-in parsed [:item :type])))
-           (inc acc)
-           :else acc))
-       (catch Exception _ acc)))
-   0
-   (remove str/blank? (str/split-lines (or output "")))))
+  (+ (claude-parse-tool-uses output)
+     (codex-parse-tool-uses output)))
 
-(defn extract-usage-from-result
-  "Extract token usage from a parsed JSON event map.
-  Handles Claude's result-type events and Codex's turn.completed events.
-  Returns a usage map or nil if the event has no usage."
+(defn claude-score-text
+  "Claude scoring output is plain text."
+  [output]
+  output)
+
+(defn codex-score-text
+  "Extract final agent text from Codex JSONL scoring output."
+  [output]
+  (->> (parsed-json-lines output)
+       (filter #(and (= "item.completed" (:type %))
+                     (= "agent_message" (get-in % [:item :type]))))
+       (keep #(get-in % [:item :text]))
+       (str/join "\n")))
+
+(defn claude-extract-usage-from-result
+  "Extract usage from one Claude result event."
   [parsed]
-  (when-let [usage (:usage parsed)]
-    (condp = (:type parsed)
-      ;; Claude: {"type":"result","usage":{"input_tokens":...,"cache_creation_input_tokens":...,...}}
-      "result"
+  (when (and (= "result" (:type parsed)) (:usage parsed))
+    (let [usage (:usage parsed)]
       {:input-tokens          (get usage :input_tokens 0)
        :output-tokens         (get usage :output_tokens 0)
        :cache-creation-tokens (get usage :cache_creation_input_tokens 0)
-       :cache-read-tokens     (get usage :cache_read_input_tokens 0)}
-      ;; Codex: {"type":"turn.completed","usage":{"input_tokens":...,"cached_input_tokens":...,...}}
-      "turn.completed"
+       :cache-read-tokens     (get usage :cache_read_input_tokens 0)})))
+
+(defn codex-extract-usage-from-result
+  "Extract usage from one Codex turn.completed event."
+  [parsed]
+  (when (and (= "turn.completed" (:type parsed)) (:usage parsed))
+    (let [usage (:usage parsed)]
       {:input-tokens          (get usage :input_tokens 0)
        :output-tokens         (get usage :output_tokens 0)
        :cache-creation-tokens 0
-       :cache-read-tokens     (get usage :cached_input_tokens 0)}
-      nil)))
+       :cache-read-tokens     (get usage :cached_input_tokens 0)})))
 
-(defn parse-token-usage
-  "Parse token usage from Claude's JSON or NDJSON output.
-  Handles both NDJSON (one JSON object per line) and a single JSON object.
-  Sums usage fields across all result-type messages. Returns a map with
-  :input-tokens, :output-tokens, :cache-creation-tokens, :cache-read-tokens."
-  [output]
+(defn extract-usage-from-result
+  "Compatibility helper that recognizes Claude and Codex usage events."
+  [parsed]
+  (or (claude-extract-usage-from-result parsed)
+      (codex-extract-usage-from-result parsed)))
+
+(defn- parse-token-usage-with
+  [output extract-usage]
   (let [zero-usage {:input-tokens 0
                     :output-tokens 0
                     :cache-creation-tokens 0
@@ -456,7 +678,7 @@
                          (fn [acc line]
                            (try
                              (let [parsed (json/parse-string line true)]
-                               (if-let [u (extract-usage-from-result parsed)]
+                               (if-let [u (extract-usage parsed)]
                                  (add-usage acc u)
                                  acc))
                              (catch Exception _ acc)))
@@ -468,10 +690,25 @@
       ;; Fall back: try parsing the entire output as a single multi-line JSON object
       (or (try
             (let [parsed (json/parse-string (str/trim (or output "")) true)]
-              (when-let [u (extract-usage-from-result parsed)]
+              (when-let [u (extract-usage parsed)]
                 (add-usage zero-usage u)))
             (catch Exception _ nil))
           zero-usage))))
+
+(defn claude-parse-token-usage
+  "Parse token usage from Claude JSON or NDJSON output."
+  [output]
+  (parse-token-usage-with output claude-extract-usage-from-result))
+
+(defn codex-parse-token-usage
+  "Parse token usage from Codex JSONL output."
+  [output]
+  (parse-token-usage-with output codex-extract-usage-from-result))
+
+(defn parse-token-usage
+  "Compatibility helper that recognizes Claude and Codex usage events."
+  [output]
+  (parse-token-usage-with output extract-usage-from-result))
 
 (defn token-totals
   "Sum token usage across a sequence of result maps.
@@ -481,6 +718,34 @@
    :output-tokens (reduce + 0 (map #(or (:output-tokens %) 0) results))
    :cache-creation-tokens (reduce + 0 (map #(or (:cache-creation-tokens %) 0) results))
    :cache-read-tokens (reduce + 0 (map #(or (:cache-read-tokens %) 0) results))})
+
+;;; Agent adapters
+
+(def agent-adapters
+  "Provider boundary for command construction, transcript normalization,
+  telemetry extraction, and model pricing. New coding agents should implement
+  this contract without changing the phase loop or transcript analyzer."
+   {:claude {:phase-cmd          claude-phase-cmd
+            :prompt-cmd         claude-prompt-cmd
+            :score-text         claude-score-text
+            :normalize-output   normalize-claude-output
+            :parse-token-usage  claude-parse-token-usage
+            :parse-tool-uses   claude-parse-tool-uses
+            :parse-skills-used claude-parse-skills-used
+            :parse-skill-refs-used claude-parse-skill-refs-used
+            :pricing            #(pricing-from claude-model-pricing %)}
+   :codex  {:phase-cmd          codex-phase-cmd
+            :prompt-cmd         codex-prompt-cmd
+            :score-text         codex-score-text
+            :normalize-output   normalize-codex-output
+            :parse-token-usage  codex-parse-token-usage
+            :parse-tool-uses   codex-parse-tool-uses
+            :parse-skills-used codex-parse-skills-used
+            :parse-skill-refs-used codex-parse-skill-refs-used
+            :pricing            #(pricing-from codex-model-pricing %)}})
+
+;; Compatibility name for callers that used the old command-only registry.
+(def agents agent-adapters)
 
 ;;; Transcript saving
 
@@ -731,7 +996,8 @@
   (when *verbose*
     (prn "CMD:" cmd)
     (flush))
-  (let [start (System/currentTimeMillis)
+  (let [start      (System/currentTimeMillis)
+        started-at (str (java.time.Instant/now))
         result (try
                  ;; Always stream via futures so partial output is captured on timeout
                  (let [proc (p/process cmd {:dir project-root :in ""
@@ -768,8 +1034,12 @@
                    {:exit 1
                     :out ""
                     :err (str "Process error: " (.getMessage e))}))
-        duration-s (quot (- (System/currentTimeMillis) start) 1000)]
-    (assoc result :duration-s duration-s)))
+        finished-at (str (java.time.Instant/now))
+        duration-s  (quot (- (System/currentTimeMillis) start) 1000)]
+    (assoc result
+           :duration-s duration-s
+           :started-at started-at
+           :finished-at finished-at)))
 
 ;;; Challenge scoring
 
@@ -824,10 +1094,9 @@
 
 (defn run-alignment-scoring!
   "Run alignment scoring as a separate LLM call. Returns {:alignment int} or nil."
-  [project-root challenge-name model]
+  [agent-fns project-root challenge-name model]
   (when-let [prompt (build-alignment-prompt project-root challenge-name)]
-    (let [cmd  (cond-> ["claude" "--print"]
-                 model (into ["--model" model]))
+    (let [cmd  ((:prompt-cmd agent-fns) project-root model prompt)
           start (System/currentTimeMillis)
           proc (p/process cmd {:dir project-root :in prompt})
           out-fut (future (slurp (:out proc)))
@@ -843,10 +1112,11 @@
           (println (format "WARN: alignment scoring failed for %s (exit %d)" challenge-name (:exit done)))
           (when (seq (str/trim err-output))
             (println (str "  stderr: " (str/trim err-output))))))
-      (when-let [[_ score-str] (re-find #"ALIGNMENT_SCORE:(\d+)" output)]
+      (let [score-output ((:score-text agent-fns) output)]
+        (when-let [[_ score-str] (re-find #"ALIGNMENT_SCORE:(\d+)" score-output)]
         (let [score (parse-long score-str)
               ;; Grab everything after the ALIGNMENT_SCORE line as justification
-              justification (some-> (re-find #"ALIGNMENT_SCORE:\d+\s*\n(.*)" output)
+              justification (some-> (re-find #"ALIGNMENT_SCORE:\d+\s*\n(.*)" score-output)
                                     second
                                     str/trim
                                     not-empty)]
@@ -854,7 +1124,7 @@
             (when (and *verbose* justification)
               (println (format "  Alignment %d/5: %s" score justification)))
             (cond-> {:alignment score}
-              justification (assoc :alignment-justification justification))))))))
+              justification (assoc :alignment-justification justification)))))))))
 
 ;;; Test-coverage alignment scoring
 
@@ -918,15 +1188,14 @@
 
 (defn run-test-alignment-scoring!
   "Run test-coverage alignment scoring. Returns {:test-alignment int} or nil."
-  [project-root challenge-name model]
+  [agent-fns project-root challenge-name model]
   (if (agent-tests-use-harness? project-root challenge-name)
     (do (when *verbose*
           (println (format "  Test alignment 1/5: agent tests use rama-challenges.harness")))
         {:test-alignment 1
          :test-alignment-justification "Agent tests use rama-challenges.harness (automatic score of 1)."})
     (when-let [prompt (build-test-alignment-prompt project-root challenge-name)]
-      (let [cmd  (cond-> ["claude" "--print"]
-                   model (into ["--model" model]))
+      (let [cmd  ((:prompt-cmd agent-fns) project-root model prompt)
             start (System/currentTimeMillis)
             proc (p/process cmd {:dir project-root :in prompt})
             out-fut (future (slurp (:out proc)))
@@ -942,9 +1211,10 @@
             (println (format "WARN: test alignment scoring failed for %s (exit %d)" challenge-name (:exit done)))
             (when (seq (str/trim err-output))
               (println (str "  stderr: " (str/trim err-output))))))
-        (when-let [[_ score-str] (re-find #"TEST_ALIGNMENT_SCORE:(\d+)" output)]
+        (let [score-output ((:score-text agent-fns) output)]
+          (when-let [[_ score-str] (re-find #"TEST_ALIGNMENT_SCORE:(\d+)" score-output)]
           (let [score (parse-long score-str)
-                justification (some-> (re-find #"TEST_ALIGNMENT_SCORE:\d+\s*\n(.*)" output)
+                justification (some-> (re-find #"TEST_ALIGNMENT_SCORE:\d+\s*\n(.*)" score-output)
                                       second
                                       str/trim
                                       not-empty)]
@@ -952,7 +1222,7 @@
               (when (and *verbose* justification)
                 (println (format "  Test alignment %d/5: %s" score justification)))
               (cond-> {:test-alignment score}
-                justification (assoc :test-alignment-justification justification)))))))))
+                justification (assoc :test-alignment-justification justification))))))))))
 
 ;;; Private tests
 
@@ -1150,7 +1420,8 @@
   needs to decide next steps and accumulate per-phase telemetry."
   [agent-fns challenge-name phase-id attempt subsystem
    project-root agent-name model reasoning run-start-time run-start-millis]
-  (let [cmd ((:phase-cmd agent-fns) challenge-name phase-id project-root model reasoning subsystem)
+  (let [adapter (merge (get agent-adapters (keyword agent-name)) agent-fns)
+        cmd ((:phase-cmd adapter) challenge-name phase-id project-root model reasoning subsystem)
         remaining (long (time-remaining-s run-start-millis))
         effective-timeout (min *outer-timeout-s* remaining)
         phase-label (str (phase-id-str phase-id)
@@ -1172,8 +1443,9 @@
                                               phase-id attempt subsystem tries)
                 r (binding [*outer-timeout-s* eff]
                     (invoke-command! cmd project-root))
+                transcript ((:normalize-output adapter) (:out r) r)
                 path (save-transcript! project-root agent-name model reasoning
-                                       challenge-name (:out r) phase-id attempt
+                                       challenge-name transcript phase-id attempt
                                        run-start-time subsystem tries)
                 r (assoc r :retries tries :transcript-path path)]
             (if (and (transient-server-error? (:out r) (:err r))
@@ -1189,11 +1461,11 @@
               r)))
         combined (str out "\n" err)
         verdict (parse-phase-verdict combined)
-        token-usage (parse-token-usage out)
-        cost (compute-cost token-usage (model->pricing model))
-        tool-uses (parse-tool-uses out)
-        skills-used (parse-skills-used out)
-        skill-refs-used (parse-skill-refs-used out)]
+        token-usage ((:parse-token-usage adapter) out)
+        cost (compute-cost token-usage ((:pricing adapter) model))
+        tool-uses ((:parse-tool-uses adapter) out)
+        skills-used ((:parse-skills-used adapter) out)
+        skill-refs-used ((:parse-skill-refs-used adapter) out)]
     (when *verbose*
       (println (format "  Phase %s (attempt %d) finished: exit=%d duration=%ds retries=%d verdict=%s"
                        phase-label attempt exit duration-s retries
@@ -1694,10 +1966,10 @@
                 (when (= :pass status)
                   (let [impl-scores (do (when *verbose*
                                           (println (format "Scoring alignment for %s..." challenge-name)))
-                                        (run-alignment-scoring! project-root challenge-name model))
+                                        (run-alignment-scoring! agent-fns project-root challenge-name model))
                         test-scores (do (when *verbose*
                                           (println (format "Scoring test alignment for %s..." challenge-name)))
-                                        (run-test-alignment-scoring! project-root challenge-name model))
+                                        (run-test-alignment-scoring! agent-fns project-root challenge-name model))
                         scores (merge impl-scores test-scores)]
                     (when (seq scores)
                       {:scores scores :composite (:alignment scores)})))]
@@ -1790,10 +2062,12 @@
 (defn run-challenges
   "Run all challenges sequentially, returning a vector of result maps."
   [challenges agent-key agent-name project-root model reasoning enc-key]
-  (let [agent-fns (get agents agent-key)]
+  (let [agent-fns (get agent-adapters agent-key)]
     (when-not agent-fns
       (binding [*out* *err*]
-        (println (str "Error: unknown agent '" (name agent-key) "'. Use 'claude' or 'codex'.")))
+        (println (format "Error: unknown agent '%s'. Available adapters: %s."
+                         (name agent-key)
+                         (str/join ", " (map name (keys agent-adapters))))))
       (System/exit 1))
     (println)
     (mapv #(run-challenge % agent-name agent-fns project-root model reasoning enc-key) challenges)))

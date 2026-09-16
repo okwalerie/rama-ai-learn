@@ -182,11 +182,13 @@ def cmd_summary(lines, args):
     for line in lines:
         if line.get('type') == 'result':
             print(f"Duration: {line.get('duration_ms', 0)/1000:.0f}s ({line.get('duration_ms', 0)/60000:.1f}m)")
-            print(f"Cost: ${line.get('total_cost_usd', 0):.2f}")
-            print(f"Turns: {line.get('num_turns')}")
-            print(f"Stop: {line.get('stop_reason')}")
-            result = line.get('result', '')
-            print(f"Result: {result[:300]}")
+            cost = line.get('total_cost_usd')
+            print(f"Cost: ${cost:.2f}" if cost is not None else "Cost: N/A")
+            turns = line.get('num_turns')
+            print(f"Turns: {turns if turns is not None else 'N/A'}")
+            print(f"Stop: {line.get('stop_reason') or 'N/A'}")
+            result = line.get('result') or ''
+            print(f"Result: {result[:300] or 'N/A'}")
             break
 
 def cmd_plan(lines, args):
