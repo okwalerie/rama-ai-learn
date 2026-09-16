@@ -24,6 +24,28 @@
     (testing "when rounding crosses the 60s boundary"
       (is (= "1m 0s" (format-duration 59.5))))))
 
+(deftest kondo-preflight-failure-test
+  (let [commands (atom [])
+        cleared? (atom false)
+        launched? (atom false)
+        result (with-redefs [invoke-command! (fn [cmd dir]
+                                              (swap! commands conj [cmd dir])
+                                              {:exit 127 :out "" :err "clj-kondo missing"})
+                             clean-implementation-dir! (fn [& _] (reset! cleared? true))
+                             phase-loop! (fn [& _] (reset! launched? true))
+                             decrypt-challenge! (fn [& _])
+                             decrypt-other-challenges! (fn [& _])
+                             has-hidden-teardown? (constantly false)]
+                 (binding [*out* (java.io.StringWriter.)]
+                   (run-challenge {:name "bank-transfer-module"} "codex" {}
+                                  "/project" "model" "high" "test-key")))]
+    (is (= [[["bash" "scripts/import-kondo-configs.sh" "bank-transfer-module"]
+             "/project"]] @commands))
+    (is (= :fail (:status result)))
+    (is (re-find #"clj-kondo missing" (:error result)))
+    (is (false? @cleared?))
+    (is (false? @launched?))))
+
 (def sample-results
   [{:name "challenge-a" :status :pass :iterations 1 :duration-s 10
     :input-tokens 100 :output-tokens 50 :cache-creation-tokens 10 :cache-read-tokens 80

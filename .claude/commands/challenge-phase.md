@@ -20,7 +20,7 @@ You are doing **one phase** of a phased Rama module build. The orchestrating run
 ## Pre-flight (every phase)
 
 1. Verify `challenges/<challenge_name>/README.md` exists. If not, list available challenges and stop.
-2. On phase 0 only, import clj-kondo configs:
+2. The challenge runner imports clj-kondo configs before launching agents. When invoking phase 0 manually without the runner, import them first:
    ```
    bash scripts/import-kondo-configs.sh <challenge_name>
    ```

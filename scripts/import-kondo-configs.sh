@@ -17,11 +17,11 @@ CHALLENGE_DIR="$ROOT/challenges/$NAME"
 KONDO_DIR="$CHALLENGE_DIR/.clj-kondo"
 
 # Get the challenge classpath
-CP=$(cd "$CHALLENGE_DIR" && clojure -Spath 2>/dev/null)
+CP=$(cd "$CHALLENGE_DIR" && clojure -Spath)
 
 # Clear old imports and re-import
 rm -rf "$KONDO_DIR"
 mkdir "$KONDO_DIR"
 cd "$CHALLENGE_DIR"
-clj-kondo --copy-configs --dependencies --lint "$CP" > /dev/null 2>&1 || true
+clj-kondo --copy-configs --skip-lint --lint "$CP"
 echo "Imported kondo configs for $NAME"

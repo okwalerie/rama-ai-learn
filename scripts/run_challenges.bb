@@ -1597,6 +1597,13 @@
   [challenge agent-name agent-fns project-root model reasoning enc-key]
   (let [challenge-name (:name challenge)]
     (try
+      ;; Initialize tooling before spending tokens or clearing prior artifacts.
+      (let [{:keys [exit out err]}
+            (invoke-command! ["bash" "scripts/import-kondo-configs.sh" challenge-name]
+                             project-root)]
+        (when (not= 0 exit)
+          (throw (ex-info (str "clj-kondo setup failed for " challenge-name "\n" out err)
+                          {:challenge challenge-name :exit exit}))))
       (clean-implementation-dir! project-root challenge-name)
 
       (let [n-decrypted (decrypt-challenge! enc-key challenge-name)]
