@@ -126,6 +126,18 @@
                 :cache-read-tokens 120}
                (parse-token-usage output)))))))
 
+(deftest model-pricing-test
+  (testing "model->pricing"
+    (testing "recognizes the four current Codex models"
+      (is (= {:input 10.00 :output 50.00 :cache-write 12.50 :cache-read 1.00}
+             (model->pricing "gpt-6-astra")))
+      (is (= {:input 4.00 :output 20.00 :cache-write 5.00 :cache-read 0.40}
+             (model->pricing "gpt-5.6-sol")))
+      (is (= {:input 2.00 :output 12.00 :cache-write 2.50 :cache-read 0.20}
+             (model->pricing "gpt-5.6-terra")))
+      (is (= {:input 0.20 :output 1.20 :cache-write 0.25 :cache-read 0.02}
+             (model->pricing "gpt-5.6-luna"))))))
+
 (deftest token-totals-test
   ;; Tests that token-totals sums token fields across result maps,
   ;; handling nil values gracefully.

@@ -219,16 +219,25 @@
 (def claude-model-pricing
   "USD cost per million tokens for Claude models.
   Ordered list of [substring pricing-map] pairs matched against model names."
-  [["haiku"  {:input 0.80  :output 4.00  :cache-write 1.00  :cache-read 0.08}]
-   ["sonnet" {:input 3.00  :output 15.00 :cache-write 3.75  :cache-read 0.30}]
-   ["opus"   {:input 15.00 :output 75.00 :cache-write 18.75 :cache-read 1.50}]])
+  [["haiku"  {:input 1.00  :output 5.00  :cache-write 1.25  :cache-read 0.10}]
+   ["sonnet" {:input 2.00  :output 10.00 :cache-write 2.50  :cache-read 0.20}]
+   ["opus"   {:input 5.00  :output 25.00 :cache-write 6.25  :cache-read 0.50}]
+   ["fable"  {:input 10.00 :output 50.00 :cache-write 12.50 :cache-read 0.25}]])
+
+(def codex-model-pricing
+  "USD cost per million tokens for OpenAI Codex models, assuming <272k input tokens.
+  Ordered list of [substring pricing-map] pairs matched against model names."
+  [["gpt-5.6-luna"   {:input 0.20  :output 1.20  :cache-write 0.25  :cache-read 0.02}]
+   ["gpt-5.6-terra"  {:input 2.00  :output 12.00 :cache-write 2.50  :cache-read 0.20}]
+   ["gpt-5.6-sol"    {:input 4.00  :output 20.00 :cache-write 5.00  :cache-read 0.40}]
+   ["gpt-6-astra"   {:input 10.00 :output 50.00 :cache-write 12.50 :cache-read 1.00}]])
 
 (defn model->pricing
-  "Return pricing map for a model name string, or nil if unknown."
+  "Return pricing map for a Claude or Codex model name, or nil if unknown."
   [model]
   (when model
     (some (fn [[k v]] (when (str/includes? (str/lower-case model) k) v))
-          claude-model-pricing)))
+          (concat claude-model-pricing codex-model-pricing))))
 
 (defn compute-cost
   "Calculate USD cost from token usage and a pricing map.
