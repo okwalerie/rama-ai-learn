@@ -1,4 +1,9 @@
-# Quota-blocked reference authoring checkpoint
+# Historical quota-blocked reference authoring checkpoint
+
+This is the pre-transfer checkpoint, not the current package status. The
+reference, private harness, final review, and verification are now present;
+see `VERIFICATION.md` and `FULL_SPEC_REVIEW.md`. The text below is retained
+as handoff history and its ownership/resume instructions no longer apply.
 
 Status: **INCOMPLETE — do not register as validated.** 2026-09-23.
 

@@ -3,6 +3,41 @@
 Owner: https://ampcode.com/threads/T-01a0cd1f-f3a0-77ae-b5c5-f68127682fa0
 Parent: https://ampcode.com/threads/T-01a0cd0c-8923-7366-bb23-3409896b6644
 
+## Latest checkpoint — September 23, 2026, 16:15 UTC
+
+This section supersedes counts and ownership below. All 15 implementation
+snapshots are consolidated locally on hld-case-studies; nothing shipped and
+all 30 evaluations remain UNSTARTED. Nine packages accepted after parent
+inspection and final suite: metrics 4/312, URL 4/270, rate 4/360, file-sync
+2/710, clicks 6/426, scheduler 3/132, flags 2/120, payment 4/194, RAG 5/86
+(tests/assertions, all zero failures/errors and exit 0).
+
+Newest parent logs: /tmp/hld-{scheduler,flags,payment,rag}-parent-final.log.
+Flags removes the duplicate harness driver and retains one common suite;
+paired 240→1240 unrelated-key work and pure bucket checks pass. Payment
+200→1000 own/unrelated history has stable query and write operation counts.
+RAG populated 256→2048 documents and target 1→32 chunks have stable query
+reads and ACL reads/writes; parent added four ACL-read growth assertions.
+Reference/public contracts unchanged; worker mutants retained as worker
+evidence, not represented as parent executions. IPC recovery ERROR messages
+occur despite passing test footers. Opaque bytes and crash/retry interleavings
+remain unproven by operation counts or module updates.
+
+Exchange final independent private suite integrated; parent PID 80626 running
+to /tmp/hld-exchange-parent-final.log (expected 7/10096). Autocomplete validator
+T-01a0cef5-5189-7629-ac7d-ce93c44bd0ef repairing private fairness: depot-read
+distribution is not a storage-placement requirement; larger growth populations
+requested. First return staged only, not accepted. Independent private validators
+active: crawler T-01a0cf06-d7f3-7099-91ff-314e4c01de2f; notification
+T-01a0cf06-f7e5-759a-ab0c-a7ad4c2f2c5c; hotel T-01a0cf07-05b3-7660-970f-3e58f424db2d.
+All were asked to reply, not wait_for_threads.
+
+Ticketing original owner T-01a0ced3-8775-7508-b98f-b0f0d100dd54 retains exclusive
+repair ownership. max.records=1 workaround not accepted; controlled 200-record
+yielding/plain-read and order-stamp experiments requested. Oracle did not prove
+aggregation reorders stamps; yielding read views are a competing hypothesis.
+Do not publish the unsupported diagnosis or reduce throughput to mask the bug.
+
 ## Current authoritative checkpoint — September 23, 2026, fan-out
 
 This section supersedes historical author ownership and incomplete-package counts below.
@@ -22,7 +57,7 @@ No package shipped; all 30 evaluation cells remain UNSTARTED.
 Accepted locally after parent inspection and independent private harness runs:
 metrics 4 tests/312 assertions; URL 4/270; rate 4/360, all zero failures/errors.
 Local integration commits c2692c9, 6374ec1, fcb810d respectively.
-File-sync and clicks are now accepted locally too (five accepted total).
+File-sync, clicks and scheduler are now accepted locally too (six accepted total).
 Parent inspected references, contract alignment and returned private changes;
 `clojure -J-Xmx1600m -X:test-private-harness` passed file-sync 2 tests/710
 assertions and combined clicks 6 tests/426 assertions, zero failures/errors,
@@ -38,12 +73,17 @@ test errors. Growth tests remain finite heuristics; opaque value bytes and actua
 process-loss retry behavior remain outside executable coverage. Worker mutation
 evidence is retained but was not rerun by parent.
 
-Three additional implemented candidates transferred, not yet accepted:
-- Scheduler worker dbcb03d: parent inspected reference/harness and independently
-  ran full suite 2 tests/90 assertions/0 failures/errors, exit 0; log
-  `/tmp/hld-scheduler-parent-candidate.log`. Current growth scenario checks
-  correctness only. Independent validator T-01a0ceec-4202-747b-9651-bf2bacfb1d40
-  owns new independent_* tests/evidence for executable bounded-work coverage.
+Scheduler accepted after independent validator T-01a0ceec-4202-747b-9651-bf2bacfb1d40
+returned three private files (0fe2ede). Parent inspected and reran combined suite:
+3 tests/132 assertions/0 failures/errors, exit 0, log
+`/tmp/hld-scheduler-parent-final.log`. Work at 256→1024 executions/decisions stayed
+equal for eight measured operations at both 2/4 tasks. Worker delegating-client
+history-scan control failed twice; source remained unchanged. Added max-safe-clock,
+scoped claim IDs and unknown no-op checks. Finite heuristic and opaque bytes remain
+limits; populations grow together, not independently. Original expiry/replay mutant
+evidence retained, not rerun by parent. Contract manifest unchanged.
+
+Five additional implemented candidates transferred, not yet accepted:
 - Flags worker 53c17b72141057fd2af2991c134efa84f378fcd6: parent inspected candidate;
   worker explicit namespace run 2/94 green. Duplicate harness/challenge drivers
   run the same namespace; remove redundant harness driver, not business-contract
@@ -53,11 +93,28 @@ Three additional implemented candidates transferred, not yet accepted:
   and suite; worker 3/89 green. Existing efficiency test is only 4-task and uses
   unpublished absolute caps. Validator T-01a0ceee-773b-7368-9ad0-1d3b51caa511 owns
   paired read/write growth at both task counts and adversarial validation.
+- Autocomplete worker 1bd919f: parent inspected and reran 2 tests/314 assertions,
+  zero failures/errors, exit 0 (`/tmp/hld-autocomplete-parent-candidate.log`).
+  Validator T-01a0cef5-5189-7629-ac7d-ce93c44bd0ef owns private work-growth/update/
+  distribution evidence. Proposed reference-specific unmeasured numeric budgets
+  were NOT approved for public docs. Existing operation hooks can measure seeks/
+  reads/writes, unlike bytes; retained old generations remain an explicit limit.
+- RAG worker adb799a: full archive verified d1179e1df41f8cecee90d212a2a288f8d94c485e383751843fd8356b623b5bdc,
+  extracted without .cpcache; parent inspected tests/review, worker 5/74 green.
+  Validator T-01a0cef8-2555-77f0-8adb-69805f6cc600 owns private populated growth,
+  same-document chunk/ACL cost and independent adversarial checks; tiny baseline
+  and unpublished ACL write cap need correction before acceptance.
+- Exchange worker 1149ef9: full snapshot transferred, manifest verified, worker
+  6/626 green. Parent inspected tests/reviews; validator
+  T-01a0cef9-00cb-7780-9324-90291d2b1b98 owns private paired work growth replacing
+  unpublished absolute read caps, ordering stress and mutation evidence. Test
+  footer matters: author's earlier mutant process exited 0 despite failures.
 
 These validators have exact `*-candidate.tar.gz` inputs with verified SHA256;
 public manifests remain unchanged. Parent will rerun final returned suites;
-do not count these three as accepted from the worker green receipts alone.
-Seven original implementation workers remain outstanding. Reference-harness
+do not count these five as accepted from the worker green receipts alone.
+Four original implementation workers remain outstanding (ticketing, hotel,
+notification, crawler). Reference-harness
 classpath can prefer a solver namespace if present: current authoring orbs have
 no solver implementation; final acceptance must inspect resolved resource paths.
 

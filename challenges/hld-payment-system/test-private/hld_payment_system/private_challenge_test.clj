@@ -116,7 +116,31 @@
           (p/charge! b "over" "USD-tenant" "alice" "shop" 1000)
           (harness/wait-for-processing! a)
           (is (= :insufficient-funds (:reason (outcome "USD-tenant" "over"))))
-          (is (= 6 (count (p/get-journal a "USD-tenant" 0 500)))))))))
+          (is (= 6 (count (p/get-journal a "USD-tenant" 0 500)))))
+        (testing "competing reasons and cross-command idempotency"
+          ;; A missing account wins over a wrong kind or insufficient funds.
+          (p/charge! a "mixed-charge" "USD-tenant" "shop" "absent" 1000000)
+          (p/create-account! a "other-shop" "USD-tenant" "other-shop" :merchant)
+          (p/charge! a "drain" "USD-tenant" "alice" "other-shop" 1000)
+          (p/refund! a "mixed-refund" "USD-tenant" "c1" 301)
+          (p/create-account! a "duplicate-account" "USD-tenant" "shop" :customer)
+          (harness/wait-for-processing! b)
+          (is (= :no-such-account (:reason (outcome "USD-tenant" "mixed-charge"))))
+          ;; The charge was fully refunded, and shop is empty: exceeds wins.
+          (is (= :refund-exceeds-charge (:reason (outcome "USD-tenant" "mixed-refund"))))
+          (is (= :account-exists (:reason (outcome "USD-tenant" "duplicate-account"))))
+          (p/fund! b "duplicate-account" "USD-tenant" "alice" 9)
+          (p/charge! b "mixed-refund" "USD-tenant" "alice" "shop" 1)
+          (p/refund! b "drain" "USD-tenant" "c1" 1)
+          ;; Fund and refund have identical argument vectors here, but different types.
+          (p/refund! b "f2" "USD-tenant" "alice" 1)
+          (harness/wait-for-processing! a)
+          (is (= 1 (:conflicting-attempts (outcome "USD-tenant" "duplicate-account"))))
+          (is (= :refund-exceeds-charge (:reason (outcome "USD-tenant" "mixed-refund"))))
+          (is (= 1 (:conflicting-attempts (outcome "USD-tenant" "mixed-refund"))))
+          (is (= 1 (:conflicting-attempts (outcome "USD-tenant" "drain"))))
+          (is (= 1 (:conflicting-attempts (outcome "USD-tenant" "f2"))))
+          (is (= [1 2 3 4 5 6 7] (mapv :seq (p/get-journal b "USD-tenant" 0 500)))))))))
 
 (deftest ledger-two-tasks
   (run-ledger (requiring-resolve 'hld-payment-system.module/create-module) 2))
@@ -124,40 +148,89 @@
 (deftest ledger-four-tasks
   (run-ledger (requiring-resolve 'hld-payment-system.module/create-module) 4))
 
-(defn- read-cost [f]
-  (let [counts (atom {:rocks-read 0 :rocks-iterator-read 0})]
+(defn- storage-cost [f]
+  (let [counts (atom {:reads 0 :writes 0})]
     (rtest/with-event-hook
-      (fn [event-type _]
-        (when (contains? @counts event-type)
-          (swap! counts update event-type inc)))
+      (fn [event-type data]
+        (case event-type
+          (:rocks-read :rocks-iterator :rocks-iterator-read)
+          (swap! counts update :reads inc)
+          :rocks-commit
+          (swap! counts update :writes + (:write-batch-count data))
+          nil))
       (f)
-      (reduce + (vals @counts)))))
+      @counts)))
 
-(deftest bounded-own-history
+(defn- run-growth [tasks]
   (let [{:keys [module wrap-client]} ((requiring-resolve 'hld-payment-system.module/create-module))]
     (with-open [ipc (rtest/create-ipc)]
-      (rtest/launch-module! ipc module {:tasks 4 :threads 4})
+      (rtest/launch-module! ipc module {:tasks tasks :threads tasks})
       (let [c (wrap-client ipc)]
         (p/create-tenant! c "t" "deep" "USD")
+        (p/create-tenant! c "other-t" "other" "EUR")
         (p/create-account! c "a" "deep" "a" :customer)
+        (p/create-account! c "w" "deep" "w" :customer)
         (p/create-account! c "m" "deep" "m" :merchant)
+        (p/create-account! c "other-a" "other" "a" :customer)
+        (p/fund! c "reader-fund" "deep" "a" 7)
+        (p/fund! c "seed" "deep" "w" 5000)
+        (p/charge! c "seed-charge" "deep" "w" "m" 10)
         (harness/wait-for-processing! c)
-        (doseq [i (range 520)] (p/fund! c (str "f" i) "deep" "a" 1))
-        (harness/wait-for-processing! c)
-        (is (= 520 (p/get-balance c "deep" "a")))
-        (is (= (vec (range 501 508))
-               (mapv :seq (p/get-journal c "deep" 500 7))))
-        (is (= 500 (count (p/get-journal c "deep" 0 500))))
-        ;; Hook counts RocksDB operations, not opaque serialized value bytes.
-        ;; Layout inspection is necessary to rule out a single rewritten blob.
-        (let [page-cost (read-cost #(p/get-journal c "deep" 500 7))
-              balance-cost (read-cost #(p/get-balance c "deep" "a"))
-              outcome-cost (read-cost #(p/get-outcome c "deep" "f519"))]
-          (is (< 0 page-cost 80) (str "bounded page reads: " page-cost))
-          (is (< 0 balance-cost 40) (str "bounded balance reads: " balance-cost))
-          (is (< 0 outcome-cost 40) (str "bounded outcome reads: " outcome-cost)))
-        (let [write-cost (read-cost #(do (p/charge! c "last-charge" "deep" "a" "m" 7)
-                                         (harness/wait-for-processing! c)))]
-          (is (< 0 write-cost 100) (str "bounded charge reads: " write-cost))
-          (is (= 513 (p/get-balance c "deep" "a")))
-          (is (= 521 (:seq (p/get-charge c "deep" "last-charge")))))))))
+        (let [measure
+              (fn [stage]
+                (let [rid (str "probe-" stage)
+                      observe (fn [f] (let [value (volatile! nil)
+                                            cost (storage-cost #(vreset! value (f)))]
+                                        [@value cost]))
+                      [page page-cost] (observe #(p/get-journal c "deep" 150 7))
+                      [balance balance-cost] (observe #(p/get-balance c "deep" "a"))
+                      [account account-cost] (observe #(p/get-account c "deep" "a"))
+                      [charge charge-cost] (observe #(p/get-charge c "deep" "seed-charge"))
+                      [outcome outcome-cost] (observe #(p/get-outcome c "deep" "seed-charge"))
+                      [tenant tenant-cost] (observe #(p/get-tenant c "deep"))
+                      fund-cost (storage-cost #(do (p/fund! c (str rid "-fund") "deep" "w" 1)
+                                                  (harness/wait-for-processing! c)))
+                      charge-write-cost (storage-cost #(do (p/charge! c (str rid "-charge") "deep" "w" "m" 2)
+                                                          (harness/wait-for-processing! c)))
+                      refund-cost (storage-cost #(do (p/refund! c (str rid "-refund") "deep" (str rid "-charge") 1)
+                                                    (harness/wait-for-processing! c)))
+                      costs {:page page-cost :balance balance-cost :account account-cost
+                             :charge charge-cost :outcome outcome-cost :tenant tenant-cost
+                             :fund fund-cost :charge-write charge-write-cost :refund refund-cost}]
+                  (is (= (vec (range 151 158)) (mapv :seq page)))
+                  (is (= (mapv #(str "charge-" %) (range 147 154))
+                         (mapv :request-id page)))
+                  (is (= {:account-id "a" :kind :customer :balance 7} account))
+                  (is (= 3 (:seq charge)))
+                  (is (= :accepted (:status outcome)))
+                  (is (= "USD" (:currency tenant)))
+                  (is (= 7 balance))
+                  (is (= :accepted (:status (p/get-outcome c "deep" (str rid "-refund")))))
+                  costs))]
+          (let [samples (for [[stage own-size] [[0 200] [1 1000]]]
+                          (do
+                            (doseq [i (range (if (zero? stage) 0 200) own-size)]
+                              (p/create-account! c (str "account-" i) "deep" (str "m-" i) :merchant)
+                              (p/charge! c (str "charge-" i) "deep" "w" (str "m-" i) 1)
+                              (p/fund! c (str "other-fund-" i) "other" "a" 1))
+                            (harness/wait-for-processing! c)
+                            (is (= own-size (p/get-balance c "other" "a")))
+                            (measure stage)))
+                [small large] (doall samples)]
+            ;; Finite growth heuristic, deliberately not an exact topology/seek budget.
+            ;; Hooks cannot see bytes deserialized or rewritten in an opaque value.
+            (println "Payment storage growth" tasks "tasks, 200→1000 own charges/accounts and unrelated funds" small large)
+            (doseq [op (keys small)
+                    :let [lo (get small op) hi (get large op)]]
+              (is (pos? (:reads lo)) (str tasks " tasks " op " no observed reads: " lo))
+              (when (#{:fund :charge-write :refund} op)
+                (is (pos? (:writes lo)) (str tasks " tasks " op " no observed writes: " lo)))
+              (doseq [metric [:reads :writes]]
+                (is (<= (get hi metric) (+ 60 (* 1.25 (get lo metric))))
+                    (str tasks " tasks " op " " metric " grows with own/unrelated history: " lo " → " hi))))))))))
+
+(deftest bounded-growth-two-tasks
+  (run-growth 2))
+
+(deftest bounded-growth-four-tasks
+  (run-growth 4))

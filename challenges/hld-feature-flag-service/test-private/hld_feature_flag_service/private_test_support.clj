@@ -22,14 +22,18 @@
   (is (= expected (select-keys actual (keys expected)))
       (str "expected required fields " expected ", got " actual)))
 
-(defn- count-reads [f]
-  (let [reads (atom 0)]
+(defn- measure-work [f]
+  (let [work (atom {:reads 0 :writes 0})]
     (rtest/with-event-hook
-      (fn [event _]
-        (when (#{:rocks-read :rocks-iterator :rocks-iterator-read} event)
-          (swap! reads inc)))
+      (fn [event data]
+        (cond
+          (#{:rocks-read :rocks-iterator :rocks-iterator-read} event)
+          (swap! work update :reads inc)
+
+          (= :rocks-commit event)
+          (swap! work update :writes + (:write-batch-count data))))
       (f)
-      @reads)))
+      @work)))
 
 (defn test-module [create-module-fn tasks]
   (let [{:keys [module wrap-client]} (create-module-fn)]
@@ -148,7 +152,15 @@
             (put! b "typed" (assoc base :revision 2 :killed? true :off-value false))
             (harness/wait-for-processing! b)
             (result! {:value false :revision 2 :reason :killed}
-                     (eval! a "typed" "user-42" {"age" 18})))
+                     (eval! a "typed" "user-42" {"age" 18}))
+            (put! b "typed" (assoc base :revision 3 :rollout nil
+                                   :rules [{:attribute "x" :operator :eq
+                                            :value nil :serve "present-nil"}]))
+            (harness/wait-for-processing! b)
+            (result! {:value "v1" :revision 3 :reason :default}
+                     (eval! a "typed" "user-42" {}))
+            (result! {:value "present-nil" :revision 3 :reason :rule :rule-index 0}
+                     (eval! a "typed" "user-42" {"x" nil})))
 
           (testing "ordered equal revisions in one unsynchronized group and signed-64 boundary"
             (put! a "order" (assoc base :revision Long/MAX_VALUE :default-value "first"))
@@ -159,17 +171,46 @@
             (harness/wait-for-processing! b)
             (is (= Long/MAX_VALUE (:revision (read! a "order")))))
 
-          (testing "one-flag lookup work is bounded while unrelated flags grow"
-            (doseq [i (range 150)]
-              (put! a (str "other-" i) (assoc base :revision 1)))
-            (harness/wait-for-processing! a)
-            (let [reads (count-reads
-                         #(do (is (= 10 (:revision (read! b "new-checkout"))))
-                              (result! {:value 0 :revision 10 :reason :default}
-                                       (eval! b "new-checkout" "user-42" {}))))]
-              ;; One key per call, with slack for engine bookkeeping. The hook
-              ;; does not measure serialized value bytes or client-side scans.
-              (is (< reads 20) (str "narrow reads after 150 unrelated flags: " reads))))
+          (testing "selected-key work does not grow with unrelated flags, envs and tenants"
+            (let [selected (read! b "new-checkout")
+                  expected {:value 0 :revision 10 :reason :default}
+                  samples
+                  (mapv
+                   (fn [[start end revision]]
+                     (doseq [i (range start end)]
+                       (p/put-flag-config! a (str "tenant-" (mod i 17))
+                                           (str "env-" (mod i 11))
+                                           (str "other-" i)
+                                           (assoc base :revision 1)))
+                     (harness/wait-for-processing! a)
+                     (let [get-work (measure-work #(read! b "new-checkout"))
+                           eval-work (measure-work #(eval! b "new-checkout" "user-42" {}))
+                           bucket-work (measure-work
+                                        #(p/compute-bucket b "acme" "prod"
+                                                           "new-checkout" "user-42"))
+                           write-work (measure-work
+                                       #(do (put! b "write-probe"
+                                                  (assoc base :revision revision))
+                                            (harness/wait-for-processing! b)))]
+                       (is (= selected (read! b "new-checkout")))
+                       (result! expected (eval! b "new-checkout" "user-42" {}))
+                       (is (= revision (:revision (read! a "write-probe"))))
+                       (is (= {:reads 0 :writes 0} bucket-work)
+                           (str "pure bucket must do no stored-state work: " bucket-work))
+                       {:get get-work :evaluate eval-work :put write-work}))
+                   [[0 240 1] [240 1240 2]])]
+              (println "flag work at 240 and 1240 unrelated keys:" samples)
+              ;; Compare like-for-like calls, rather than imposing an unpublished
+              ;; layout-specific absolute I/O count. The hook counts point reads,
+              ;; iterator creation/steps and committed records, not opaque bytes
+              ;; or client-side scans; this is a finite growth heuristic.
+              (doseq [op [:get :evaluate :put]
+                      metric [:reads :writes]]
+                (let [small (get-in samples [0 op metric])
+                      large (get-in samples [1 op metric])]
+                  (is (<= large (+ 12 (* 3 small)))
+                      (str op " " metric " grew with unrelated flags (240 -> 1240): "
+                           small " -> " large))))))
 
           (testing "fresh wrapper after prior processed records"
             (let [c (wrap-client ipc)
