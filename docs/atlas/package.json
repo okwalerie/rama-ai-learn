@@ -1,0 +1,11 @@
+{
+  "name": "rama-architecture-atlas",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild mermaid-entry.mjs --bundle --minify --format=esm --outfile=vendor/mermaid.mjs --legal-comments=eof",
+    "test": "node validate.mjs"
+  },
+  "dependencies": { "mermaid": "11.12.0" },
+  "devDependencies": { "esbuild": "0.25.10" }
+}

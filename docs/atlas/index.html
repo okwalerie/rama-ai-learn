@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#fafaf7">
+  <title>Rama Challenge Architecture Atlas — Flow Edition</title>
+  <link rel="stylesheet" href="styles.css?v=4">
+  <link rel="stylesheet" href="flows.css">
+</head>
+<body>
+  <header class="masthead">
+    <a class="brand" href="#">Rama architecture atlas <span>Flow Edition</span></a>
+    <a class="toplink" href="https://github.com/okwalerie/rama-ai-learn">Repository ↗</a>
+  </header>
+  <div class="layout">
+    <aside class="rail" aria-label="Challenge navigation">
+      <div class="rail-head"><h1>Challenges</h1><p>Non-LeetCode reference implementations</p></div>
+      <div class="search-wrap"><label for="search">Search challenges</label><input id="search" type="search" autocomplete="off"></div>
+      <div class="filters" role="group" aria-label="Filter challenges"></div>
+      <div class="nav-count" aria-live="polite"></div>
+      <nav id="challenge-nav" aria-label="Challenge index"></nav>
+      <div class="rail-foot"><a href="VISUAL_SPEC.md">Sources and visual method</a></div>
+    </aside>
+    <main id="main" tabindex="-1"><div class="loading">Loading challenges…</div></main>
+  </div>
+  <script type="module" src="app.js"></script>
+  <noscript>Enable JavaScript to view diagrams, or read the <a href="https://github.com/okwalerie/rama-ai-learn/tree/master/challenges">challenge sources</a>.</noscript>
+</body>
+</html>
