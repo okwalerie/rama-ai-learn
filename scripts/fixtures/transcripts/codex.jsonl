@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"s"}
+{"type":"item.started","item":{"id":"c1","type":"command_execution","command":"clojure -X:test","status":"in_progress"}}
+{"type":"item.completed","item":{"id":"r1","type":"reasoning","text":"Think about the asymmetric edit"}}
+{"type":"item.completed","item":{"id":"c1","type":"command_execution","command":"clojure -X:test","status":"completed","exit_code":0,"aggregated_output":"Ran 2 tests containing 7 assertions.\n0 failures, 0 errors."}}
+{"type":"turn.completed","usage":{"input_tokens":13,"output_tokens":7,"cached_input_tokens":5}}
+{"type":"item.completed","item":{"id":"f1","type":"file_change","changes":[{"path":"module.clj","kind":"update"}],"status":"completed"}}
+{"type":"item.completed","item":{"id":"t1","type":"agent_message","text":"PHASE_VALIDATION:pass. Unique final response."}}
+{"type":"turn.completed","usage":{"input_tokens":19,"output_tokens":11,"cached_input_tokens":3}}

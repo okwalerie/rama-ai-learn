@@ -6,6 +6,7 @@ Usage:
 
 Transcript selection:
   Default:                       reads latest-transcript.jsonl in the repo root.
+  --file PATH:                  reads any Claude, Codex, OpenCode, or Pi JSONL.
   --phase N:                     reads the latest attempt of phase N from
                                  latest-transcripts/ (highest-numbered attempt).
                                  N is a phase number (0..7) or a stage name
@@ -25,6 +26,7 @@ Transcript selection:
 
 Commands:
   summary              - Run result, cost, duration, turn count
+  events [index]       - Dump normalized JSONL, or one event by timeline line index
   plan                 - Show PLAN.md content
   validation           - Show PLAN_VALIDATION.md content
   implicit-spec        - Show IMPLICIT_SPEC.md content
@@ -56,6 +58,7 @@ import sys
 import re
 import os
 import glob
+from transcript_events import normalize, parse
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_TRANSCRIPT = os.path.join(REPO_ROOT, 'latest-transcript.jsonl')
@@ -176,18 +179,38 @@ def load(path=None):
     if path is None:
         path = DEFAULT_TRANSCRIPT
     with open(path) as f:
-        return [json.loads(l) for l in f]
+        return normalize(parse(f.read()))
+
+def _error_message(error):
+    """Render diagnostics without dumping HTTP headers/cookies into summaries."""
+    if isinstance(error, dict):
+        data = error.get('data') or {}
+        return error.get('message') or data.get('message') or error.get('name') or 'Unknown harness error (see events)'
+    return str(error)
 
 def cmd_summary(lines, args):
     for line in lines:
         if line.get('type') == 'result':
-            print(f"Duration: {line.get('duration_ms', 0)/1000:.0f}s ({line.get('duration_ms', 0)/60000:.1f}m)")
-            print(f"Cost: ${line.get('total_cost_usd', 0):.2f}")
-            print(f"Turns: {line.get('num_turns')}")
-            print(f"Stop: {line.get('stop_reason')}")
-            result = line.get('result', '')
-            print(f"Result: {result[:300]}")
+            duration = line.get('duration_ms')
+            print(f"Duration: {duration/1000:.0f}s ({duration/60000:.1f}m)" if duration is not None else 'Duration: N/A')
+            cost = line.get('total_cost_usd')
+            print(f"Cost: ${cost:.6f}" if cost is not None else 'Cost: N/A')
+            turns = line.get('num_turns')
+            print(f"Turns: {turns if turns is not None else 'N/A'}")
+            print(f"Stop: {line.get('stop_reason') or 'N/A'}")
+            print(f"Status: {line.get('status') or line.get('subtype') or 'N/A'}")
+            result = line.get('result') or ''
+            print(f"Result: {result[:300] or 'N/A'}")
+            if line.get('usage'):
+                print(f"Tokens: {json.dumps(line['usage'], sort_keys=True)}")
+            for error in line.get('errors', []):
+                print(f"Error: {_error_message(error)}")
             break
+
+def cmd_events(lines, args):
+    selected = [lines[int(args[0])]] if args else lines
+    for line in selected:
+        print(json.dumps(line))
 
 def cmd_plan(lines, args):
     _show_write(lines, 'PLAN.md')
@@ -277,11 +300,14 @@ def cmd_decomposition(lines, args):
 
 def _final_file_content(lines, name, require=None):
     """Replay Write + Edits for files matching name to get final content."""
+    failed = {b.get('tool_use_id') for line in lines
+              for b in line.get('message', {}).get('content', [])
+              if b.get('type') == 'tool_result' and b.get('is_error') and b.get('tool_use_id')}
     files = {}  # fp -> (last-line-index, content)
     for i, line in enumerate(lines):
         msg = line.get('message', {})
         for block in msg.get('content', []):
-            if block.get('type') != 'tool_use':
+            if block.get('type') != 'tool_use' or block.get('id') in failed:
                 continue
             t = block.get('name')
             if t not in ('Write', 'Edit'):
@@ -296,9 +322,23 @@ def _final_file_content(lines, name, require=None):
                 _, content = files[fp]
                 old_s = inp.get('old_string', '')
                 new_s = inp.get('new_string', '')
-                if not old_s or old_s not in content:
+                if not old_s:
                     continue
-                if inp.get('replace_all'):
+                if old_s not in content:
+                    if not inp.get('match_line_whitespace'):
+                        continue
+                    # OpenCode accepts line-whitespace differences. Replay only
+                    # an unambiguous block; do not guess its other fuzzy matches.
+                    pattern = '\n'.join(r'^[ \t]*' + re.escape(row.strip(' \t')) + r'[ \t]*$'
+                                        for row in old_s.splitlines())
+                    if old_s.endswith('\n'):
+                        pattern += '\n'
+                    matches = list(re.finditer(pattern, content, re.MULTILINE))
+                    if not matches or (len(matches) != 1 and not inp.get('replace_all')):
+                        continue
+                    content = re.sub(pattern, lambda _: new_s, content,
+                                     count=0 if inp.get('replace_all') else 1, flags=re.MULTILINE)
+                elif inp.get('replace_all'):
                     content = content.replace(old_s, new_s)
                 else:
                     content = content.replace(old_s, new_s, 1)
@@ -350,11 +390,15 @@ def _show_write(lines, name, require=None, last_only=False):
 
 def cmd_errors(lines, args):
     for i, line in enumerate(lines):
+        if line.get('type') == 'error':
+            print(f"=== LINE {i} HARNESS ERROR ===\n{_error_message(line.get('error'))}\n")
+        if line.get('type') == 'raw_output':
+            print(f"=== LINE {i} UNPARSED OUTPUT ===\n{line.get('text')}\n")
         msg = line.get('message', {})
         for block in msg.get('content', []):
             if block.get('type') == 'tool_result':
                 c = block.get('content', '')
-                if isinstance(c, str) and any(kw in c for kw in ['FAIL in', 'ERROR in', 'Syntax error', 'Unable to resolve', 'CompilerException', 'ClassCastException', 'NullPointerException', 'IllegalArgumentException']):
+                if isinstance(c, str) and (block.get('is_error') or any(kw in c for kw in ['FAIL in', 'ERROR in', 'Syntax error', 'Unable to resolve', 'CompilerException', 'ClassCastException', 'NullPointerException', 'IllegalArgumentException'])):
                     # Skip reference file reads that happen to contain these strings
                     if c.startswith('1\t#'):
                         continue
@@ -487,12 +531,19 @@ def cmd_test_runs(lines, args):
         for block in msg.get('content', []):
             if block.get('type') == 'tool_use' and block.get('name') == 'Bash':
                 cmd = block.get('input', {}).get('command', '')
-                if 'clojure -X:test' in cmd:
+                invokes_clojure = re.search(
+                    r'(?:^|[;&|\n])\s*(?:timeout\s+\d+(?:\.\d+)?[smhd]?\s+)?(?:clojure|clj)\s', cmd)
+                test_entry = re.search(r'-[MX](?::[\w-]+)*:test(?=[:\s]|$)|\((?:[\w.-]+/)?run-tests\b', cmd)
+                if invokes_clojure and test_entry:
                     print(f"LINE {i}: {cmd[:150]}")
                     # Find result
-                    for j in range(i+1, min(i+5, len(lines))):
+                    for j in range(i+1, len(lines)):
                         msg2 = lines[j].get('message', {})
                         for b2 in msg2.get('content', []):
+                            if block.get('id') and b2.get('tool_use_id') != block['id']:
+                                continue
+                            if not block.get('id') and j >= i+5:
+                                continue
                             c = b2.get('content', '')
                             if isinstance(c, str) and ('assertions' in c or 'FAIL' in c or 'ERROR' in c or 'Syntax error' in c):
                                 result_lines = c.strip().split('\n')
@@ -686,17 +737,9 @@ def cmd_run_overview(lines, args):
     for path in files:
         first = None
         last = None
-        with open(path) as f:
-            for line in f:
-                try:
-                    o = json.loads(line)
-                except Exception:
-                    continue
-                ts = o.get('timestamp')
-                if ts:
-                    if first is None:
-                        first = ts
-                    last = ts
+        times = [o['timestamp'] for o in load(path) if o.get('timestamp')]
+        if times:
+            first, last = min(times), max(times)
         if first is None:
             continue
         name = os.path.basename(path)
@@ -731,6 +774,9 @@ def cmd_run_overview(lines, args):
         labeled.append((first, last, label))
     rows = labeled
     rows.sort()
+    if not rows:
+        print('(no timestamps available)')
+        return
     def parse(ts):
         return datetime.fromisoformat(ts.replace('Z', '+00:00'))
     run_start = parse(rows[0][0])
@@ -753,6 +799,7 @@ def cmd_run_overview(lines, args):
 
 COMMANDS = {
     'summary': cmd_summary,
+    'events': cmd_events,
     'plan': cmd_plan,
     'validation': cmd_validation,
     'implicit-spec': cmd_implicit_spec,
@@ -787,8 +834,15 @@ if __name__ == '__main__':
     phase = None
     attempt = None
     subsystem = None
+    path = None
     while args and args[0].startswith('--'):
-        if args[0] == '--phase':
+        if args[0] == '--file':
+            if len(args) < 2:
+                sys.stderr.write('ERROR: --file requires a path\n')
+                sys.exit(2)
+            path = args[1]
+            args = args[2:]
+        elif args[0] == '--phase':
             if len(args) < 2:
                 sys.stderr.write("ERROR: --phase requires an argument\n")
                 sys.exit(2)
@@ -812,6 +866,9 @@ if __name__ == '__main__':
             args = args[2:]
         else:
             break
+    if path is not None and any(v is not None for v in (phase, attempt, subsystem)):
+        sys.stderr.write('ERROR: --file cannot be combined with phase selection\n')
+        sys.exit(2)
     if attempt is not None and phase is None:
         sys.stderr.write("ERROR: --attempt requires --phase\n")
         sys.exit(2)
@@ -824,6 +881,6 @@ if __name__ == '__main__':
     if args[0] in MULTI_TRANSCRIPT_COMMANDS:
         COMMANDS[args[0]](None, args[1:])
     else:
-        transcript_path = resolve_transcript_path(phase, attempt, subsystem)
+        transcript_path = path or resolve_transcript_path(phase, attempt, subsystem)
         lines = load(transcript_path)
         COMMANDS[args[0]](lines, args[1:])

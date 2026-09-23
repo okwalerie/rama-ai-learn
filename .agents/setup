@@ -26,7 +26,7 @@ as_root() {
 install_system_packages() {
   local packages=()
   local package
-  for package in curl git jq nano rlwrap unzip openjdk-17-jdk-headless; do
+  for package in curl git jq nano rlwrap unzip python3 bubblewrap openjdk-17-jdk-headless; do
     if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'install ok installed'; then
       packages+=("$package")
     fi
@@ -117,6 +117,14 @@ install_codex() {
   fi
 }
 
+install_opencode() {
+  if command -v opencode >/dev/null 2>&1 && [ "$(opencode --version)" = "1.18.32" ]; then
+    echo 'OpenCode 1.18.32 already installed.'
+  else
+    npm install --global opencode-ai@1.18.32
+  fi
+}
+
 install_nrepl_tools() {
   export PATH="${HOME}/.local/bin:${PATH}"
   mkdir -p "${HOME}/.local/bin"
@@ -155,6 +163,7 @@ step 'Install clj-kondo' install_clj_kondo
 step 'Install clojure-lsp' install_clojure_lsp
 step 'Install Node.js and Claude Code' install_claude_code
 step 'Install Codex CLI' install_codex
+step 'Install OpenCode CLI' install_opencode
 step 'Install Clojure nREPL helpers' install_nrepl_tools
 step 'Prefetch Maven and Git dependencies' prefetch_deps
 

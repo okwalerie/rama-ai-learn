@@ -1,7 +1,7 @@
 FROM eclipse-temurin:21-jdk-jammy
 
 RUN apt-get update && apt-get install -y \
-    curl git rlwrap jq nano unzip \
+    curl git rlwrap jq nano unzip python3 bubblewrap \
     && rm -rf /var/lib/apt/lists/*
 
 # Clojure CLI
@@ -43,6 +43,6 @@ RUN curl -fsSL https://raw.githubusercontent.com/clojure-lsp/clojure-lsp/master/
 ARG CACHEBUST=1
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
-    && npm install -g @anthropic-ai/claude-code
+    && npm install -g @anthropic-ai/claude-code opencode-ai@1.18.32
 
 WORKDIR /work
