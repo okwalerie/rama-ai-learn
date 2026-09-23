@@ -26,6 +26,20 @@ File-sync is an implemented candidate (author 2/710 green), not accepted yet.
 Clicks is an implemented candidate (author 4/388 green) needing known harness
 fairness fixes. Scheduler reference is partial; nine others are plan-only.
 
+Click independent semantic validation returned two private files (worker local
+271ee78): campaign-scoped identity, divergent 179/180 watermark boundaries,
+immutable late/billed audits and conflicting retries. Parent inspected literal
+expectations/helpers against the public contract and ran selected suite:
+`clojure -J-Xmx1600m -X:test-private-harness :nses '[hld-ad-click-aggregation.independent-semantics-test]'`
+→ 2 tests/26 assertions/0 failures/0 errors, exit 0; parent log
+`/tmp/hld-click-independent-parent.log`. Contract manifest and reference SHA
+match frozen inputs. Worker additionally reports full suite 6/414 green and
+compiled late-replay mutant 6 failures/0 errors, restored byte-identically;
+parent has not rerun that mutant. These are explicit replay checks, not process
+loss injection. Click acceptance still awaits separate fairness fixes and final
+combined parent suite; do not overwrite the new independent private files when
+transferring that worker's package.
+
 Frozen inputs are `.amp/hld-program/transfers/hld-*.tar.gz`, each with README,
 protocol and deps SHA256 manifest plus IMPLEMENTER_BRIEF. New workers verify
 archive and contract hashes. They cannot silently change public contracts.
