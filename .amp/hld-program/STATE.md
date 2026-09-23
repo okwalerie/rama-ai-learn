@@ -3,13 +3,21 @@
 Owner: https://ampcode.com/threads/T-01a0cd1f-f3a0-77ae-b5c5-f68127682fa0
 Parent: https://ampcode.com/threads/T-01a0cd0c-8923-7366-bb23-3409896b6644
 
-## Latest checkpoint — September 23, 2026, 16:15 UTC
+## Latest checkpoint — September 23, 2026, memory-pressure stop
+
+Parent Puck explicitly instructed no further concurrent JVMs or evaluation
+fan-out from this memory-pressured coordinator. Preserve/checkpoint first,
+stop/reap current diagnostics, inspect memory, and hand off to a clean orb if
+memory remains critical. Report mitigation/handoff to parent and in final reply.
+All author/validator children have completed; no active child write ownership
+remains. Coordinator owns the integrated checkout and remaining checks.
 
 This section supersedes counts and ownership below. All 15 implementation
 snapshots are consolidated locally on hld-case-studies; nothing shipped and
-all 30 evaluations remain UNSTARTED. Nine packages accepted after parent
+all 30 evaluations remain UNSTARTED. Twelve packages accepted after parent
 inspection and final suite: metrics 4/312, URL 4/270, rate 4/360, file-sync
-2/710, clicks 6/426, scheduler 3/132, flags 2/120, payment 4/194, RAG 5/86
+2/710, clicks 6/426, scheduler 3/132, flags 2/120, payment 4/194, RAG 5/86,
+exchange 7/10096, autocomplete 4/356, hotel 5/160 plus reference-only 2/20
 (tests/assertions, all zero failures/errors and exit 0).
 
 Newest parent logs: /tmp/hld-{scheduler,flags,payment,rag}-parent-final.log.
@@ -23,20 +31,68 @@ evidence, not represented as parent executions. IPC recovery ERROR messages
 occur despite passing test footers. Opaque bytes and crash/retry interleavings
 remain unproven by operation counts or module updates.
 
-Exchange final independent private suite integrated; parent PID 80626 running
-to /tmp/hld-exchange-parent-final.log (expected 7/10096). Autocomplete validator
-T-01a0cef5-5189-7629-ac7d-ce93c44bd0ef repairing private fairness: depot-read
-distribution is not a storage-placement requirement; larger growth populations
-requested. First return staged only, not accepted. Independent private validators
-active: crawler T-01a0cf06-d7f3-7099-91ff-314e4c01de2f; notification
-T-01a0cf06-f7e5-759a-ab0c-a7ad4c2f2c5c; hotel T-01a0cf07-05b3-7660-970f-3e58f424db2d.
-All were asked to reply, not wait_for_threads.
+Exchange and autocomplete final parent logs preserved under each package's
+test-resources/PARENT_HARNESS.log; same for scheduler, flags, payment and RAG.
+Autocomplete now compares 300→3000 prefix candidates, 60→601 sessions and
+20→320 prior trends. Depot task distribution is diagnostic, not a requirement.
+Local accepted integration commits 7a87930, bd1808c, b3cad95 remain unpushed.
 
-Ticketing original owner T-01a0ced3-8775-7508-b98f-b0f0d100dd54 retains exclusive
-repair ownership. max.records=1 workaround not accepted; controlled 200-record
-yielding/plain-read and order-stamp experiments requested. Oracle did not prove
-aggregation reorders stamps; yielding read views are a competing hypothesis.
-Do not publish the unsupported diagnosis or reduce throughput to mask the bug.
+Hotel private return c2efc14 integrated; parent removed unpublished absolute
+60/120 I/O caps in favor of paired 2×baseline+24 growth. Parent full suite and
+reference-only failure/order checks passed; logs copied to package validation/
+parent-harness.log and parent-reference.log, local commit a1301cd.
+All15 actual Clojure resource checks passed: solver aliases exclude reference,
+harness aliases resolve test-resources. Registry parser finds 15 unique packages,
+five each in batches6/7/8. Public-only solver snapshot excludes .amp ledgers and
+root catalogue; reviewed scripts/isolate_solver.py allowlist.
+Notification independent return741ed2e integrated. Parent PID119479 stopped
+with exit143 under memory pressure; worker heartbeats/ZooKeeper timed out and
+no final footer was obtained. /tmp/hld-notification-parent-final.log is NOT a
+pass (worker12/188 was green, unchanged reference). Rerun alone in a healthy orb.
+Crawler private return ebc82e8 integrated (10/2890 worker baseline). Original
+author T-01a0ced5-dfe8-7138-a8f6-a3253d21c8b5 owns reference repair: long loops
+need cooperative yielding without breaking host ordering. The query-space
+defect claim was withdrawn on reading frozen README/protocol: only PATH
+specifies 0x21..0x7E; QUERY says printable ASCII, conventionally including
+space. Parent removed invalid rejection assertion; PID 103237/log
+/tmp/hld-crawler-query-space-red.log tests that invalid interpretation and
+must NOT be counted as defect or mutation evidence. Do not accept crawler
+until repaired reference and final combined suite pass. Author reference-only
+d46ef3c returned and integrated from /tmp/hld-crawler-yield-repaired.clj: per-host
+sequential accumulator plus ordered command loop and inner cooperative yields.
+Public/query regex unchanged. Independent private tests plus parent valid-!~
+case are integrated, expected10/2892. Final combined parent suite NOT RUN.
+Worker controlled paused1000-blocked-head sequence passed2/4; no direct yield
+suspension counter. PLAN.md no-yield statements need supersession note.
+All workers replied; do not wait_for_threads.
+
+Ticketing repaired snapshot734f34a transferred; original owner finished.
+max.records=1 workaround removed; controlled 200-record
+yielding/plain-read and order-stamp experiments show ordered stamps in both;
+failing yielding seat read saw empty seats after add, plain read saw writes.
+Plain ETL read with max.records=200 passed parent9/214 after parent paired
+256→1280 same-event seats/holds/requests/compensations replaced absolute caps;
+reference-only diagnostic1/16 also passed. Internal visibility mechanism remains
+unproven; parent adjusted source comment to observations only.
+Ticketing scan control PID129793 stopped exit143 after no progress under memory
+pressure. It is inconclusive, not a detected mutant. Reference RESTORED and
+hash verified44ec61428e8193aad61eddf57a2b8c0d13407de340a7be8009970f2b4ace5760
+from /tmp/hld-ticketing-parent-reference.clj. No mutant remains. Parent9/214
+and diagnostic1/16 passed before mutation; rerun full harness after restoration
+before final acceptance. New private paired growth test has no executed scan
+control yet; run one in healthy environment if feasible, restore and rerun.
+
+Remaining delivery: finish ticketing restored suite, notification clean suite,
+crawler combined suite and private validation notes; all frozen contract hashes;
+commit final registrations/catalogue; push branch, create PR against master,
+squash merge under user shipment authorization; only then30 fresh Medium-orb
+evaluation cells (not coordinator-local JVMs). Read EVALUATOR_BRIEF.md and
+EVALUATIONS.md for exact models, strict isolation, artifact/report requirements,
+fresh retries and quota/contamination rules. All30 cells still UNSTARTED.
+Latest remote master623ef024b59632c7d2aa253bc1d12679ab90615f, local branch
+hld-case-studies includes unpushed commits and must transfer via files/archive,
+not commit ID alone. Transfer full tracked checkpoint plus logs and manifests;
+do not restart/rebase/discard dirty work before capture.
 
 ## Current authoritative checkpoint — September 23, 2026, fan-out
 

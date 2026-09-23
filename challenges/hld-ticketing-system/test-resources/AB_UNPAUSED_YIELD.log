@@ -1,0 +1,115 @@
+TICKETING_TRACE_SORT [[1 create]]
+TICKETING_TRACE_DECIDE create clock nil seats nil hold nil
+TICKETING_TRACE_SORT [[2 add] [3 h1] [4 h2] [5 tick] [6 h3] [7 late]]
+TICKETING_TRACE_DECIDE add clock 0 seats {} hold nil
+TICKETING_TRACE_DECIDE h1 clock 0 seats {} hold nil
+TICKETING_TRACE_DECIDE h2 clock 0 seats {c {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}, b {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}} hold nil
+TICKETING_TRACE_DECIDE tick clock 0 seats nil hold nil
+TICKETING_TRACE_DECIDE h3 clock 7 seats {a {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}, b {:hold-id h2, :user-id other, :deadline 11, :confirmed? false}} hold nil
+TICKETING_TRACE_DECIDE late clock 7 seats nil hold nil
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:72)
+expected: (= (accepted :hold-seats {:hold-id "h1", :deadline 7}) (p/get-outcome b "e" "h1"))
+  actual: (not (= {:status :accepted, :command :hold-seats, :conflicting-attempts 0, :hold-id "h1", :deadline 7} {:status :rejected, :command :hold-seats, :conflicting-attempts 0, :reason :no-such-seat}))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:73)
+expected: (= (rejected :hold-seats :seat-unavailable {:unavailable-seats ["b"]}) (p/get-outcome b "e" "h2"))
+  actual: (not (= {:status :rejected, :command :hold-seats, :reason :seat-unavailable, :conflicting-attempts 0, :unavailable-seats ["b"]} {:status :accepted, :command :hold-seats, :conflicting-attempts 0, :hold-id "h2", :deadline 11}))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:75)
+expected: (= (accepted :hold-seats {:hold-id "h3", :deadline 12}) (p/get-outcome b "e" "h3"))
+  actual: (not (= {:status :accepted, :command :hold-seats, :conflicting-attempts 0, :hold-id "h3", :deadline 12} {:status :rejected, :command :hold-seats, :conflicting-attempts 0, :reason :seat-unavailable, :unavailable-seats ["b"]}))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:76)
+expected: (= (rejected :confirm-hold :hold-expired {:compensation-seq 1}) (p/get-outcome b "e" "late"))
+  actual: (not (= {:status :rejected, :command :confirm-hold, :reason :hold-expired, :conflicting-attempts 0, :compensation-seq 1} {:status :rejected, :command :confirm-hold, :conflicting-attempts 0, :reason :no-such-hold}))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:78)
+expected: (= [{:seq 1, :request-id "late", :hold-id "h1", :user-id "owner", :payment-ref "paid", :reason :hold-expired}] (p/get-compensations b "e" 0 1))
+  actual: (not (= [{:seq 1, :request-id "late", :hold-id "h1", :user-id "owner", :payment-ref "paid", :reason :hold-expired}] []))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:81)
+expected: (= {:state :held, :hold-id "h3", :user-id "other"} (get (p/get-seats b "e" ["a" "a" "d"]) "a"))
+  actual: (not (= {:state :held, :hold-id "h3", :user-id "other"} {:state :available, :hold-id nil, :user-id nil}))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:85)
+expected: (= :expired (:state (p/get-hold b "e" "h1")))
+  actual: (not (= :expired nil))
+TICKETING_TRACE_SORT [[8 stale-release]]
+TICKETING_TRACE_DECIDE stale-release clock 7 seats nil hold nil
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:88)
+expected: (= {"a" {:state :held, :hold-id "h3", :user-id "other"}, "b" {:state :held, :hold-id "h3", :user-id "other"}} (p/get-seats b "e" ["a" "b"]))
+  actual: (not (= {"a" {:state :held, :hold-id "h3", :user-id "other"}, "b" {:state :held, :hold-id "h3", :user-id "other"}} {"a" {:state :available, :hold-id nil, :user-id nil}, "b" {:state :held, :hold-id "h2", :user-id "other"}}))
+TICKETING_TRACE_SORT [[9 good] [10 same] [11 different] [12 wrong] [13 sold-release] [14 late] [15 late2]]
+TICKETING_TRACE_DECIDE good clock 7 seats nil hold nil
+TICKETING_TRACE_DECIDE same clock 7 seats nil hold nil
+TICKETING_TRACE_DECIDE different clock 7 seats nil hold nil
+TICKETING_TRACE_DECIDE wrong clock 7 seats nil hold nil
+TICKETING_TRACE_DECIDE sold-release clock 7 seats nil hold nil
+TICKETING_TRACE_DECIDE late2 clock 7 seats nil hold nil
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:99)
+expected: (= (rejected :release-hold :hold-expired) (p/get-outcome b "e" "stale-release"))
+  actual: (not (= {:status :rejected, :command :release-hold, :reason :hold-expired, :conflicting-attempts 0} {:status :rejected, :command :release-hold, :conflicting-attempts 0, :reason :no-such-hold}))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:100)
+expected: (= (accepted :confirm-hold {:seat-ids ["a" "b"], :payment-ref "p1"}) (p/get-outcome b "e" "good"))
+  actual: (not (= {:status :accepted, :command :confirm-hold, :conflicting-attempts 0, :seat-ids ["a" "b"], :payment-ref "p1"} {:status :rejected, :command :confirm-hold, :conflicting-attempts 0, :reason :no-such-hold}))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:102)
+expected: (= (rejected :confirm-hold :hold-confirmed) (p/get-outcome b "e" "same"))
+  actual: (not (= {:status :rejected, :command :confirm-hold, :reason :hold-confirmed, :conflicting-attempts 0} {:status :rejected, :command :confirm-hold, :conflicting-attempts 0, :reason :no-such-hold}))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:103)
+expected: (= (rejected :confirm-hold :hold-confirmed {:compensation-seq 2}) (p/get-outcome b "e" "different"))
+  actual: (not (= {:status :rejected, :command :confirm-hold, :reason :hold-confirmed, :conflicting-attempts 0, :compensation-seq 2} {:status :rejected, :command :confirm-hold, :conflicting-attempts 0, :reason :no-such-hold}))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:105)
+expected: (= (rejected :confirm-hold :not-owner) (p/get-outcome b "e" "wrong"))
+  actual: (not (= {:status :rejected, :command :confirm-hold, :reason :not-owner, :conflicting-attempts 0} {:status :rejected, :command :confirm-hold, :conflicting-attempts 0, :reason :no-such-hold}))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:106)
+expected: (= (rejected :release-hold :hold-confirmed) (p/get-outcome b "e" "sold-release"))
+  actual: (not (= {:status :rejected, :command :release-hold, :reason :hold-confirmed, :conflicting-attempts 0} {:status :rejected, :command :release-hold, :conflicting-attempts 0, :reason :no-such-hold}))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:107)
+expected: (= [1 2 3] (mapv :seq (p/get-compensations b "e" 0 500)))
+  actual: (not (= [1 2 3] []))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:108)
+expected: (= [2 3] (mapv :seq (p/get-compensations b "e" 1 2)))
+  actual: (not (= [2 3] []))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:109)
+expected: (= [1] (mapv :seq (p/get-compensations b "e" 0 1)))
+  actual: (not (= [1] []))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:110)
+expected: (= [2] (mapv :seq (p/get-compensations b "e" 1 1)))
+  actual: (not (= [2] []))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:111)
+expected: (= [3] (mapv :seq (p/get-compensations b "e" 2 1)))
+  actual: (not (= [3] []))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:114)
+expected: (= {:state :confirmed, :hold-id "h3", :user-id "other"} (get (p/get-seats b "e" ["a"]) "a"))
+  actual: (not (= {:state :confirmed, :hold-id "h3", :user-id "other"} {:state :available, :hold-id nil, :user-id nil}))
+TICKETING_TRACE_SORT [[1 create] [2 add] [3 h1] [4 h2] [5 tick] [6 h3] [7 late]]
+TICKETING_TRACE_DECIDE create clock nil seats nil hold nil
+TICKETING_TRACE_DECIDE add clock 0 seats {} hold nil
+TICKETING_TRACE_DECIDE h1 clock 0 seats {a {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}, b {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}} hold nil
+TICKETING_TRACE_DECIDE h2 clock 0 seats {c {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}, b {:hold-id h1, :user-id owner, :deadline 7, :confirmed? false}} hold nil
+TICKETING_TRACE_DECIDE tick clock 0 seats nil hold nil
+TICKETING_TRACE_DECIDE h3 clock 7 seats {a {:hold-id h1, :user-id owner, :deadline 7, :confirmed? false}, b {:hold-id h1, :user-id owner, :deadline 7, :confirmed? false}} hold nil
+TICKETING_TRACE_DECIDE late clock 7 seats nil hold {:user-id owner, :seat-ids [a b], :deadline 7, :status :held, :payment-ref nil}
+TICKETING_TRACE_SORT [[8 stale-release]]
+TICKETING_TRACE_DECIDE stale-release clock 7 seats nil hold {:user-id owner, :seat-ids [a b], :deadline 7, :status :held, :payment-ref nil}
+TICKETING_TRACE_SORT [[9 good] [10 same] [11 different] [12 wrong] [13 sold-release] [14 late] [15 late2]]
+TICKETING_TRACE_DECIDE good clock 7 seats nil hold {:user-id other, :seat-ids [a b], :deadline 12, :status :held, :payment-ref nil}
+TICKETING_TRACE_DECIDE same clock 7 seats nil hold {:user-id other, :seat-ids [a b], :deadline 12, :status :confirmed, :payment-ref p1}
+TICKETING_TRACE_DECIDE different clock 7 seats nil hold {:user-id other, :seat-ids [a b], :deadline 12, :status :confirmed, :payment-ref p1}
+TICKETING_TRACE_DECIDE wrong clock 7 seats nil hold {:user-id other, :seat-ids [a b], :deadline 12, :status :confirmed, :payment-ref p1}
+TICKETING_TRACE_DECIDE sold-release clock 7 seats nil hold {:user-id other, :seat-ids [a b], :deadline 12, :status :confirmed, :payment-ref p1}
+TICKETING_TRACE_DECIDE late2 clock 7 seats nil hold {:user-id owner, :seat-ids [a b], :deadline 7, :status :held, :payment-ref nil}

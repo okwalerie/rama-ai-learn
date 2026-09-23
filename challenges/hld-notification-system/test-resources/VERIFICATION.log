@@ -1,0 +1,10 @@
+
+Running tests in #{"test-private"}
+
+Testing hld-notification-system.notification-test
+15:54:51.977 [Worker bb1ad573 00000000@2002-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - :rpl.rama.distributed.worp.core.resolve/worp-resolve-leader-exception LeaderNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-notification-system.module/NotificationModule, :module-id bb1ad573-19b8-9cd8-68fb-0e6f684df992, :task-id 2, :replica-id nil}
+15:55:57.270 [Worker bb1ad573 00000000@2002-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - :rpl.rama.distributed.worp.core.resolve/worp-resolve-leader-exception LeaderNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-notification-system.module/NotificationModule, :module-id bb1ad573-19b8-9cd8-68fb-0e6f684df992, :task-id 3, :replica-id nil}
+
+Ran 8 tests containing 90 assertions.
+0 failures, 0 errors.
+ELAPSED=169.97 s EXIT=0
