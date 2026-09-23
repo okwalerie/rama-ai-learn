@@ -1,0 +1,21 @@
+
+Running tests in #{"test-private"}
+
+Testing hld-stock-exchange.private-test
+
+FAIL in (matching-and-retries) (private_test.clj:52)
+expected: (= [100 100] (mapv :price (p/get-trades b "X" 0 10)))
+  actual: (not (= [100 100] [1 1]))
+16:05:31.798 [Worker bb1ad573 00000000@2002-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - :rpl.rama.distributed.worp.core.resolve/worp-resolve-leader-exception LeaderNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-stock-exchange.module/StockExchange, :module-id bb1ad573-19b8-9cd8-68fb-0e6f684df992, :task-id 2, :replica-id nil}
+
+FAIL in (matching-and-retries) (private_test.clj:52)
+expected: (= [100 100] (mapv :price (p/get-trades b "X" 0 10)))
+  actual: (not (= [100 100] [1 1]))
+
+Ran 1 tests containing 48 assertions.
+2 failures, 0 errors.
+Execution error (ExceptionInfo) at cognitect.test-runner.api/test (api.clj:30).
+Test failures or errors occurred.
+
+Full report at:
+/tmp/clojure-17905871057168793251.edn

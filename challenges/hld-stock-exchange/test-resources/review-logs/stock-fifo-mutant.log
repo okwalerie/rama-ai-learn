@@ -1,0 +1,28 @@
+
+Running tests in #{"test-private"}
+
+Testing hld-stock-exchange.private-test
+
+FAIL in (matching-and-retries) (private_test.clj:53)
+expected: (= [[1 "a1" 5] [2 "a2" 1]] (mapv (juxt :seq :maker-order-id :qty) (p/get-trades b "X" 0 10)))
+  actual: (not (= [[1 "a1" 5] [2 "a2" 1]] [[1 "a2" 3] [2 "a1" 3]]))
+
+FAIL in (matching-and-retries) (private_test.clj:71)
+expected: (= ["a1" "a2" "a2" "a4"] (mapv :maker-order-id (p/get-trades b "X" 0 10)))
+  actual: (not (= ["a1" "a2" "a2" "a4"] ["a2" "a1" "a4" "a1"]))
+
+FAIL in (matching-and-retries) (private_test.clj:53)
+expected: (= [[1 "a1" 5] [2 "a2" 1]] (mapv (juxt :seq :maker-order-id :qty) (p/get-trades b "X" 0 10)))
+  actual: (not (= [[1 "a1" 5] [2 "a2" 1]] [[1 "a2" 3] [2 "a1" 3]]))
+
+FAIL in (matching-and-retries) (private_test.clj:71)
+expected: (= ["a1" "a2" "a2" "a4"] (mapv :maker-order-id (p/get-trades b "X" 0 10)))
+  actual: (not (= ["a1" "a2" "a2" "a4"] ["a2" "a1" "a4" "a1"]))
+
+Ran 1 tests containing 48 assertions.
+4 failures, 0 errors.
+Execution error (ExceptionInfo) at cognitect.test-runner.api/test (api.clj:30).
+Test failures or errors occurred.
+
+Full report at:
+/tmp/clojure-1975341293430969088.edn
