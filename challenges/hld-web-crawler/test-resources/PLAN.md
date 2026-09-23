@@ -1,5 +1,16 @@
 # Plan
 
+## Implementation supersession — September 23, 2026
+
+The historical no-yield claims below are superseded by the repaired reference.
+It groups commands per host with the sequential `+ordered-commands` accumulator
+and executes each host's commands in one outer `loop<-`. Cooperative yields in
+that loop and the enqueue/blocked-head loops therefore do not create parallel
+same-host command branches. The original printable-ASCII query regex, including
+space, is unchanged. The author's paused 1,000-blocked-head ordering experiment
+passed 2 tests/4 assertions; it did not directly count yield suspensions.
+See BUILD_VALIDATION.md for combined-suite evidence and remaining limitations.
+
 <!-- Phase 1 artifact for hld-web-crawler (subsystem crawl-frontier-core, whole spec). Design only; no code.
      Revised by the Phase 2 correction pass of 2026-09-23 (bounded-chunk claim path, honest cost model, corrected traces). -->
 

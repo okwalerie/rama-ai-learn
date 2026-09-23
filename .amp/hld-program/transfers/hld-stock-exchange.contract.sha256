@@ -1,0 +1,3 @@
+1477c6d198f681b7325b851c3304c9daa54485299529c15c71d2cd38231ec52e  challenges/hld-stock-exchange/README.md
+3c6fdbca2297f06e755078815022d7713430644495c089a324ebaabd88b8d7f0  challenges/hld-stock-exchange/deps.edn
+2e822005a645a8dfa8f0cb5a438c4f5c6a93abc6749ecc14f3bebd2a28d7b948  challenges/hld-stock-exchange/src/hld_stock_exchange/protocol.clj

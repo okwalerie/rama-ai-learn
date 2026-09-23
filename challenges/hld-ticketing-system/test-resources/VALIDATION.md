@@ -1,5 +1,27 @@
 # Ticketing reference validation
 
+## Successor coordinator acceptance — September 23, 2026
+
+After the source coordinator's inconclusive memory-pressure control, the clean
+successor executed an output-preserving full compensation-history scan: replace
+the bounded range select with `foreign-select` of all compensation entries,
+then filter sequence > cursor and take the requested limit. The selected
+`bounded-own-history-work` test compiled and ran **1 test/56 assertions, 2
+failures/0 errors, exit 1**. Both 2- and 4-task configurations returned correct
+pages but grew from 258→1,294 reads for 256→1,280 history, failing only the two
+page-read growth assertions. Full output: `SUCCESSOR_SCAN_CONTROL.log`.
+
+The reference was restored byte-for-byte to SHA256
+`44ec61428e8193aad61eddf57a2b8c0d13407de340a7be8009970f2b4ace5760` before running
+the full command below: **9 tests/214 assertions, zero failures/errors, exit 0**,
+logged in `SUCCESSOR_HARNESS.log`. Restored page reads stayed 3→3; all six
+measured operations retained equal read/write counts at both task counts.
+The parent-added paired history test replaces unpublished absolute caps.
+The earlier parent reference-only ordering diagnostic (1/16 green) is retained
+in `PARENT_DIAGNOSTIC.log`, not represented as a successor rerun. Original
+deadline/compensation mutant evidence remains author-executed. Operation counts
+do not measure opaque bytes or prove production crash behavior.
+
 ## Executed
 
 From `challenges/hld-ticketing-system`:

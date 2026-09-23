@@ -1,5 +1,26 @@
 # Reference and harness validation
 
+## Repaired-source successor acceptance (2026-09-23)
+
+The clean successor ran `clojure -J-Xmx1600m -X:test-private-harness` alone:
+**10 tests, 2,892 assertions, zero failures/errors, exit 0**. Complete output is
+`SUCCESSOR_HARNESS.log`. This combines the independent private suite and parent
+printable-ASCII boundary assertions against repaired source SHA256
+`47eadfac94c8bf16d3780ea87d8d2beccd4f04ef20d2a4576ebea091cea9d5d9`.
+The reference now has `+ordered-commands`, an outer sequential per-host command
+loop and cooperative yields in command/enqueue/blocked-head loops. PLAN.md's
+supersession note replaces its historical no-yield claims. The original query
+regex accepts printable ASCII space; no invalid query-space rejection is tested.
+
+For 220→1,000 retired/claim records and 520→1,300 queued URLs with ten fixed
+blocked heads, aggregate claim work was 156→141 at 2 tasks and 141→134 at 4
+tasks. Page work for limits 1/20/100 stayed [6,25,105] at both sizes/task counts.
+These are observed operation events, not opaque bytes or production throughput.
+IPC leader/cache/index recovery messages remain in the log without test errors.
+The author's separate paused 1,000-blocked-head ordering experiment passed 2/4;
+the successor did not rerun that reference-only experiment or directly count
+yield suspensions. Neither experiment proves production crash/retry behavior.
+
 ## Private-harness follow-up (2026-09-23)
 
 The transferred candidate archive SHA-256 was

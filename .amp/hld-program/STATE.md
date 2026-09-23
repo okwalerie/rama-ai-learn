@@ -4,6 +4,67 @@ Owner: https://ampcode.com/threads/T-01a0cf2e-5564-7089-b6eb-65b1fc722312
 Source checkpoint: https://ampcode.com/threads/T-01a0cd1f-f3a0-77ae-b5c5-f68127682fa0
 Parent: https://ampcode.com/threads/T-01a0cd0c-8923-7366-bb23-3409896b6644
 
+## All fifteen accepted locally — September 23, 2026, successor
+
+Remaining suites ran sequentially in this healthy orb with
+`clojure -J-Xmx1600m -X:test-private-harness`: notification 12/188, repaired
+crawler 10/2892, restored ticketing 9/214, each zero failures/errors and exit 0.
+Logs are each package's test-resources/SUCCESSOR_HARNESS.log. Prior twelve
+accepted results below remain authoritative, not represented as rerun here.
+Together the final package suites total 81 tests/16516 assertions. Separate
+hotel 2/20 and ticketing ordering 1/16 reference diagnostics remain prior runs.
+
+Ticketing output-preserving full compensation scan compiled and ran selected
+bounded-own-history-work: 1/56, exactly 2 failures/0 errors, exit 1. Correct
+pages but 258→1294 reads at both task counts; restored reads 3→3. See
+SUCCESSOR_SCAN_CONTROL.log and VALIDATION.md. Exact original reference SHA256
+44ec61428e8193aad61eddf57a2b8c0d13407de340a7be8009970f2b4ace5760 restored before
+full green suite. No mutant remains. Crawler repaired source SHA256
+47eadfac94c8bf16d3780ea87d8d2beccd4f04ef20d2a4576ebea091cea9d5d9; PLAN.md and
+BUILD_VALIDATION.md supersede the historical no-yield claims. No direct yield
+suspension counter; I/O event evidence does not measure opaque bytes or prove
+production crash/retry behavior. All45 public hashes remain unchanged.
+
+Registry parser again confirms15 unique packages, batches6/7/8 five each.
+Runner regression `bb scripts/run_challenges_test.bb` passed35 tests/339
+assertions (exit0); all15 actual solver/reference classpath checks from the
+source remain valid because alias files and module locations are unchanged.
+Next: commit validation evidence, push branch, PR against master and squash
+merge under shipment authorization; record actual merge before evaluations.
+All30 evaluation cells remain UNSTARTED, with zero evaluation retries/quota
+pauses/contamination reports. Puck will supply fresh Medium workers only after
+the successor's exact shipped-SHA launch request, initially2A/2B concurrently.
+
+## Successor transfer verified — September 23, 2026
+
+Exact branch imported from Git bundle at 7d980d571bf15bf4c25b3c301e8aeda2c7f8310d,
+including source checkpoint dabdb3e2073dda3faa34a4f8cad2cde4497cb302. This
+supersedes the initial Changes recovery cap_01a0cf28941f706890b8f004f5d25214;
+comparison found identical package code plus three newer retained parent logs.
+No skipped files or deletions. Bundle SHA256:
+3127e0081737e78880c24aeef67c1646e13ae49b459883cc4958c1d35f54c69f.
+Complete manifest archive SHA256:
+e01aa55e296dcd9b2ba76a294668719f901a33982e76925a87e192cd10ed6a3c.
+All 45 README/deps/protocol checks pass. Twelve manifests are original fan-out
+freeze records; metrics, URL and rate manifests were derived from accepted
+commits c2692c9, 6374ec1 and fcb810d respectively and independently checked with
+git show, not represented as original worker manifests. Ticketing reference
+SHA256 remains 44ec61428e8193aad61eddf57a2b8c0d13407de340a7be8009970f2b4ace5760.
+Crawler ordered accumulator, outer sequential loop, cooperative yields and
+original query-space regex are present; notification independent tests present.
+Transfer verification reported to source before any validation JVM started.
+
+Source finally reports zero Java processes, 528 MiB used / 3402 MiB available
+of 3931 MiB. It will not resume heavy work. Successor has about 3406 MiB
+available and runs one JVM suite at a time. Prior twelve acceptances stand.
+Notification clean suite started; crawler combined suite and ticketing scan
+control/restored suite remain. No shipment or evaluation attempt yet.
+
+This delegated successor cannot create threads. Puck confirmed it will create
+only fresh Medium evaluation workers after shipment, from the successor's
+exact shipped SHA, briefs and cell assignments; workers reply directly here.
+Successor retains acceptance, retry, contamination and quota accounting.
+
 ## Latest checkpoint — September 23, 2026, memory-pressure stop
 
 Cleanup completed: scoped orphan JVM cleanup stopped119483;129798 already exited.

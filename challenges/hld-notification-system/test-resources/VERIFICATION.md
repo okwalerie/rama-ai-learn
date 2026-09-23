@@ -1,5 +1,18 @@
 # Private harness verification notes
 
+## Successor coordinator acceptance — September 23, 2026
+
+The clean-orb rerun of the command below completed with exit 0: **12 tests,
+188 assertions, zero failures/errors**, including the independent suite at
+both 2 and 4 tasks. Full output is `SUCCESSOR_HARNESS.log`. This replaces the
+inconclusive memory-pressure run retained in `PARENT_INTERRUPTED.log`; it does
+not relabel that interrupted run as a pass. At 240→1,040 same-recipient history,
+point reads stayed 1, recent/dead-letter reads stayed 102 plus one iterator,
+and submit/attempt/receipt reads and writes stayed equal. Independent unchanged-
+module update tests exercise retained state, not production process crashes.
+Worker negative-control evidence remains in `test-private`; it was inspected,
+not rerun by the successor. IPC recovery/leader messages remain in the log.
+
 Run from `challenges/hld-notification-system`:
 
 ```sh

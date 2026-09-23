@@ -1,0 +1,3 @@
+3a03af6f8ec30a9c4dab1f2c2d54fa555db4c35bfeb754fa16274c42c384062a  challenges/hld-ad-click-aggregation/README.md
+ebe641bc60a29c26ac6dff7843e9d09dd78a1275235eb65b23c38db4c8cda0b5  challenges/hld-ad-click-aggregation/deps.edn
+cf64ddf246b4b22066cbbcc4a3591ec05c4d41b7cd6291655385f35d3b189dad  challenges/hld-ad-click-aggregation/src/hld_ad_click_aggregation/protocol.clj
