@@ -1,0 +1,6 @@
+
+Testing hld-hotel-reservation.reference-test
+16:26:05.946 [Worker bb1ad573 00000000@2002-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - :rpl.rama.distributed.worp.core.resolve/worp-resolve-leader-exception LeaderNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-hotel-reservation.module/HotelModule, :module-id bb1ad573-19b8-9cd8-68fb-0e6f684df992, :task-id 1, :replica-id nil}
+
+Ran 2 tests containing 20 assertions.
+0 failures, 0 errors.
