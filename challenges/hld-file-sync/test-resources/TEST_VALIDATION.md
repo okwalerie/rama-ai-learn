@@ -75,7 +75,7 @@ is used only for `wait-for-processing!`, as the README instructs. PASS.
 ## Efficiency-suite design notes and limitations
 - Ceilings are loose constants (reads < 80/100, writes < 60, point reads
   < 25, page < 180 or 1600, empty tail < 40 + 2·limit, 1024-entry
-  commands < 100 + 3·1024 reads) plus small-vs-big comparisons
+  commands < 100 + 3·1024 reads and < 100 + 2·1024 writes) plus small-vs-big comparisons
   (`big ≤ 2·small + 30`, including the fixed-limit empty tail). Measured
   reference costs at both task counts: register 15 reads / 7 writes,
   commit 16 / 5, copy 13 / 5, rejected 10 / 2, replay 4 / 1, `get-file`
@@ -118,3 +118,29 @@ foreground, after the last suite edit:
 
 ## Verdict
 **pass** — all checks hold with cited tests; the suite is green.
+
+## Independent validation addendum (2026-09-23)
+
+Post-fix Oracle review found one remaining private overconstraint: the
+1024-hash commit assertion capped writes at 60, although README.md permits
+work proportional to the submitted list. The assertion now allows
+`< 100 + 2·(count hashes)` writes; small-input history-growth checks remain.
+The three earlier overconstraints (cross-client winner, ingress task count,
+constant empty-tail work) are resolved. Oracle found no concrete reference
+bug. The accepted barrier scope is prior commands across wrappers of the
+same create-module result, not future commands after invocation.
+
+Independent negative control: sorting `missing-hashes` instead of retaining
+first-occurrence order produced 2 assertion failures, 0 errors, at
+`performance_test_support.clj:123` (expected `["zz" "yy"]`, actual
+`["yy" "zz"]`) across 2- and 4-task launches. This was executable
+contract discrimination, not a compilation failure; the module was restored
+byte-identically to SHA-256 `9048c319e3c63ca003172152088b901398758f91c460cd22749f58e97d317b76`.
+
+After restoration and the private bound correction, a fresh-JVM
+`clojure -J-Xmx1600m -X:test-private-harness` run finished in 117.73 s,
+exit 0: 2 tests, 710 assertions, 0 failures, 0 errors. Both explicit
+task configurations executed. Captured 1024-entry register/commit costs
+at each configuration: 2073 reads / 1036 writes and 1036 reads / 5 writes.
+The reference stayed at the SHA-256 above; the public contract manifest
+verified all three paths with `sha256sum -c`.

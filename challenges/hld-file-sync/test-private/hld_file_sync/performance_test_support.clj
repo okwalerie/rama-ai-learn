@@ -200,7 +200,8 @@
             (is (< (reads r) (+ 100 (* 3 1024))) (str "1024-block register reads " r))
             (is (< (writes r) (+ 100 (* 2 1024))) (str "1024-block register writes " r))
             (is (< (reads cm) (+ 100 (* 3 1024))) (str "1024-hash commit reads " cm))
-            (is (< (writes cm) 60) (str "1024-hash commit writes " cm))
+            (is (< (writes cm) (+ 100 (* 2 (count hashes))))
+                (str "1024-hash commit writes " cm))
             (is (= 1024 (:registered (p/get-outcome c big "wide"))))
             (is (= 2 (p/get-block-size c big "w1023")))
             (is (= {:status :accepted :command :commit-file :conflicting-attempts 0
