@@ -493,6 +493,25 @@
         (is (some #{"-c"} cmd) "should contain -c")
         (is (some #{"model_reasoning_effort=high"} cmd) "should contain reasoning config")))))
 
+(deftest phase-prompt-compatibility-test
+  ;; The runner's Claude slash command must not change the Amp skill's
+  ;; established decision/dead-end capture (or Codex's own skill invocation).
+  (let [claude-prompt (slurp ".claude/commands/challenge-phase.md")
+        amp-prompt (slurp ".agents/skills/challenge-phase/SKILL.md")
+        claude-cmd (claude-phase-cmd "test-ch" :decompose "/root" nil nil)
+        codex-cmd (codex-phase-cmd "test-ch" :decompose "/root" nil nil)]
+    (is (some #{"/challenge-phase test-ch decompose"} claude-cmd))
+    (is (some #{"$challenge-phase test-ch decompose"} codex-cmd))
+    (is (re-find #"Decision:.*\n  Basis:.*\n  Outcome:" claude-prompt))
+    (is (re-find #"(?i)do not write private chain-of-thought" claude-prompt))
+    (is (re-find #"rejected alternatives\s+and dead ends" claude-prompt))
+    (is (re-find #"CONFUSION:" claude-prompt))
+    (is (not (re-find #"append your reasoning AT EACH DECISION POINT" claude-prompt)))
+    (is (re-find #"append your reasoning AT EACH DECISION POINT" amp-prompt))
+    (is (re-find #"the dead ends are the point" amp-prompt))
+    (is (re-find #"CONFUSION:" amp-prompt))
+    (is (not (re-find #"Do NOT write private chain-of-thought" amp-prompt)))))
+
 (deftest tier-cli-parsing-test
   ;; The four required model flags parse into the opts map.
   (testing "model-tier CLI options"
