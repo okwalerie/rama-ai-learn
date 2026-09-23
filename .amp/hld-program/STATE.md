@@ -36,8 +36,30 @@ test callback to the helper's added module argument before the combined run.
 IPC index-recovery/leader-cache messages occurred during click updates without
 test errors. Growth tests remain finite heuristics; opaque value bytes and actual
 process-loss retry behavior remain outside executable coverage. Worker mutation
-evidence is retained but was not rerun by parent. Scheduler remains partial;
-nine others are still implementation-in-progress from plan-only checkpoints.
+evidence is retained but was not rerun by parent.
+
+Three additional implemented candidates transferred, not yet accepted:
+- Scheduler worker dbcb03d: parent inspected reference/harness and independently
+  ran full suite 2 tests/90 assertions/0 failures/errors, exit 0; log
+  `/tmp/hld-scheduler-parent-candidate.log`. Current growth scenario checks
+  correctness only. Independent validator T-01a0ceec-4202-747b-9651-bf2bacfb1d40
+  owns new independent_* tests/evidence for executable bounded-work coverage.
+- Flags worker 53c17b72141057fd2af2991c134efa84f378fcd6: parent inspected candidate;
+  worker explicit namespace run 2/94 green. Duplicate harness/challenge drivers
+  run the same namespace; remove redundant harness driver, not business-contract
+  changes. Private <20-read cap needs growth-based coverage. Validator
+  T-01a0ceed-a400-766c-943c-449a6917c576 owns private cleanup, work/alias checks.
+- Payment worker 0557887: parent inspected durable bounded/subindexed reference
+  and suite; worker 3/89 green. Existing efficiency test is only 4-task and uses
+  unpublished absolute caps. Validator T-01a0ceee-773b-7368-9ad0-1d3b51caa511 owns
+  paired read/write growth at both task counts and adversarial validation.
+
+These validators have exact `*-candidate.tar.gz` inputs with verified SHA256;
+public manifests remain unchanged. Parent will rerun final returned suites;
+do not count these three as accepted from the worker green receipts alone.
+Seven original implementation workers remain outstanding. Reference-harness
+classpath can prefer a solver namespace if present: current authoring orbs have
+no solver implementation; final acceptance must inspect resolved resource paths.
 
 Click independent semantic validation returned two private files (worker local
 271ee78): campaign-scoped identity, divergent 179/180 watermark boundaries,

@@ -1,5 +1,12 @@
 # Plan — subsystem `execution-lifecycle`
 
+Integration note: this historical phase-1 design preceded claims and reads.
+The final combined PState schema is documented in the later subsystem plans
+and implemented in `../hld_job_scheduler/module.clj`: a bounded `:state`
+record and subindexed `:claims` within the same per-execution PState. The
+single ordered depot, microbatch topology, and shared synchronization counter
+remain as designed here.
+
 <!-- Phase 1 artifact for hld-job-scheduler, subsystem 1 of 3 (DECOMPOSITION.json).
 Authority: README.md + protocol docstrings + harness `Synchronizable` docstring.
 IMPLICIT_SPEC.md is derived guidance; its "single-digit ms desired" latency notes,

@@ -1,0 +1,134 @@
+
+Running tests in #{"test-private"}
+
+Testing hld-job-scheduler.functional-test
+
+FAIL in (scheduler-contract) (functional_test_support.clj:35)
+2 tasks
+expected: (= {:claim-id "pre", :node-id "z", :worker-id "w0", :clock 0, :granted? false, :reason :unknown-execution} (p/get-claim b "later" "pre"))
+  actual: (not (= {:claim-id "pre", :node-id "z", :worker-id "w0", :clock 0, :granted? false, :reason :unknown-execution} {:claim-id "pre", :node-id "z", :worker-id "changed", :clock 0, :granted? true, :token 1, :lease-expiry 10}))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:38)
+2 tasks
+expected: (= ["a" "z"] (p/get-claimable-nodes b "later"))
+  actual: (not (= ["a" "z"] ["a"]))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:39)
+2 tasks
+expected: (= {"z" :ready, "a" :ready, "mid" :pending, "end" :pending} (:node-statuses (p/get-execution b "later")))
+  actual: (not (= {"z" :ready, "a" :ready, "mid" :pending, "end" :pending} {"z" :running, "a" :ready, "mid" :pending, "end" :pending}))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:49)
+2 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= {:claim-id "first", :node-id "z", :worker-id "w1", :clock 0, :granted? true, :token 1, :lease-expiry 10} (p/get-claim c "later" "first"))
+  actual: (not (= {:claim-id "first", :node-id "z", :worker-id "w1", :clock 0, :granted? true, :token 1, :lease-expiry 10} {:claim-id "first", :node-id "z", :worker-id "w1", :clock 0, :granted? false, :reason :lease-held}))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:69)
+2 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= {:claim-id "first", :node-id "z", :worker-id "w1", :clock 0, :granted? true, :token 1, :lease-expiry 10} (p/get-claim c "later" "first"))
+  actual: (not (= {:claim-id "first", :node-id "z", :worker-id "w1", :clock 0, :granted? true, :token 1, :lease-expiry 10} {:claim-id "first", :node-id "a", :worker-id "other", :clock 10, :granted? true, :token 1, :lease-expiry 20}))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:72)
+2 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= 0 (:attempts (p/get-node c "later" "a")))
+  actual: (not (= 0 1))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:88)
+2 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= :success (:status (p/get-execution c "later")))
+  actual: (not (= :success :running))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:89)
+2 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= :success (:status (p/get-node c "later" "a")))
+  actual: (not (= :success :running))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:90)
+2 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= {:value "a"} (:result (p/get-node c "later" "a")))
+  actual: (not (= {:value "a"} nil))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:91)
+2 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= {:claim-id "blocked", :node-id "mid", :worker-id "w", :clock 0, :granted? false, :reason :dependencies-incomplete} (p/get-claim c "later" "blocked"))
+  actual: (not (= {:claim-id "blocked", :node-id "mid", :worker-id "w", :clock 0, :granted? false, :reason :dependencies-incomplete} {:claim-id "blocked", :node-id "mid", :worker-id "changed", :clock 10, :granted? true, :token 1, :lease-expiry 20}))
+15:32:56.167 [Worker a60d474b 00000000@2006 DTT 1 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc9153783828759648861/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/a60d474b-8481-fa4c-7f06-390462d3a107/local/*execution-events/1/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc9153783828759648861/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/a60d474b-8481-fa4c-7f06-390462d3a107/local/*execution-events/1/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:32:56.170 [Worker a60d474b 00000000@2006 DTT 0 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc9153783828759648861/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/a60d474b-8481-fa4c-7f06-390462d3a107/local/*execution-events/0/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc9153783828759648861/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/a60d474b-8481-fa4c-7f06-390462d3a107/local/*execution-events/0/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+
+FAIL in (scheduler-contract) (functional_test_support.clj:103)
+2 tasks immutable DAG and durable business state on unchanged module update
+expected: (= {:claim-id "pre", :node-id "z", :worker-id "w0", :clock 0, :granted? false, :reason :unknown-execution} (p/get-claim b "later" "pre"))
+  actual: (not (= {:claim-id "pre", :node-id "z", :worker-id "w0", :clock 0, :granted? false, :reason :unknown-execution} {:claim-id "pre", :node-id "z", :worker-id "changed", :clock 0, :granted? true, :token 1, :lease-expiry 10}))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:35)
+4 tasks
+expected: (= {:claim-id "pre", :node-id "z", :worker-id "w0", :clock 0, :granted? false, :reason :unknown-execution} (p/get-claim b "later" "pre"))
+  actual: (not (= {:claim-id "pre", :node-id "z", :worker-id "w0", :clock 0, :granted? false, :reason :unknown-execution} {:claim-id "pre", :node-id "z", :worker-id "changed", :clock 0, :granted? true, :token 1, :lease-expiry 10}))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:38)
+4 tasks
+expected: (= ["a" "z"] (p/get-claimable-nodes b "later"))
+  actual: (not (= ["a" "z"] ["a"]))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:39)
+4 tasks
+expected: (= {"z" :ready, "a" :ready, "mid" :pending, "end" :pending} (:node-statuses (p/get-execution b "later")))
+  actual: (not (= {"z" :ready, "a" :ready, "mid" :pending, "end" :pending} {"z" :running, "a" :ready, "mid" :pending, "end" :pending}))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:49)
+4 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= {:claim-id "first", :node-id "z", :worker-id "w1", :clock 0, :granted? true, :token 1, :lease-expiry 10} (p/get-claim c "later" "first"))
+  actual: (not (= {:claim-id "first", :node-id "z", :worker-id "w1", :clock 0, :granted? true, :token 1, :lease-expiry 10} {:claim-id "first", :node-id "z", :worker-id "w1", :clock 0, :granted? false, :reason :lease-held}))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:69)
+4 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= {:claim-id "first", :node-id "z", :worker-id "w1", :clock 0, :granted? true, :token 1, :lease-expiry 10} (p/get-claim c "later" "first"))
+  actual: (not (= {:claim-id "first", :node-id "z", :worker-id "w1", :clock 0, :granted? true, :token 1, :lease-expiry 10} {:claim-id "first", :node-id "a", :worker-id "other", :clock 10, :granted? true, :token 1, :lease-expiry 20}))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:72)
+4 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= 0 (:attempts (p/get-node c "later" "a")))
+  actual: (not (= 0 1))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:88)
+4 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= :success (:status (p/get-execution c "later")))
+  actual: (not (= :success :running))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:89)
+4 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= :success (:status (p/get-node c "later" "a")))
+  actual: (not (= :success :running))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:90)
+4 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= {:value "a"} (:result (p/get-node c "later" "a")))
+  actual: (not (= {:value "a"} nil))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:91)
+4 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= {:claim-id "blocked", :node-id "mid", :worker-id "w", :clock 0, :granted? false, :reason :dependencies-incomplete} (p/get-claim c "later" "blocked"))
+  actual: (not (= {:claim-id "blocked", :node-id "mid", :worker-id "w", :clock 0, :granted? false, :reason :dependencies-incomplete} {:claim-id "blocked", :node-id "mid", :worker-id "changed", :clock 10, :granted? true, :token 1, :lease-expiry 20}))
+15:33:06.542 [Worker eee70a27 00000000@2003 DTT 2 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc15724642817427860674/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/eee70a27-4a0a-f21a-eb2b-90843b86890e/local/*execution-events/2/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc15724642817427860674/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/eee70a27-4a0a-f21a-eb2b-90843b86890e/local/*execution-events/2/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:33:06.567 [Worker eee70a27 00000000@2003 DTT 1 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc15724642817427860674/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/eee70a27-4a0a-f21a-eb2b-90843b86890e/local/*execution-events/1/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc15724642817427860674/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/eee70a27-4a0a-f21a-eb2b-90843b86890e/local/*execution-events/1/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:33:06.577 [Worker eee70a27 00000000@2003 DTT 3 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc15724642817427860674/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/eee70a27-4a0a-f21a-eb2b-90843b86890e/local/*execution-events/3/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc15724642817427860674/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/eee70a27-4a0a-f21a-eb2b-90843b86890e/local/*execution-events/3/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:33:06.604 [Worker eee70a27 00000000@2003 DTT 0 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc15724642817427860674/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/eee70a27-4a0a-f21a-eb2b-90843b86890e/local/*execution-events/0/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc15724642817427860674/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/eee70a27-4a0a-f21a-eb2b-90843b86890e/local/*execution-events/0/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+
+FAIL in (scheduler-contract) (functional_test_support.clj:103)
+4 tasks immutable DAG and durable business state on unchanged module update
+expected: (= {:claim-id "pre", :node-id "z", :worker-id "w0", :clock 0, :granted? false, :reason :unknown-execution} (p/get-claim b "later" "pre"))
+  actual: (not (= {:claim-id "pre", :node-id "z", :worker-id "w0", :clock 0, :granted? false, :reason :unknown-execution} {:claim-id "pre", :node-id "z", :worker-id "changed", :clock 0, :granted? true, :token 1, :lease-expiry 10}))
+15:33:15.558 [Worker 9a4c53dc 00000000@2003 DTT 1 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc15526446340013831306/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/9a4c53dc-e71d-a129-8a65-49e93185aac2/local/*execution-events/1/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc15526446340013831306/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/9a4c53dc-e71d-a129-8a65-49e93185aac2/local/*execution-events/1/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:33:15.597 [Worker 9a4c53dc 00000000@2003 DTT 0 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc15526446340013831306/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/9a4c53dc-e71d-a129-8a65-49e93185aac2/local/*execution-events/0/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc15526446340013831306/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/9a4c53dc-e71d-a129-8a65-49e93185aac2/local/*execution-events/0/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:33:24.306 [Worker 859b588e 00000000@2003 DTT 3 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc10333610289023972062/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/859b588e-2954-c934-ed0e-93369dc8a74c/local/*execution-events/3/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc10333610289023972062/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/859b588e-2954-c934-ed0e-93369dc8a74c/local/*execution-events/3/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:33:24.309 [Worker 859b588e 00000000@2003 DTT 1 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc10333610289023972062/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/859b588e-2954-c934-ed0e-93369dc8a74c/local/*execution-events/1/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc10333610289023972062/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/859b588e-2954-c934-ed0e-93369dc8a74c/local/*execution-events/1/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:33:24.313 [Worker 859b588e 00000000@2003 DTT 2 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc10333610289023972062/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/859b588e-2954-c934-ed0e-93369dc8a74c/local/*execution-events/2/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc10333610289023972062/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/859b588e-2954-c934-ed0e-93369dc8a74c/local/*execution-events/2/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:33:24.388 [Worker 859b588e 00000000@2003 DTT 0 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc10333610289023972062/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/859b588e-2954-c934-ed0e-93369dc8a74c/local/*execution-events/0/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc10333610289023972062/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/859b588e-2954-c934-ed0e-93369dc8a74c/local/*execution-events/0/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+
+Ran 2 tests containing 90 assertions.
+22 failures, 0 errors.
+Execution error (ExceptionInfo) at cognitect.test-runner.api/test (api.clj:30).
+Test failures or errors occurred.
+
+Full report at:
+/tmp/clojure-12267048674331104117.edn

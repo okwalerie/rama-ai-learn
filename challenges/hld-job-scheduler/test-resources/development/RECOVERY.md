@@ -1,4 +1,9 @@
-# Quota-blocked reference authoring checkpoint
+# Historical quota-blocked reference authoring checkpoint
+
+**Superseded by `FULL_SPEC_REVIEW.md` and the completed module/private harness.**
+The checkpoint below describes the transferred partial implementation before
+this package was completed. Its incomplete status and resume instructions are
+historical, not the current delivery state.
 
 Status: **INCOMPLETE — do not register as validated.** 2026-09-23.
 
