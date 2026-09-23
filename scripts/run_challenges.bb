@@ -29,6 +29,8 @@
    :slow-effort {:desc "Reasoning effort for the slow model (required)"}
    :isolate    {:desc "Run solver phases in a Linux bubblewrap public-only filesystem"
                 :coerce :boolean}
+   :isolate-network {:desc "Also restrict solver egress to provider/docs hosts (implies --isolate)"
+                     :coerce :boolean}
    :verbose    {:desc "Stream agent output to console in real time"
                 :alias :v
                 :coerce :boolean}
@@ -127,6 +129,7 @@
   (println "      --slow-model M      Slow model: planning, validation, decompose, review, hard (required)")
   (println "      --slow-effort E     Reasoning effort for the slow model (required)")
   (println "      --isolate           Linux public-only solver filesystem (bubblewrap required)")
+  (println "      --isolate-network   Provider/docs-only network; implies --isolate")
   (println "  -v, --verbose           Stream agent output to console in real time")
   (println "  -h, --help              Show this help")
   (println)
@@ -634,12 +637,14 @@
 (def ^:dynamic *slow-model* nil)
 (def ^:dynamic *slow-reasoning* nil)
 (def ^:dynamic *isolate* false)
+(def ^:dynamic *isolate-network* false)
 
 (defn solver-command [cmd project-root challenge-name agent-name]
-  (if *isolate*
-    (into ["python3" (str (fs/path project-root "scripts/isolate_solver.py"))
-           "--repo" project-root "--challenge" challenge-name
-           "--agent" agent-name "--"] cmd)
+  (if (or *isolate* *isolate-network*)
+    (into (cond-> ["python3" (str (fs/path project-root "scripts/isolate_solver.py"))
+                   "--repo" project-root "--challenge" challenge-name "--agent" agent-name]
+            *isolate-network* (into ["--network" "strict"])
+            true (conj "--")) cmd)
     cmd))
 
 (defn tier-config
@@ -1256,7 +1261,9 @@
                     (invoke-command! cmd project-root))
                 transcript (str (json/generate-string
                                   {:type "run_metadata" :timestamp (:started-at r)
-                                   :isolation (if *isolate* "bubblewrap-public-only" "none")
+                                   :isolation (cond *isolate-network* "bubblewrap-provider-network"
+                                                    *isolate* "bubblewrap-public-only"
+                                                    :else "none")
                                    :model model :effort reasoning :agent agent-name}) "\n"
                                 (:out r) "\n"
                                 (json/generate-string
@@ -2201,7 +2208,11 @@
           (println "No challenges found matching filters.")
           (System/exit 0))
 
-        (when (and (:isolate opts) (contains? #{"claude" "opencode"} agent-name))
+        (when (and (:isolate-network opts) (not (contains? #{"claude" "opencode"} agent-name)))
+          (throw (ex-info "--isolate-network supports Claude and OpenCode/OpenRouter only" {})))
+
+        (when (and (or (:isolate opts) (:isolate-network opts))
+                   (contains? #{"claude" "opencode"} agent-name))
           (let [{:keys [exit out err]}
                 (invoke-command! ["python3" "scripts/check_solver_models.py"
                                   "--agent" agent-name
@@ -2221,7 +2232,8 @@
               start-ms      (System/currentTimeMillis)
               results       (binding [*verbose* (or (:verbose opts) (:pretty opts))
                                       *pretty* (boolean (:pretty opts))
-                                      *isolate* (boolean (:isolate opts))
+                                      *isolate* (boolean (or (:isolate opts) (:isolate-network opts)))
+                                      *isolate-network* (boolean (:isolate-network opts))
                                       *fast-model* fast-model
                                       *fast-reasoning* fast-effort
                                       *slow-model* slow-model

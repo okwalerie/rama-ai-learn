@@ -1056,6 +1056,11 @@
       (is (= ["python3" "/project/scripts/isolate_solver.py"
               "--repo" "/project" "--challenge" "demo" "--agent" "opencode"
               "--" "opencode" "run" "--" "prompt with spaces"]
+             (solver-command cmd "/project" "demo" "opencode"))))
+    (binding [*isolate-network* true]
+      (is (= ["python3" "/project/scripts/isolate_solver.py"
+              "--repo" "/project" "--challenge" "demo" "--agent" "opencode"
+              "--network" "strict" "--" "opencode" "run" "--" "prompt with spaces"]
              (solver-command cmd "/project" "demo" "opencode"))))))
 
 (deftest native-harness-command-test

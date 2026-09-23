@@ -48,7 +48,7 @@ namespace creation fails closed; there is no unisolated fallback.
 
 The solver sees only the selected README, public source (excluding test-support
 files), deps, kondo config, generic Rama skill, phase instructions, and shared
-library source. It does not see `.git`, encrypted files, private test/reference
+library source. It does not see the project's `.git`, encrypted files, private test/reference
 directories, other challenges, sibling repository mounts, host `/proc`, host
 transcripts, user settings/MCP servers, or `CHALLENGE_KEY`. Public input symlinks
 are rejected. Only the current `implementations/<name>` is persisted; other
@@ -56,24 +56,81 @@ filesystem changes and CLI session state are discarded after each invocation.
 Native stdout/stderr, timing, requested model/effort, and isolation mode are
 preserved in the runner transcript, including failures and retries.
 
-System tools and explicit read-only Maven/Git dependency caches remain available.
+System tools and explicit read-only Maven/Git dependency caches remain available
+(including the two generic `clojure-mcp-light` and Cognitect `test-runner` Git
+object caches required by Clojure; never challenge or sibling repository history).
 Prefetch dependencies on the host first (`.agents/setup` does this). Provider
 environment credentials and selected CLI auth files are allowlisted; unrelated
 secrets, Git credentials, histories, and full home directories are not mounted.
 This supports the standard installed CLI locations used by orb setup/Docker,
 not arbitrary custom installations or provider endpoints.
 
-**Boundary limits:** network is shared for provider access, not filtered. A solver
+**`--isolate` boundary limits:** network is shared for provider access, not filtered. A solver
 could fetch public reference repositories or reach an unsafe host-local REPL or
 file server. Use fresh disposable orbs with no such services; a strict
-no-external-reference evaluation additionally requires a provider-only network
-policy outside this launcher. Do not claim this is an adversarial-code security
+no-external-reference evaluation needs the additional controls and trust decisions
+described below. Do not claim this is an adversarial-code security
 sandbox: provider credentials are readable by the CLI and its tools, installed
 tools/caches/public inputs are trusted, and private scoring executes generated
 code on the host after solving. Do not run hostile submissions or concurrent
 untrusted host processes. Hidden cluster-setup services/custom networking are
 not certified by this filesystem-only boundary. Docker hosts must permit
 unprivileged namespaces; Docker isolation was not validated by the orb tests.
+
+### CONNECT-restricted networking is an additional opt-in boundary
+
+Use **`--isolate-network`** for evaluation solvers. It implies `--isolate` and
+keeps bubblewrap's separate network namespace (no external interface, host
+loopback, or direct DNS route). The only external connection path is a mounted
+Unix socket to a host-side CONNECT proxy. A Python loopback bridge inside the
+namespace supplies `HTTP_PROXY`/`HTTPS_PROXY` to the CLI. Bypassing those variables
+does not restore a route. Proxy and solver terminate with the launcher; denied
+and allowed destinations are recorded in stderr and therefore the native runner
+transcript (without request headers, tokens, paths, or response bodies).
+
+The fixed allowlist permits only CONNECT on **443**, with all resolved addresses
+public and connection made to the checked numeric address (no second DNS lookup):
+
+| Purpose | Exact CONNECT hosts |
+|---|---|
+| Claude first-party | `api.anthropic.com` |
+| OpenCode with OpenRouter | `openrouter.ai` |
+| Official Rama documentation | `redplanetlabs.com` |
+| Dependency repositories | `nexus.redplanetlabs.com`, `repo.maven.apache.org`, `repo.clojars.org` |
+
+GitHub, raw GitHub, other public origins, private/link-local/loopback destinations,
+non-443 ports, plaintext HTTP proxying, and unlisted providers are denied. Each
+agent gets only its own provider host plus docs/dependency hosts. Redirects to
+unlisted hosts fail. OAuth refresh/custom providers/Bedrock/Vertex are not
+supported; provision a currently valid first-party token or OpenRouter API key
+before the run. This mode currently rejects Codex and Pi rather than broadening
+the allowlist. Cluster services outside the solver namespace are unavailable.
+
+Run `.agents/setup` first: it preseeds OpenCode's public models catalog, installs
+ripgrep, and warms Maven/Git/nREPL dependencies. Strict OpenCode loads only the
+preseeded catalog and disables catalog refresh, auto-update, LSP downloads, and
+external/default plugins. Full user CLI configuration is not mounted. New Git
+dependencies cannot be fetched; read-only dependency caches must already contain
+everything needed. Missing prerequisites fail rather than enabling shared
+network access. Claude telemetry and OpenCode npm requests may appear as denied
+destinations; both tested CLIs still completed the logistics smoke requests.
+
+**Residual guarantees:** this is CONNECT-authority and public TCP-endpoint
+enforcement, **not exact HTTP-authority or response-content enforcement**. TLS
+stays end-to-end: the proxy does not inspect SNI, HTTP Host, or HTTP/2 authority.
+Shared CDN virtual hosts/domain fronting or a relay on an allowed service could
+permit indirect reference retrieval. A tested cross-host CDN request returned
+403, but that is not a general proof. Evaluations must explicitly accept this
+trust assumption or use a maintained TLS-terminating HTTP-aware proxy that
+authorizes every request. Even that cannot certify content provenance from
+allowed services. Host private scoring, credentials, trusted caches, and
+non-hostile-submission limitations above still apply.
+
+The evaluation owner accepted this CONNECT/public-destination boundary for the
+non-hostile challenge program, not adversarial reference containment. Keep native
+transcripts and proxy audit logs. **Any observed access to excluded reference
+material invalidates the attempt:** fix the logistics and rerun; do not score it
+as a model failure.
 
 ```bash
 CHALLENGE_KEY=<passphrase> bb run-challenges --isolate -f auction-module --agent claude \
@@ -132,6 +189,20 @@ fast. This is an authorized configuration change, not an automatic fallback.
 Metadata establishes CLI support, not account
 entitlement or proof the provider applies the requested effort. No inference is
 performed by the preflight. Pi/Codex model metadata validation is not implemented.
+
+The authorized evaluation configurations (select the challenge with `-f` or batch
+from `CHALLENGE_ORDER.md`) are:
+
+```bash
+# A: Claude CLI
+CHALLENGE_KEY=<passphrase> bb run-challenges --isolate-network -f <challenge> --agent claude \
+  --slow-model claude-fable-5-1 --slow-effort medium \
+  --fast-model claude-opus-5-5 --fast-effort high
+# B: OpenCode CLI; explicitly authorized GLM substitution
+CHALLENGE_KEY=<passphrase> bb run-challenges --isolate-network -f <challenge> --agent opencode \
+  --slow-model openrouter/z-ai/glm-5.3 --slow-effort high \
+  --fast-model openrouter/meta/muse-spark-1.3-contributor --fast-effort high
+```
 
 
 ## Docker workflow
@@ -227,6 +298,7 @@ Validate the adapters without credentials or model calls:
 python3 -m unittest discover -s scripts -p 'test_transcript_events.py' -v
 python3 -m unittest discover -s scripts -p 'test_isolate_solver.py' -v
 python3 -m unittest discover -s scripts -p 'test_check_solver_models.py' -v
+python3 -m unittest discover -s scripts -p 'test_solver_proxy.py' -v
 bb scripts/run_challenges_test.bb
 python3 scripts/analyze-latest-transcript.py --file scripts/fixtures/transcripts/pi.jsonl summary
 python3 scripts/analyze-latest-transcript.py --file scripts/fixtures/transcripts/opencode.jsonl module
