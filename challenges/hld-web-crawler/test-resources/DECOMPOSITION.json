@@ -1,0 +1,6 @@
+[
+  {
+    "name": "crawl-frontier-core",
+    "scope": "The whole spec. Owns every operation of the CrawlFrontier protocol (src protocol.clj) and all state named by role in README.md and test-resources/IMPLICIT_SPEC.md: canonical URL dedup, per-host lex-ordered queues, host policy, host clock, fenced leases, and claim outcomes. All requirements, bounds, workloads, and edge cases bind by reference to those files; nothing is restated here."
+  }
+]

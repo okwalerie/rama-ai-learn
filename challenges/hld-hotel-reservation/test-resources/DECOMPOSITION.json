@@ -1,0 +1,6 @@
+[
+  {
+    "name": "room-inventory",
+    "scope": "The whole spec, as one stage. Requirements are README.md and src/hld_hotel_reservation/protocol.clj in full (with test-resources/IMPLICIT_SPEC.md as the private author reading of them); nothing here restates them. Operations owned: create-property!, create-room-type!, init-night!, set-rate!, reserve!, cancel-booking!, get-outcome, get-night, get-availability, get-booking, get-booking-events, plus the create-module / wrap-client / Synchronizable contract. State to figure out, named by role: the property and room-type existence records behind the first rejection reasons of every command; the per-night capacity, rate, and incrementally maintained availability backing 'get-night', 'get-availability', 'set-rate!', and the atomic multi-night checks of 'reserve!'; the per-booking record backing 'get-booking' and 'cancel-booking!'; the per-property booking event journal backing 'get-booking-events'; and the per-property request-id outcome store backing 'get-outcome' and the 'Idempotency and conflicts' and 'Validation order' rules. All of it is bound by 'Ordering', 'Durability', 'Invariants', 'Resource guarantees', and 'Shared state' as written in README.md."
+  }
+]

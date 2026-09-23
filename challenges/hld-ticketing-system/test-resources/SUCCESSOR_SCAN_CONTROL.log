@@ -1,0 +1,26 @@
+WARNING: Use of :paths external to the project has been deprecated, please remove: ../../implementations/hld-ticketing-system/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: ../../implementations/hld-ticketing-system/test
+
+Running tests in #{"test-private"}
+
+Testing hld-ticketing-system.ticketing-test
+Ticketing paired work 2 tasks {:seat {:reads 3, :writes 0}, :page {:reads 258, :writes 0}, :hold {:reads 3, :writes 0}, :outcome {:reads 2, :writes 0}, :clock {:reads 1, :writes 0}, :advance {:reads 5, :writes 2}} -> {:seat {:reads 3, :writes 0}, :page {:reads 1294, :writes 0}, :hold {:reads 3, :writes 0}, :outcome {:reads 2, :writes 0}, :clock {:reads 1, :writes 0}, :advance {:reads 5, :writes 2}}
+
+FAIL in (bounded-own-history-work) (ticketing_test.clj:312)
+:page :reads grew with own history: {:seat {:reads 3, :writes 0}, :page {:reads 258, :writes 0}, :hold {:reads 3, :writes 0}, :outcome {:reads 2, :writes 0}, :clock {:reads 1, :writes 0}, :advance {:reads 5, :writes 2}} -> {:seat {:reads 3, :writes 0}, :page {:reads 1294, :writes 0}, :hold {:reads 3, :writes 0}, :outcome {:reads 2, :writes 0}, :clock {:reads 1, :writes 0}, :advance {:reads 5, :writes 2}}
+expected: (<= (get-in large [operation metric]) (+ 24 (* 2 (get-in small [operation metric]))))
+  actual: (not (<= 1294 540))
+Ticketing paired work 4 tasks {:seat {:reads 3, :writes 0}, :page {:reads 258, :writes 0}, :hold {:reads 3, :writes 0}, :outcome {:reads 2, :writes 0}, :clock {:reads 1, :writes 0}, :advance {:reads 5, :writes 2}} -> {:seat {:reads 3, :writes 0}, :page {:reads 1294, :writes 0}, :hold {:reads 3, :writes 0}, :outcome {:reads 2, :writes 0}, :clock {:reads 1, :writes 0}, :advance {:reads 5, :writes 2}}
+
+FAIL in (bounded-own-history-work) (ticketing_test.clj:312)
+:page :reads grew with own history: {:seat {:reads 3, :writes 0}, :page {:reads 258, :writes 0}, :hold {:reads 3, :writes 0}, :outcome {:reads 2, :writes 0}, :clock {:reads 1, :writes 0}, :advance {:reads 5, :writes 2}} -> {:seat {:reads 3, :writes 0}, :page {:reads 1294, :writes 0}, :hold {:reads 3, :writes 0}, :outcome {:reads 2, :writes 0}, :clock {:reads 1, :writes 0}, :advance {:reads 5, :writes 2}}
+expected: (<= (get-in large [operation metric]) (+ 24 (* 2 (get-in small [operation metric]))))
+  actual: (not (<= 1294 540))
+
+Ran 1 tests containing 56 assertions.
+2 failures, 0 errors.
+Execution error (ExceptionInfo) at cognitect.test-runner.api/test (api.clj:30).
+Test failures or errors occurred.
+
+Full report at:
+/tmp/clojure-15212559170299620448.edn

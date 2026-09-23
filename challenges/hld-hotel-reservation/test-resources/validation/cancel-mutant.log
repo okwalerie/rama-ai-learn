@@ -1,0 +1,42 @@
+
+Running tests in #{"test-private"}
+
+Testing hld-hotel-reservation.contract-test
+15:41:44.641 [Worker bb1ad573 00000000@2002-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - :rpl.rama.distributed.worp.core.resolve/worp-resolve-leader-exception LeaderNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-hotel-reservation.module/HotelModule, :module-id bb1ad573-19b8-9cd8-68fb-0e6f684df992, :task-id 2, :replica-id nil}
+
+FAIL in (half-open-atomic-and-journal) (contract_test.clj:49)
+2 tasks
+expected: (= [1 1 1 0] (mapv :available (p/get-availability b "hotel" "king" 10 14)))
+  actual: (not (= [1 1 1 0] [3 3 3 0]))
+
+FAIL in (half-open-atomic-and-journal) (contract_test.clj:49)
+4 tasks
+expected: (= [1 1 1 0] (mapv :available (p/get-availability b "hotel" "king" 10 14)))
+  actual: (not (= [1 1 1 0] [3 3 3 0]))
+15:42:03.217 [Worker b1de6c01 00000000@2003 DTT 0 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc2541133930406797901/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-hotel-reservation.module%2FHotelModule/b1de6c01-2544-c434-6daf-c9bf5f5bc68f/local/*commands/0/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc2541133930406797901/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-hotel-reservation.module%2FHotelModule/b1de6c01-2544-c434-6daf-c9bf5f5bc68f/local/*commands/0/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:42:03.218 [Worker b1de6c01 00000000@2003 DTT 1 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc2541133930406797901/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-hotel-reservation.module%2FHotelModule/b1de6c01-2544-c434-6daf-c9bf5f5bc68f/local/*commands/1/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc2541133930406797901/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-hotel-reservation.module%2FHotelModule/b1de6c01-2544-c434-6daf-c9bf5f5bc68f/local/*commands/1/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+
+FAIL in (long-stay-retries-and-update) (contract_test.clj:127)
+2 tasks
+expected: (= 99 (:available (p/get-night b "p" "r" 29)))
+  actual: (not (= 99 199))
+15:42:12.508 [Worker 0e86bfef 00000000@2003 DTT 2 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc17439570086122081044/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-hotel-reservation.module%2FHotelModule/0e86bfef-4c2f-cd84-1469-3a1cc63f6cca/local/*commands/2/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc17439570086122081044/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-hotel-reservation.module%2FHotelModule/0e86bfef-4c2f-cd84-1469-3a1cc63f6cca/local/*commands/2/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:42:12.602 [Worker 0e86bfef 00000000@2003 DTT 1 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc17439570086122081044/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-hotel-reservation.module%2FHotelModule/0e86bfef-4c2f-cd84-1469-3a1cc63f6cca/local/*commands/1/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc17439570086122081044/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-hotel-reservation.module%2FHotelModule/0e86bfef-4c2f-cd84-1469-3a1cc63f6cca/local/*commands/1/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:42:12.617 [Worker 0e86bfef 00000000@2003 DTT 3 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc17439570086122081044/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-hotel-reservation.module%2FHotelModule/0e86bfef-4c2f-cd84-1469-3a1cc63f6cca/local/*commands/3/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc17439570086122081044/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-hotel-reservation.module%2FHotelModule/0e86bfef-4c2f-cd84-1469-3a1cc63f6cca/local/*commands/3/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:42:12.690 [Worker 0e86bfef 00000000@2003 DTT 0 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc17439570086122081044/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-hotel-reservation.module%2FHotelModule/0e86bfef-4c2f-cd84-1469-3a1cc63f6cca/local/*commands/0/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc17439570086122081044/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-hotel-reservation.module%2FHotelModule/0e86bfef-4c2f-cd84-1469-3a1cc63f6cca/local/*commands/0/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+
+FAIL in (long-stay-retries-and-update) (contract_test.clj:127)
+4 tasks
+expected: (= 99 (:available (p/get-night b "p" "r" 29)))
+  actual: (not (= 99 199))
+15:42:16.657 [Worker bb1ad573 00000000@2002-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - :rpl.rama.distributed.worp.core.resolve/worp-resolve-leader-exception LeaderNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-hotel-reservation.module/HotelModule, :module-id bb1ad573-19b8-9cd8-68fb-0e6f684df992, :task-id 1, :replica-id nil}
+
+Ran 4 tests containing 90 assertions.
+4 failures, 0 errors.
+Execution error (ExceptionInfo) at cognitect.test-runner.api/test (api.clj:30).
+Test failures or errors occurred.
+
+Full report at:
+/tmp/clojure-9257369511431039287.edn
+Command exited with non-zero status 1
+ELAPSED 66.74

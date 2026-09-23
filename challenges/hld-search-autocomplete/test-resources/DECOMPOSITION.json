@@ -1,0 +1,6 @@
+[
+  {
+    "name": "autocomplete-core",
+    "scope": "The whole spec. Owns every operation of the Autocomplete protocol (src protocol.clj) and all state named by role in README.md and test-resources/IMPLICIT_SPEC.md: per-locale generational corpus, session-deduplicated trend counts, block list, and the state supporting bounded-work suggest. All requirements, bounds, workloads, and edge cases bind by reference to those files; nothing is restated here."
+  }
+]

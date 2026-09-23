@@ -1,0 +1,3 @@
+74562d228f93297fc5eb88eee05f74530c6a9f7be97495a2de46ca6ef00d9efc  challenges/hld-rate-limiter/README.md
+f4337f22fb2e6232f9f21917e531c210ec9e6c1810fe682d861ba7c3b481e6b9  challenges/hld-rate-limiter/deps.edn
+4bf8e38601f49c76eb29d05cf473b2149e40cc8aba5d2b7a959dbb0b209f190c  challenges/hld-rate-limiter/src/hld_rate_limiter/protocol.clj

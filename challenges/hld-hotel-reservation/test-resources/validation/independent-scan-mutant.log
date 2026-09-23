@@ -1,0 +1,55 @@
+
+Testing hld-hotel-reservation.work-test
+
+FAIL in (bounded-own-history) (work_test.clj:79)
+2 tasks
+:first-page :iterations excessive work: {:night {:reads 3, :iterations 0, :writes 0}, :availability {:reads 4, :iterations 2, :writes 0}, :booking {:reads 2, :iterations 0, :writes 0}, :outcome {:reads 2, :iterations 0, :writes 0}, :first-page {:reads 1, :iterations 1209, :writes 0}, :deep-page {:reads 1, :iterations 1209, :writes 0}, :reservation {:reads 13, :iterations 2, :writes 6}}
+expected: (< after (if (= label :reservation) 120 60))
+  actual: (not (< 1209 60))
+
+FAIL in (bounded-own-history) (work_test.clj:81)
+2 tasks
+:first-page :iterations grew with history: 240 -> 1209
+expected: (<= after (+ before 24))
+  actual: (not (<= 1209 264))
+
+FAIL in (bounded-own-history) (work_test.clj:79)
+2 tasks
+:deep-page :iterations excessive work: {:night {:reads 3, :iterations 0, :writes 0}, :availability {:reads 4, :iterations 2, :writes 0}, :booking {:reads 2, :iterations 0, :writes 0}, :outcome {:reads 2, :iterations 0, :writes 0}, :first-page {:reads 1, :iterations 1209, :writes 0}, :deep-page {:reads 1, :iterations 1209, :writes 0}, :reservation {:reads 13, :iterations 2, :writes 6}}
+expected: (< after (if (= label :reservation) 120 60))
+  actual: (not (< 1209 60))
+
+FAIL in (bounded-own-history) (work_test.clj:81)
+2 tasks
+:deep-page :iterations grew with history: 240 -> 1209
+expected: (<= after (+ before 24))
+  actual: (not (<= 1209 264))
+
+FAIL in (bounded-own-history) (work_test.clj:79)
+4 tasks
+:first-page :iterations excessive work: {:night {:reads 3, :iterations 0, :writes 0}, :availability {:reads 4, :iterations 2, :writes 0}, :booking {:reads 2, :iterations 0, :writes 0}, :outcome {:reads 2, :iterations 0, :writes 0}, :first-page {:reads 1, :iterations 1209, :writes 0}, :deep-page {:reads 1, :iterations 1209, :writes 0}, :reservation {:reads 13, :iterations 2, :writes 6}}
+expected: (< after (if (= label :reservation) 120 60))
+  actual: (not (< 1209 60))
+
+FAIL in (bounded-own-history) (work_test.clj:81)
+4 tasks
+:first-page :iterations grew with history: 240 -> 1209
+expected: (<= after (+ before 24))
+  actual: (not (<= 1209 264))
+
+FAIL in (bounded-own-history) (work_test.clj:79)
+4 tasks
+:deep-page :iterations excessive work: {:night {:reads 3, :iterations 0, :writes 0}, :availability {:reads 4, :iterations 2, :writes 0}, :booking {:reads 2, :iterations 0, :writes 0}, :outcome {:reads 2, :iterations 0, :writes 0}, :first-page {:reads 1, :iterations 1209, :writes 0}, :deep-page {:reads 1, :iterations 1209, :writes 0}, :reservation {:reads 13, :iterations 2, :writes 6}}
+expected: (< after (if (= label :reservation) 120 60))
+  actual: (not (< 1209 60))
+
+FAIL in (bounded-own-history) (work_test.clj:81)
+4 tasks
+:deep-page :iterations grew with history: 240 -> 1209
+expected: (<= after (+ before 24))
+  actual: (not (<= 1209 264))
+
+Ran 1 tests containing 112 assertions.
+8 failures, 0 errors.
+{:test 1, :pass 104, :fail 8, :error 0, :type :summary}
+ELAPSED 103.96 EXIT 0

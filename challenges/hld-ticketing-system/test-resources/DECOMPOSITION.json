@@ -1,0 +1,6 @@
+[
+  {
+    "name": "seat-inventory",
+    "scope": "The whole spec, as one stage. Requirements are README.md and src/hld_ticketing_system/protocol.clj in full (with test-resources/IMPLICIT_SPEC.md as the private author reading of them); nothing here restates them. Operations owned: create-event!, add-seats!, advance-clock!, hold-seats!, confirm-hold!, release-hold!, get-outcome, get-clock, get-seats, get-hold, get-compensations, plus the create-module / wrap-client / Synchronizable contract. State to figure out, named by role: the per-event logical clock per 'Logical clock'; the per-seat state backing 'get-seats' and the availability checks of 'hold-seats!'; the per-hold record backing 'get-hold' and the owner-fenced 'confirm-hold!' and 'release-hold!' rules, with expiry decided as 'Logical clock' and 'Resource guarantees' require; the per-event compensation log backing 'get-compensations' per 'Compensation'; and the per-event request-id outcome store backing 'get-outcome' and the 'Idempotency and conflicts' and 'Validation order' rules. All of it is bound by 'Ordering', 'Durability', 'Invariants', 'Resource guarantees', and 'Shared state' as written in README.md."
+  }
+]

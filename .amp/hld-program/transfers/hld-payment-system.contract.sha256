@@ -1,0 +1,3 @@
+010245d9b2ee6db2c59d587c3944699356820aeceb4084adf4d1390904503c1d  challenges/hld-payment-system/README.md
+4dde96ecf0c2fa244eead1f04116cfd2b4beb7992c16e988e94d0e71802c91ea  challenges/hld-payment-system/deps.edn
+28b6a7c8cd8623d998c183c2f32675470402606eb2da83d7394daeee7f293cc8  challenges/hld-payment-system/src/hld_payment_system/protocol.clj

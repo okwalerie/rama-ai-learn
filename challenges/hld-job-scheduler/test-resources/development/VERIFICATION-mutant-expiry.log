@@ -1,0 +1,86 @@
+
+Running tests in #{"test-private"}
+
+Testing hld-job-scheduler.functional-test
+
+FAIL in (scheduler-contract) (functional_test_support.clj:62)
+2 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= {:node-id "z", :effect-id ["later" "z"], :dependencies #{}, :status :running, :attempts 2, :lease {:worker-id "w2", :token 2, :expiry 20}, :result nil} (p/get-node c "later" "z"))
+  actual: (not (= {:node-id "z", :effect-id ["later" "z"], :dependencies #{}, :status :running, :attempts 2, :lease {:worker-id "w2", :token 2, :expiry 20}, :result nil} {:node-id "z", :effect-id ["later" "z"], :dependencies #{}, :status :success, :attempts 1, :lease nil, :result "late"}))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:71)
+2 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= {:ok true} (:result (p/get-node b "later" "z")))
+  actual: (not (= {:ok true} "late"))
+15:24:46.200 [Worker a1b9b5fc 00000000@2006 DTT 1 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc16666911343404633967/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/a1b9b5fc-d6b8-67b0-e44b-6dc670e40e3c/local/*execution-events/1/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc16666911343404633967/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/a1b9b5fc-d6b8-67b0-e44b-6dc670e40e3c/local/*execution-events/1/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:24:46.203 [Worker a1b9b5fc 00000000@2006 DTT 0 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc16666911343404633967/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/a1b9b5fc-d6b8-67b0-e44b-6dc670e40e3c/local/*execution-events/0/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc16666911343404633967/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/a1b9b5fc-d6b8-67b0-e44b-6dc670e40e3c/local/*execution-events/0/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+
+FAIL in (scheduler-contract) (functional_test_support.clj:62)
+4 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= {:node-id "z", :effect-id ["later" "z"], :dependencies #{}, :status :running, :attempts 2, :lease {:worker-id "w2", :token 2, :expiry 20}, :result nil} (p/get-node c "later" "z"))
+  actual: (not (= {:node-id "z", :effect-id ["later" "z"], :dependencies #{}, :status :running, :attempts 2, :lease {:worker-id "w2", :token 2, :expiry 20}, :result nil} {:node-id "z", :effect-id ["later" "z"], :dependencies #{}, :status :success, :attempts 1, :lease nil, :result "late"}))
+
+FAIL in (scheduler-contract) (functional_test_support.clj:71)
+4 tasks claim precedence, lease boundary, fencing and stable effect identity
+expected: (= {:ok true} (:result (p/get-node b "later" "z")))
+  actual: (not (= {:ok true} "late"))
+15:24:55.958 [Worker e9fd2811 00000000@2003 DTT 1 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc1999219583755010188/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/e9fd2811-9eab-4d89-0ed6-3f85ea759ef8/local/*execution-events/1/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc1999219583755010188/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/e9fd2811-9eab-4d89-0ed6-3f85ea759ef8/local/*execution-events/1/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:24:56.067 [Worker e9fd2811 00000000@2003 DTT 2 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc1999219583755010188/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/e9fd2811-9eab-4d89-0ed6-3f85ea759ef8/local/*execution-events/2/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc1999219583755010188/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/e9fd2811-9eab-4d89-0ed6-3f85ea759ef8/local/*execution-events/2/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:24:56.084 [Worker e9fd2811 00000000@2003 DTT 3 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc1999219583755010188/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/e9fd2811-9eab-4d89-0ed6-3f85ea759ef8/local/*execution-events/3/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc1999219583755010188/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/e9fd2811-9eab-4d89-0ed6-3f85ea759ef8/local/*execution-events/3/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:24:56.177 [Worker e9fd2811 00000000@2003 DTT 0 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc1999219583755010188/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/e9fd2811-9eab-4d89-0ed6-3f85ea759ef8/local/*execution-events/0/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc1999219583755010188/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/e9fd2811-9eab-4d89-0ed6-3f85ea759ef8/local/*execution-events/0/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+
+FAIL in (scheduler-growth-and-boundaries) (functional_test_support.clj:121)
+2 tasks, bounded DAG vs unrelated population
+expected: (= :ready (:status (p/get-node c "chain" "n0")))
+  actual: (not (= :ready :success))
+
+FAIL in (scheduler-growth-and-boundaries) (functional_test_support.clj:123)
+2 tasks, bounded DAG vs unrelated population
+expected: (= 83 (get-in (p/get-node c "chain" "n0") [:lease :expiry]))
+  actual: (not (= 83 nil))
+
+FAIL in (scheduler-growth-and-boundaries) (functional_test_support.clj:128)
+2 tasks, bounded DAG vs unrelated population
+expected: (= "ok" (:result (p/get-node b "chain" "n0")))
+  actual: (not (= "ok" "expired"))
+15:25:04.516 [Worker 34f8f8f5 00000000@2003 DTT 1 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc10416984159758383036/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/34f8f8f5-1a91-d232-40d5-01617a74c89f/local/*execution-events/1/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc10416984159758383036/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/34f8f8f5-1a91-d232-40d5-01617a74c89f/local/*execution-events/1/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:25:04.600 [Worker 34f8f8f5 00000000@2003 DTT 0 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc10416984159758383036/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/34f8f8f5-1a91-d232-40d5-01617a74c89f/local/*execution-events/0/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc10416984159758383036/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/34f8f8f5-1a91-d232-40d5-01617a74c89f/local/*execution-events/0/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+
+FAIL in (scheduler-growth-and-boundaries) (functional_test_support.clj:133)
+2 tasks, bounded DAG vs unrelated population
+expected: (= 2 (:attempts (p/get-node c "chain" "n0")))
+  actual: (not (= 2 1))
+15:25:07.466 [Worker bb1ad573 00000000@2002-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - :rpl.rama.distributed.worp.core.resolve/worp-resolve-leader-exception LeaderNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-job-scheduler.module/JobSchedulerModule, :module-id bb1ad573-19b8-9cd8-68fb-0e6f684df992, :task-id 3, :replica-id nil}
+15:25:07.467 [Worker bb1ad573 00000000@2002-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - :rpl.rama.distributed.worp.core.resolve/worp-resolve-leader-exception LeaderNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-job-scheduler.module/JobSchedulerModule, :module-id bb1ad573-19b8-9cd8-68fb-0e6f684df992, :task-id 2, :replica-id nil}
+
+FAIL in (scheduler-growth-and-boundaries) (functional_test_support.clj:121)
+4 tasks, bounded DAG vs unrelated population
+expected: (= :ready (:status (p/get-node c "chain" "n0")))
+  actual: (not (= :ready :success))
+
+FAIL in (scheduler-growth-and-boundaries) (functional_test_support.clj:123)
+4 tasks, bounded DAG vs unrelated population
+expected: (= 83 (get-in (p/get-node c "chain" "n0") [:lease :expiry]))
+  actual: (not (= 83 nil))
+
+FAIL in (scheduler-growth-and-boundaries) (functional_test_support.clj:128)
+4 tasks, bounded DAG vs unrelated population
+expected: (= "ok" (:result (p/get-node b "chain" "n0")))
+  actual: (not (= "ok" "expired"))
+15:25:13.471 [Worker 7fa36a31 00000000@2003 DTT 3 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc6401756128968861378/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/7fa36a31-71f4-4c0c-0cc8-1ed3aef677dd/local/*execution-events/3/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc6401756128968861378/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/7fa36a31-71f4-4c0c-0cc8-1ed3aef677dd/local/*execution-events/3/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:25:13.539 [Worker 7fa36a31 00000000@2003 DTT 2 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc6401756128968861378/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/7fa36a31-71f4-4c0c-0cc8-1ed3aef677dd/local/*execution-events/2/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc6401756128968861378/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/7fa36a31-71f4-4c0c-0cc8-1ed3aef677dd/local/*execution-events/2/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:25:13.552 [Worker 7fa36a31 00000000@2003 DTT 1 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc6401756128968861378/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/7fa36a31-71f4-4c0c-0cc8-1ed3aef677dd/local/*execution-events/1/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc6401756128968861378/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/7fa36a31-71f4-4c0c-0cc8-1ed3aef677dd/local/*execution-events/1/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:25:13.607 [Worker 7fa36a31 00000000@2003 DTT 0 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc6401756128968861378/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/7fa36a31-71f4-4c0c-0cc8-1ed3aef677dd/local/*execution-events/0/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc6401756128968861378/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-job-scheduler.module%2FJobSchedulerModule/7fa36a31-71f4-4c0c-0cc8-1ed3aef677dd/local/*execution-events/0/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+
+FAIL in (scheduler-growth-and-boundaries) (functional_test_support.clj:133)
+4 tasks, bounded DAG vs unrelated population
+expected: (= 2 (:attempts (p/get-node c "chain" "n0")))
+  actual: (not (= 2 1))
+
+Ran 2 tests containing 82 assertions.
+12 failures, 0 errors.
+Execution error (ExceptionInfo) at cognitect.test-runner.api/test (api.clj:30).
+Test failures or errors occurred.
+
+Full report at:
+/tmp/clojure-9889214551866439593.edn

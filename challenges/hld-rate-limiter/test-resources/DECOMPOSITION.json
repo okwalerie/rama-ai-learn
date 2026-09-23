@@ -1,0 +1,6 @@
+[
+  {
+    "name": "rate-limiter-core",
+    "scope": "The whole spec. Owns every operation of the RateLimiter protocol (src protocol.clj) and all state named by role in README.md and test-resources/IMPLICIT_SPEC.md: the user limiter (versioned config, clock, buckets) and its recorded decisions. All requirements, bounds, workloads, and edge cases bind by reference to those files; nothing is restated here."
+  }
+]

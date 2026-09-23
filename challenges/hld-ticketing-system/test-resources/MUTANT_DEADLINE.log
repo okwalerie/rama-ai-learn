@@ -1,0 +1,8 @@
+
+FAIL in (release-and-boundaries) (ticketing_test.clj:135)
+expected: (= {:state :available, :hold-id nil, :user-id nil} (get (p/get-seats b "e" ["b"]) "b"))
+  actual: (not (= {:state :available, :hold-id nil, :user-id nil} {:state :held, :hold-id "new", :user-id "u2"}))
+
+FAIL in (release-and-boundaries) (ticketing_test.clj:135)
+expected: (= {:state :available, :hold-id nil, :user-id nil} (get (p/get-seats b "e" ["b"]) "b"))
+  actual: (not (= {:state :available, :hold-id nil, :user-id nil} {:state :held, :hold-id "new", :user-id "u2"}))

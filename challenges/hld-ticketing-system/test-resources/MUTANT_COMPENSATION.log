@@ -1,0 +1,32 @@
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:102)
+expected: (= (rejected :confirm-hold :hold-confirmed) (p/get-outcome b "e" "same"))
+  actual: (not (= {:status :rejected, :command :confirm-hold, :reason :hold-confirmed, :conflicting-attempts 0} {:status :rejected, :command :confirm-hold, :conflicting-attempts 0, :reason :hold-confirmed, :compensation-seq 2}))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:103)
+expected: (= (rejected :confirm-hold :hold-confirmed {:compensation-seq 2}) (p/get-outcome b "e" "different"))
+  actual: (not (= {:status :rejected, :command :confirm-hold, :reason :hold-confirmed, :conflicting-attempts 0, :compensation-seq 2} {:status :rejected, :command :confirm-hold, :conflicting-attempts 0, :reason :hold-confirmed, :compensation-seq 3}))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:107)
+expected: (= [1 2 3] (mapv :seq (p/get-compensations b "e" 0 500)))
+  actual: (not (= [1 2 3] [1 2 3 4]))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:112)
+expected: (= [] (p/get-compensations b "e" 3 1))
+  actual: (not (= [] [{:request-id "late2", :hold-id "h1", :user-id "owner", :payment-ref "paid", :reason :hold-expired, :seq 4}]))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:102)
+expected: (= (rejected :confirm-hold :hold-confirmed) (p/get-outcome b "e" "same"))
+  actual: (not (= {:status :rejected, :command :confirm-hold, :reason :hold-confirmed, :conflicting-attempts 0} {:status :rejected, :command :confirm-hold, :conflicting-attempts 0, :reason :hold-confirmed, :compensation-seq 2}))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:103)
+expected: (= (rejected :confirm-hold :hold-confirmed {:compensation-seq 2}) (p/get-outcome b "e" "different"))
+  actual: (not (= {:status :rejected, :command :confirm-hold, :reason :hold-confirmed, :conflicting-attempts 0, :compensation-seq 2} {:status :rejected, :command :confirm-hold, :conflicting-attempts 0, :reason :hold-confirmed, :compensation-seq 3}))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:107)
+expected: (= [1 2 3] (mapv :seq (p/get-compensations b "e" 0 500)))
+  actual: (not (= [1 2 3] [1 2 3 4]))
+
+FAIL in (ordered-holds-and-expiry-fencing) (ticketing_test.clj:112)
+expected: (= [] (p/get-compensations b "e" 3 1))
+  actual: (not (= [] [{:request-id "late2", :hold-id "h1", :user-id "owner", :payment-ref "paid", :reason :hold-expired, :seq 4}]))

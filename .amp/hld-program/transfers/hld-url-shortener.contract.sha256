@@ -1,0 +1,3 @@
+efd61b06b10ca6d6fa2046709dda19b9a7383ea6a820ccc889725ed0aabfd149  challenges/hld-url-shortener/README.md
+aa3ca08840fcf552f25acb4c73167475100a897d9dd4d1f988ccce7af58ded0b  challenges/hld-url-shortener/deps.edn
+8cba9d817c6d3483ed758b955c747d14ca89b0a96c63c7fa06cbc39fc9a06684  challenges/hld-url-shortener/src/hld_url_shortener/protocol.clj

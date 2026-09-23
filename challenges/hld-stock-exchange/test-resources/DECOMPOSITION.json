@@ -1,0 +1,6 @@
+[
+  {
+    "name": "matching-engine",
+    "scope": "The whole spec, as one stage. Requirements are README.md and src/hld_stock_exchange/protocol.clj in full (with test-resources/IMPLICIT_SPEC.md as the private author reading of them); nothing here restates them. Operations owned: submit-limit-order!, cancel-order!, get-outcome, get-order, get-depth, get-trades, plus the create-module / wrap-client / Synchronizable contract. State to figure out, named by role: the per-symbol resting book that 'Matching rules' walks and 'cancel-order!' removes from; the per-order record backing 'get-order'; the per-level aggregates backing 'get-depth'; the per-symbol order-seq and trade-seq sources per 'Matching rules'; the per-symbol immutable trade tape backing 'get-trades'; and the per-symbol request-id outcome store backing 'get-outcome' and the 'Idempotency and conflicts' and 'Validation order' rules. All of it is bound by 'Ordering', 'Durability', 'Invariants', 'Resource guarantees', and 'Shared state' as written in README.md."
+  }
+]

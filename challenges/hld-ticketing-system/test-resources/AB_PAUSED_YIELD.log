@@ -1,0 +1,37 @@
+TICKETING_TRACE_SORT [[1 create] [2 add]]
+TICKETING_TRACE_DECIDE create clock nil seats nil hold nil
+TICKETING_TRACE_DECIDE add clock 0 seats {} hold nil
+TICKETING_TRACE_SORT [[3 h1] [4 h2]]
+TICKETING_TRACE_DECIDE h1 clock 0 seats {a {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}, b {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}} hold nil
+TICKETING_TRACE_DECIDE h2 clock 0 seats {c {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}, b {:hold-id h1, :user-id u, :deadline 7, :confirmed? false}} hold nil
+TICKETING_TRACE_SORT [[5 tick] [6 h3]]
+TICKETING_TRACE_DECIDE tick clock 0 seats nil hold nil
+TICKETING_TRACE_DECIDE h3 clock 7 seats {a {:hold-id h1, :user-id u, :deadline 7, :confirmed? false}, b {:hold-id h1, :user-id u, :deadline 7, :confirmed? false}} hold nil
+TICKETING_RESULT 2 :split {:h1 {:status :accepted, :command :hold-seats, :conflicting-attempts 0, :hold-id h1, :deadline 7}, :h2 {:status :rejected, :command :hold-seats, :conflicting-attempts 0, :reason :seat-unavailable, :unavailable-seats [b]}, :h3 {:status :accepted, :command :hold-seats, :conflicting-attempts 0, :hold-id h3, :deadline 12}, :clock 7, :seats {a {:state :held, :hold-id h3, :user-id v}, b {:state :held, :hold-id h3, :user-id v}, c {:state :available, :hold-id nil, :user-id nil}}}
+TICKETING_TRACE_SORT [[1 create] [2 add] [3 h1] [4 h2] [5 tick] [6 h3]]
+TICKETING_TRACE_DECIDE create clock nil seats nil hold nil
+TICKETING_TRACE_DECIDE add clock 0 seats {} hold nil
+TICKETING_TRACE_DECIDE h1 clock 0 seats {a {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}, b {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}} hold nil
+TICKETING_TRACE_DECIDE h2 clock 0 seats {c {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}, b {:hold-id h1, :user-id u, :deadline 7, :confirmed? false}} hold nil
+TICKETING_TRACE_DECIDE tick clock 0 seats nil hold nil
+TICKETING_TRACE_DECIDE h3 clock 7 seats {a {:hold-id h1, :user-id u, :deadline 7, :confirmed? false}, b {:hold-id h1, :user-id u, :deadline 7, :confirmed? false}} hold nil
+TICKETING_RESULT 2 :all {:h1 {:status :accepted, :command :hold-seats, :conflicting-attempts 0, :hold-id h1, :deadline 7}, :h2 {:status :rejected, :command :hold-seats, :conflicting-attempts 0, :reason :seat-unavailable, :unavailable-seats [b]}, :h3 {:status :accepted, :command :hold-seats, :conflicting-attempts 0, :hold-id h3, :deadline 12}, :clock 7, :seats {a {:state :held, :hold-id h3, :user-id v}, b {:state :held, :hold-id h3, :user-id v}, c {:state :available, :hold-id nil, :user-id nil}}}
+16:08:11.735 [Worker bb1ad573 00000000@2002-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - :rpl.rama.distributed.worp.core.resolve/worp-resolve-leader-exception LeaderNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-ticketing-system.module/TicketingSystem, :module-id bb1ad573-19b8-9cd8-68fb-0e6f684df992, :task-id 2, :replica-id nil}
+TICKETING_TRACE_SORT [[1 create] [2 add]]
+TICKETING_TRACE_DECIDE create clock nil seats nil hold nil
+TICKETING_TRACE_DECIDE add clock 0 seats {} hold nil
+TICKETING_TRACE_SORT [[3 h1] [4 h2]]
+TICKETING_TRACE_DECIDE h1 clock 0 seats {a {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}, b {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}} hold nil
+TICKETING_TRACE_DECIDE h2 clock 0 seats {c {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}, b {:hold-id h1, :user-id u, :deadline 7, :confirmed? false}} hold nil
+TICKETING_TRACE_SORT [[5 tick] [6 h3]]
+TICKETING_TRACE_DECIDE tick clock 0 seats nil hold nil
+TICKETING_TRACE_DECIDE h3 clock 7 seats {a {:hold-id h1, :user-id u, :deadline 7, :confirmed? false}, b {:hold-id h1, :user-id u, :deadline 7, :confirmed? false}} hold nil
+TICKETING_RESULT 4 :split {:h1 {:status :accepted, :command :hold-seats, :conflicting-attempts 0, :hold-id h1, :deadline 7}, :h2 {:status :rejected, :command :hold-seats, :conflicting-attempts 0, :reason :seat-unavailable, :unavailable-seats [b]}, :h3 {:status :accepted, :command :hold-seats, :conflicting-attempts 0, :hold-id h3, :deadline 12}, :clock 7, :seats {a {:state :held, :hold-id h3, :user-id v}, b {:state :held, :hold-id h3, :user-id v}, c {:state :available, :hold-id nil, :user-id nil}}}
+TICKETING_TRACE_SORT [[1 create] [2 add] [3 h1] [4 h2] [5 tick] [6 h3]]
+TICKETING_TRACE_DECIDE create clock nil seats nil hold nil
+TICKETING_TRACE_DECIDE add clock 0 seats {} hold nil
+TICKETING_TRACE_DECIDE h1 clock 0 seats {a {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}, b {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}} hold nil
+TICKETING_TRACE_DECIDE h2 clock 0 seats {c {:hold-id nil, :user-id nil, :deadline nil, :confirmed? false}, b {:hold-id h1, :user-id u, :deadline 7, :confirmed? false}} hold nil
+TICKETING_TRACE_DECIDE tick clock 0 seats nil hold nil
+TICKETING_TRACE_DECIDE h3 clock 7 seats {a {:hold-id h1, :user-id u, :deadline 7, :confirmed? false}, b {:hold-id h1, :user-id u, :deadline 7, :confirmed? false}} hold nil
+TICKETING_RESULT 4 :all {:h1 {:status :accepted, :command :hold-seats, :conflicting-attempts 0, :hold-id h1, :deadline 7}, :h2 {:status :rejected, :command :hold-seats, :conflicting-attempts 0, :reason :seat-unavailable, :unavailable-seats [b]}, :h3 {:status :accepted, :command :hold-seats, :conflicting-attempts 0, :hold-id h3, :deadline 12}, :clock 7, :seats {a {:state :held, :hold-id h3, :user-id v}, b {:state :held, :hold-id h3, :user-id v}, c {:state :available, :hold-id nil, :user-id nil}}}

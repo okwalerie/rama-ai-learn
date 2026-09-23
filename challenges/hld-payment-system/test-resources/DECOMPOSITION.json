@@ -1,0 +1,6 @@
+[
+  {
+    "name": "tenant-ledger",
+    "scope": "The whole spec, as one stage. Requirements are README.md and src/hld_payment_system/protocol.clj in full (with test-resources/IMPLICIT_SPEC.md as the private author reading of them); nothing here restates them. Operations owned: create-tenant!, create-account!, fund!, charge!, refund!, get-outcome, get-tenant, get-account, get-balance, get-charge, get-journal, plus the create-module / wrap-client / Synchronizable contract. State to figure out, named by role: the tenant record backing 'get-tenant'; the per-account record and incrementally maintained balance backing 'get-account' and 'get-balance' and the funds checks of 'charge!' and 'refund!'; the per-charge record with its refunded total backing 'get-charge' and 'refund!'; the per-tenant append-only journal backing 'get-journal'; and the per-tenant request-id outcome store backing 'get-outcome' and the 'Idempotency and conflicts' and 'Validation order' rules. All of it is bound by 'Ordering', 'Durability', 'Invariants', 'Resource guarantees', and 'Shared state' as written in README.md."
+  }
+]

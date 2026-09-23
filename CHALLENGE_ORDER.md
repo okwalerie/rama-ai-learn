@@ -33,3 +33,24 @@
 - time-series-module-hard
 - auction-module
 - fanout
+
+## Batch 6: HLD Discovery and Delivery
+- hld-url-shortener
+- hld-rate-limiter
+- hld-notification-system
+- hld-web-crawler
+- hld-search-autocomplete
+
+## Batch 7: HLD Transactional Systems
+- hld-file-sync
+- hld-ticketing-system
+- hld-payment-system
+- hld-stock-exchange
+- hld-hotel-reservation
+
+## Batch 8: HLD Analytics and Control Systems
+- hld-metrics-pipeline
+- hld-ad-click-aggregation
+- hld-job-scheduler
+- hld-feature-flag-service
+- hld-enterprise-rag

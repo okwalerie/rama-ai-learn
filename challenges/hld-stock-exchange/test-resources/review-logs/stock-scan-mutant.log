@@ -1,0 +1,39 @@
+
+Running tests in #{"test-private"}
+
+Testing hld-stock-exchange.private-test
+WORK :depth {:rocks-read 1, :rocks-iterator 2, :rocks-iterator-read 323, :rocks-writes 0} -> {:rocks-read 1, :rocks-iterator 5, :rocks-iterator-read 1288, :rocks-writes 0}
+
+FAIL in (bounded-work-and-deep-page) (private_test.clj:37)
+:depth :rocks-iterator-read grew with unrelated history: {:rocks-read 1, :rocks-iterator 2, :rocks-iterator-read 323, :rocks-writes 0} -> {:rocks-read 1, :rocks-iterator 5, :rocks-iterator-read 1288, :rocks-writes 0}
+expected: (<= (metric large) (+ (* 2 (metric small)) 12))
+  actual: (not (<= 1288 658))
+WORK :queue-depth {:rocks-read 1, :rocks-iterator 1, :rocks-iterator-read 2, :rocks-writes 0} -> {:rocks-read 1, :rocks-iterator 1, :rocks-iterator-read 2, :rocks-writes 0}
+WORK :order {:rocks-read 2, :rocks-iterator 0, :rocks-iterator-read 0, :rocks-writes 0} -> {:rocks-read 2, :rocks-iterator 0, :rocks-iterator-read 0, :rocks-writes 0}
+WORK :outcome {:rocks-read 2, :rocks-iterator 0, :rocks-iterator-read 0, :rocks-writes 0} -> {:rocks-read 2, :rocks-iterator 0, :rocks-iterator-read 0, :rocks-writes 0}
+WORK :noncross {:rocks-read 10, :rocks-iterator 1, :rocks-iterator-read 2, :rocks-writes 6} -> {:rocks-read 12, :rocks-iterator 1, :rocks-iterator-read 2, :rocks-writes 6}
+WORK :cancellation {:rocks-read 13, :rocks-iterator 0, :rocks-iterator-read 0, :rocks-writes 6} -> {:rocks-read 13, :rocks-iterator 0, :rocks-iterator-read 0, :rocks-writes 6}
+WORK :matching {:rocks-read 36, :rocks-iterator 7, :rocks-iterator-read 19, :rocks-writes 18} -> {:rocks-read 36, :rocks-iterator 7, :rocks-iterator-read 19, :rocks-writes 18}
+WORK :deep-page {:rocks-read 1, :rocks-iterator 1, :rocks-iterator-read 6, :rocks-writes 0} -> {:rocks-read 1, :rocks-iterator 1, :rocks-iterator-read 6, :rocks-writes 0}
+16:02:38.677 [Worker bb1ad573 00000000@2002-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - :rpl.rama.distributed.worp.core.resolve/worp-resolve-leader-exception LeaderNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-stock-exchange.module/StockExchange, :module-id bb1ad573-19b8-9cd8-68fb-0e6f684df992, :task-id 2, :replica-id nil}
+WORK :depth {:rocks-read 1, :rocks-iterator 2, :rocks-iterator-read 323, :rocks-writes 0} -> {:rocks-read 1, :rocks-iterator 5, :rocks-iterator-read 1288, :rocks-writes 0}
+
+FAIL in (bounded-work-and-deep-page) (private_test.clj:37)
+:depth :rocks-iterator-read grew with unrelated history: {:rocks-read 1, :rocks-iterator 2, :rocks-iterator-read 323, :rocks-writes 0} -> {:rocks-read 1, :rocks-iterator 5, :rocks-iterator-read 1288, :rocks-writes 0}
+expected: (<= (metric large) (+ (* 2 (metric small)) 12))
+  actual: (not (<= 1288 658))
+WORK :queue-depth {:rocks-read 1, :rocks-iterator 1, :rocks-iterator-read 2, :rocks-writes 0} -> {:rocks-read 1, :rocks-iterator 1, :rocks-iterator-read 2, :rocks-writes 0}
+WORK :order {:rocks-read 2, :rocks-iterator 0, :rocks-iterator-read 0, :rocks-writes 0} -> {:rocks-read 2, :rocks-iterator 0, :rocks-iterator-read 0, :rocks-writes 0}
+WORK :outcome {:rocks-read 2, :rocks-iterator 0, :rocks-iterator-read 0, :rocks-writes 0} -> {:rocks-read 2, :rocks-iterator 0, :rocks-iterator-read 0, :rocks-writes 0}
+WORK :noncross {:rocks-read 10, :rocks-iterator 1, :rocks-iterator-read 2, :rocks-writes 6} -> {:rocks-read 12, :rocks-iterator 1, :rocks-iterator-read 2, :rocks-writes 6}
+WORK :cancellation {:rocks-read 13, :rocks-iterator 0, :rocks-iterator-read 0, :rocks-writes 6} -> {:rocks-read 13, :rocks-iterator 0, :rocks-iterator-read 0, :rocks-writes 6}
+WORK :matching {:rocks-read 36, :rocks-iterator 7, :rocks-iterator-read 19, :rocks-writes 18} -> {:rocks-read 36, :rocks-iterator 7, :rocks-iterator-read 19, :rocks-writes 18}
+WORK :deep-page {:rocks-read 1, :rocks-iterator 1, :rocks-iterator-read 6, :rocks-writes 0} -> {:rocks-read 1, :rocks-iterator 1, :rocks-iterator-read 6, :rocks-writes 0}
+
+Ran 1 tests containing 7812 assertions.
+2 failures, 0 errors.
+Execution error (ExceptionInfo) at cognitect.test-runner.api/test (api.clj:30).
+Test failures or errors occurred.
+
+Full report at:
+/tmp/clojure-1380779418267903958.edn

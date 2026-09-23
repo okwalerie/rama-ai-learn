@@ -1,0 +1,10 @@
+[
+  {
+    "name": "revisioned-flag-config-store",
+    "scope": "Owns `put-flag-config!` and `get-flag-config` (README \"Revisions\", \"Efficiency contract\", \"Write ordering and synchronization\"; protocol docstrings), plus the `Synchronizable` barrier. State to figure out: the durable per-flag current-configuration state, keyed by the README \"Flag identity\" triple, holding the accepted map exactly as written (IMPLICIT_SPEC \"The stored configuration is the accepted map, key for key\"). This state is the deliverable interface for the next stage: it must make the README \"Evaluation order\" result and the `evaluate` row of the README \"Efficiency contract\" achievable by a read of one flag, and must hold under the README multi-task and multi-client requirements. Worked example steps 5-7 and 10 and the IMPLICIT_SPEC \"Entity State x Write Matrix\" bind this stage."
+  },
+  {
+    "name": "bucketing-and-evaluation",
+    "scope": "Owns `compute-bucket` (README \"Bucketing\", worked-example bucket table and byte string; IMPLICIT_SPEC \"Bucketing is fully specified and verified\") and `evaluate` (README \"Evaluation order\" table; IMPLICIT_SPEC \"The evaluation result has exactly the keys listed for its reason\" and \"Reason precedence is strict\"). Reads the per-flag current-configuration state delivered by the previous stage; no new business state. Must figure out where evaluation runs (README \"What was excluded\": client or module is the implementer's choice) within the `evaluate` and `compute-bucket` rows of the README \"Efficiency contract\". Worked example steps 1-4 and 8-10 bind this stage."
+  }
+]
