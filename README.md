@@ -67,6 +67,11 @@ bash scripts/docker-copy-transcript.sh
 
 The container mounts `~/.m2` and a named gitlibs volume so dependency caches persist across runs.
 
+Claude challenge phases append concise `Decision` / `Basis` / `Outcome` records to
+`implementations/<challenge>/REASONING.md`, including technical dead ends and
+resolved blockers, without requesting private chain-of-thought. The Amp
+`challenge-phase` skill and Codex harness retain their existing logging prompts.
+
 ## Inspecting transcripts
 
 After a run, transcripts can be analyzed via:
