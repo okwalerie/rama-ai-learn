@@ -1,0 +1,6 @@
+[
+  {
+    "name": "file-sync-metadata",
+    "scope": "The whole spec, as one stage. Requirements are README.md and src/hld_file_sync/protocol.clj in full (with test-resources/IMPLICIT_SPEC.md as the private author reading of them); nothing here restates them. Operations owned: register-blocks!, commit-file!, get-outcome, get-block-size, get-file, get-file-version, get-changes, plus the create-module / wrap-client / Synchronizable contract. State to figure out, named by role: the per-namespace block index backing 'register-blocks!' and the ':need-blocks' check of 'commit-file!'; the per-file head and complete version history backing 'get-file' and 'get-file-version', including conflict-copy provenance per 'Conflict copy'; the per-namespace change journal backing 'get-changes'; and the per-namespace request-id outcome store backing 'get-outcome' and the 'Idempotency and conflicts' and 'Validation order' rules. All of it is bound by 'Ordering', 'Durability', 'Invariants', 'Resource guarantees', and 'Shared state' as written in README.md."
+  }
+]
