@@ -1,0 +1,17 @@
+{"type":"session","version":3,"id":"s","timestamp":"1970-01-01T00:16:40Z"}
+{"type":"agent_start"}
+{"type":"message_start","message":{"role":"assistant","timestamp":1001000,"content":[{"type":"thinking","thinking":"Think about the asymmetric edit"}]}}
+{"type":"message_end","message":{"role":"assistant","timestamp":1002000,"content":[{"type":"thinking","thinking":"Think about the asymmetric edit"},{"type":"toolCall","id":"c1","name":"read","arguments":{"path":"plugins/rama-skill/skills/rama/references/paths.md"}},{"type":"toolCall","id":"c2","name":"write","arguments":{"path":"implementations/demo/module.clj","content":"old old\n"}},{"type":"toolCall","id":"c3","name":"edit","arguments":{"path":"implementations/demo/module.clj","oldText":"old","newText":"new"}},{"type":"toolCall","id":"c4","name":"edit","arguments":{"path":"implementations/demo/module.clj","oldText":"old","newText":"WRONG"}},{"type":"toolCall","id":"c5","name":"write","arguments":{"path":"REASONING.md","content":"CONFUSION: inspect the contract"}},{"type":"toolCall","id":"c6","name":"bash","arguments":{"command":"clojure -X:test"}}],"stopReason":"toolUse","usage":{"input":13,"output":7,"cacheRead":5,"cacheWrite":2,"cost":{"total":0.013}}}}
+{"type":"tool_execution_start","toolCallId":"c1","toolName":"read","args":{"path":"plugins/rama-skill/skills/rama/references/paths.md"}}
+{"type":"tool_execution_end","toolCallId":"c1","toolName":"read","result":{"content":[{"type":"text","text":"reference"}]},"isError":false}
+{"type":"message_end","message":{"role":"toolResult","timestamp":1003000,"toolCallId":"c1","content":[{"type":"text","text":"reference"}],"isError":false}}
+{"type":"tool_execution_end","toolCallId":"c2","toolName":"write","result":{"content":[{"type":"text","text":"written"}]},"isError":false}
+{"type":"tool_execution_end","toolCallId":"c3","toolName":"edit","result":{"content":[{"type":"text","text":"edited"}]},"isError":false}
+{"type":"tool_execution_end","toolCallId":"c4","toolName":"edit","result":{"content":[{"type":"text","text":"edit rejected"}]},"isError":true}
+{"type":"tool_execution_end","toolCallId":"c5","toolName":"write","result":{"content":[{"type":"text","text":"written"}]},"isError":false}
+{"type":"tool_execution_end","toolCallId":"c6","toolName":"bash","result":{"content":[{"type":"text","text":"Ran 2 tests containing 7 assertions.\n0 failures, 0 errors."}]},"isError":false}
+{"type":"turn_end","message":{"role":"assistant","timestamp":1002000,"content":[{"type":"thinking","thinking":"Think about the asymmetric edit"}],"usage":{"input":13,"output":7,"cost":{"total":0.013}}},"toolResults":[]}
+{"type":"message_start","message":{"role":"assistant","timestamp":1011000,"content":[{"type":"text","text":"PHASE_VALIDATION:pass. Unique final response."}]}}
+{"type":"message_end","message":{"role":"assistant","timestamp":1012000,"content":[{"type":"text","text":"PHASE_VALIDATION:pass. Unique final response."}],"stopReason":"stop","usage":{"input":19,"output":11,"cacheRead":3,"cacheWrite":1,"cost":{"total":0.007}}}}
+{"type":"turn_end","message":{"role":"assistant","timestamp":1012000,"content":[{"type":"text","text":"PHASE_VALIDATION:pass. Unique final response."}],"stopReason":"stop","usage":{"input":19,"output":11,"cost":{"total":0.007}}},"toolResults":[]}
+{"type":"agent_end","messages":[{"role":"assistant","timestamp":1012000,"content":[{"type":"text","text":"PHASE_VALIDATION:pass. Unique final response."}]}]}

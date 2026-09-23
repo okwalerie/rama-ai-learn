@@ -1,0 +1,11 @@
+{"type":"step_start","timestamp":1000000,"sessionID":"s","part":{"id":"s1","type":"step-start"}}
+{"type":"reasoning","timestamp":1001000,"part":{"id":"r1","text":"Think about the asymmetric edit"}}
+{"type":"tool_use","timestamp":1002000,"part":{"id":"p1","callID":"c1","tool":"read","state":{"status":"completed","input":{"filePath":"plugins/rama-skill/skills/rama/references/paths.md"},"output":"reference"}}}
+{"type":"tool_use","timestamp":1003000,"part":{"id":"p2","callID":"c2","tool":"write","state":{"status":"completed","input":{"filePath":"implementations/demo/module.clj","content":"old old\n"},"output":"written"}}}
+{"type":"tool_use","timestamp":1004000,"part":{"id":"p3","callID":"c3","tool":"edit","state":{"status":"completed","input":{"filePath":"implementations/demo/module.clj","oldString":"old","newString":"new","replaceAll":false},"output":"edited"}}}
+{"type":"tool_use","timestamp":1005000,"part":{"id":"p4","callID":"c4","tool":"edit","state":{"status":"error","input":{"filePath":"implementations/demo/module.clj","oldString":"old","newString":"WRONG"},"error":"edit rejected"}}}
+{"type":"tool_use","timestamp":1006000,"part":{"id":"p5","callID":"c5","tool":"write","state":{"status":"completed","input":{"filePath":"REASONING.md","content":"CONFUSION: inspect the contract"},"output":"written"}}}
+{"type":"tool_use","timestamp":1007000,"part":{"id":"p6","callID":"c6","tool":"bash","state":{"status":"completed","input":{"command":"clojure -X:test"},"output":"Ran 2 tests containing 7 assertions.\n0 failures, 0 errors."}}}
+{"type":"step_finish","timestamp":1008000,"part":{"id":"f1","reason":"tool-calls","cost":0.013,"tokens":{"input":13,"output":7,"cache":{"read":5,"write":2}}}}
+{"type":"text","timestamp":1011000,"part":{"id":"t1","text":"PHASE_VALIDATION:pass. Unique final response."}}
+{"type":"step_finish","timestamp":1012000,"part":{"id":"f2","reason":"stop","cost":0.007,"tokens":{"input":19,"output":11,"cache":{"read":3,"write":1}}}}

@@ -148,6 +148,20 @@
                 :cache-read-tokens 120}
                (parse-token-usage output)))))))
 
+(deftest integer-reported-cost-test
+  ;; Pi reports JSON integer zero when a provider rejects before generation.
+  (is (= "$0.0000" (format-cost 0)))
+  (is (= "$1.0000" (format-cost 1)))
+  (is (= "$0.1250" (format-cost 0.125)))
+  (is (= "N/A" (format-cost nil)))
+  (let [tmp (str (fs/create-temp-dir))]
+    (fs/create-dirs (fs/path tmp "project"))
+    (try
+      (let [results [(assoc (first sample-results) :cost 0)]
+            report (generate-report results "pi" (str (fs/path tmp "project")))]
+        (is (str/includes? (slurp report) "$0.0000")))
+      (finally (fs/delete-tree tmp)))))
+
 (deftest model-pricing-test
   (testing "model->pricing"
     (testing "recognizes the four current Codex models"
@@ -1034,6 +1048,103 @@
           "subsystem beta never runs")
       (is (empty? (filterv (fn [[p _ _]] (= :full-spec-review p)) invocations))
           "full-spec review never runs"))))
+
+(deftest isolated-solver-command-test
+  (let [cmd ["opencode" "run" "--" "prompt with spaces"]]
+    (is (= cmd (solver-command cmd "/project" "demo" "opencode")))
+    (binding [*isolate* true]
+      (is (= ["python3" "/project/scripts/isolate_solver.py"
+              "--repo" "/project" "--challenge" "demo" "--agent" "opencode"
+              "--" "opencode" "run" "--" "prompt with spaces"]
+             (solver-command cmd "/project" "demo" "opencode"))))))
+
+(deftest native-harness-command-test
+  (doseq [[agent binary effort-flag] [[:opencode "opencode" "--variant"]
+                                      [:pi "pi" "--thinking"]]]
+    (let [cmd ((get-in agents [agent :phase-cmd]) "demo" :full-spec-review
+               "/project" "provider/model" "high" "orders")]
+      (is (= binary (first cmd)))
+      (is (some #{"json"} cmd))
+      (is (some #{effort-flag} cmd))
+      (is (some #{"provider/model"} cmd))
+      (is (re-find #"demo full-spec-review orders" (last cmd)))
+      (is (re-find #"Read .agents/skills/challenge-phase/SKILL.md" (last cmd)))))
+  (is (= ["pi" "--print" "--mode" "json" "--no-session" "prompt"]
+         (pi-prompt-cmd nil nil "prompt"))))
+
+(deftest native-harness-process-test
+  ;; A real child process emits a native fixture, then the real save and
+  ;; normalization boundaries run. No provider/network calls or challenge data.
+  (doseq [agent ["opencode" "pi" "codex" "claude"]]
+    (let [tmp (str (fs/create-temp-dir))
+          project (str (fs/path tmp "project"))
+          raw (slurp (str "scripts/fixtures/transcripts/" agent ".jsonl"))]
+      (fs/create-dirs project)
+      (try
+        (let [r (binding [*outer-timeout-s* 10]
+                  (run-phase! {:phase-cmd (fn [& _] ["printf" "%s" raw])}
+                              "demo" 0 1 nil project agent "provider/model" "high"
+                              (java.time.LocalDateTime/now) (System/currentTimeMillis)))
+              saved (slurp (:transcript-path r))
+              normalized (normalize-agent-output saved)
+              summary (result-event normalized)]
+          (is (= 0 (:exit r)))
+          (is (= :pass (:verdict r)))
+          (is (= 32 (get-in r [:token-usage :input-tokens])))
+          (is (= 18 (get-in r [:token-usage :output-tokens])))
+          (is (= 8 (get-in r [:token-usage :cache-read-tokens])))
+          (is (= (if (= agent "codex") 2 6) (:tool-uses r)))
+          (is (= (if (= agent "codex") [] ["paths.md"]) (:skill-refs-used r)))
+          (is (= (if (= agent "codex") nil 0.02) (:cost r)))
+          (is (str/includes? saved raw) "native history remains intact")
+          (is (str/includes? (:transcript-path r) "provider_model"))
+          (is (number? (:duration_ms summary)))
+          (is (str/includes? (:result summary) "PHASE_VALIDATION:pass"))
+          (is (fs/exists? (generate-report sample-results agent project {:model "provider/model"}))))
+        (finally (fs/delete-tree tmp))))))
+
+(deftest native-harness-errors-and-skills-test
+  (is (transient-server-error?
+        "{\"type\":\"error\",\"error\":{\"message\":\"HTTP 503\"}}" ""))
+  (is (transient-server-error?
+        "{\"type\":\"message_end\",\"message\":{\"stopReason\":\"error\",\"errorMessage\":\"HTTP 429\"}}" ""))
+  (is (not (transient-server-error?
+             "{\"type\":\"tool_execution_end\",\"isError\":true,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"HTTP 503\"}]}}" "")))
+  (is (= ["rama"]
+         (parse-skills-used
+           (normalize-agent-output
+             "{\"type\":\"tool_use\",\"part\":{\"tool\":\"read\",\"state\":{\"input\":{\"filePath\":\".agents/skills/rama/SKILL.md\"}}}}")))))
+
+(deftest native-error-with-zero-process-exit-test
+  (let [tmp (str (fs/create-temp-dir))
+        project (str (fs/path tmp "project"))]
+    (fs/create-dirs project)
+    (try
+      (let [r (run-phase! {:phase-cmd (fn [& _]
+                                      ["printf" "%s" "{\"type\":\"error\",\"error\":\"invalid model\"}"])}
+                          "demo" 0 1 nil project "opencode" nil nil
+                          (java.time.LocalDateTime/now) (System/currentTimeMillis))]
+        (is (= 1 (:exit r)))
+        (is (nil? (:verdict r))))
+      (finally (fs/delete-tree tmp)))))
+
+(deftest native-scoring-test
+  (doseq [agent [:opencode :pi :codex]]
+    (let [text "ALIGNMENT_SCORE:4\nTEST_ALIGNMENT_SCORE:3\njustification"
+          event (case agent
+                  :opencode {:type "text" :part {:text text}}
+                  :pi {:type "message_end" :message {:role "assistant" :content [{:type "text" :text text}]}}
+                  :codex {:type "item.completed" :item {:type "agent_message" :text text}})
+          adapter {:prompt-cmd (fn [model effort prompt]
+                                 (is (= "provider/model" model))
+                                 (is (nil? effort))
+                                 (is (= "score prompt" prompt))
+                                 ["printf" "%s" (json/generate-string event)])}]
+      (with-redefs [build-alignment-prompt (constantly "score prompt")
+                    build-test-alignment-prompt (constantly "score prompt")
+                    agent-tests-use-harness? (constantly false)]
+        (is (= 4 (:alignment (run-alignment-scoring! "." "demo" "provider/model" adapter))))
+        (is (= 3 (:test-alignment (run-test-alignment-scoring! "." "demo" "provider/model" adapter))))))))
 
 (let [{:keys [fail error]} (run-tests)]
   (System/exit (if (zero? (+ fail error)) 0 1)))

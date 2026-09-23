@@ -15,18 +15,20 @@
 (def cli-spec
   {:filter     {:desc "Glob pattern to match challenge names (e.g. \"basic-*\")"
                 :alias :f}
-   :batch      {:desc "Batch number to run (1-5)"
+   :batch      {:desc "Batch number from CHALLENGE_ORDER.md (5 requires a cluster)"
                 :alias :b
                 :coerce :int}
    :difficulty {:desc "Difficulty filter: standard or hard"
                 :alias :d}
-   :agent      {:desc "Agent to use: claude or codex (default: claude)"
+   :agent      {:desc "Agent: claude, codex, opencode, or pi (default: claude)"
                 :alias :a
                 :default "claude"}
    :fast-model  {:desc "Fast model: phase 0, easy/medium subproblem phases (required)"}
    :fast-effort {:desc "Reasoning effort for the fast model (required)"}
    :slow-model  {:desc "Slow model: planning, plan-validation, decompose, review, hard subproblems (required)"}
    :slow-effort {:desc "Reasoning effort for the slow model (required)"}
+   :isolate    {:desc "Run solver phases in a Linux bubblewrap public-only filesystem"
+                :coerce :boolean}
    :verbose    {:desc "Stream agent output to console in real time"
                 :alias :v
                 :coerce :boolean}
@@ -117,13 +119,14 @@
   (println)
   (println "Options:")
   (println "  -f, --filter GLOB       Glob pattern to match challenge names (e.g. \"basic-*\")")
-  (println "  -b, --batch N           Batch number to run (1-5)")
+  (println "  -b, --batch N           Batch number from CHALLENGE_ORDER.md")
   (println "  -d, --difficulty TYPE   Difficulty filter: standard or hard")
-  (println "  -a, --agent NAME        Agent to use: claude or codex (default: claude)")
+  (println "  -a, --agent NAME        Agent: claude, codex, opencode, or pi (default: claude)")
   (println "      --fast-model M      Fast model: phase 0, easy/medium subproblem phases (required)")
   (println "      --fast-effort E     Reasoning effort for the fast model (required)")
   (println "      --slow-model M      Slow model: planning, validation, decompose, review, hard (required)")
   (println "      --slow-effort E     Reasoning effort for the slow model (required)")
+  (println "      --isolate           Linux public-only solver filesystem (bubblewrap required)")
   (println "  -v, --verbose           Stream agent output to console in real time")
   (println "  -h, --help              Show this help")
   (println)
@@ -210,9 +213,56 @@
      true      (conj (str "$challenge-phase "
                           (phase-invocation-args challenge-name phase-id subsystem))))))
 
+(defn opencode-prompt-cmd [model reasoning prompt]
+  (cond-> ["opencode" "run" "--format" "json" "--thinking" "--auto"]
+    model (into ["--model" model])
+    reasoning (into ["--variant" reasoning])
+    true (into ["--" prompt])))
+
+(defn pi-prompt-cmd [model reasoning prompt]
+  (cond-> ["pi" "--print" "--mode" "json" "--no-session"]
+    model (into ["--model" model])
+    reasoning (into ["--thinking" reasoning])
+    true (conj prompt)))
+
+(defn codex-prompt-cmd [model _reasoning prompt]
+  (cond-> ["codex" "exec" "--json" "--dangerously-bypass-approvals-and-sandbox"]
+    model (into ["--model" model])
+    true (conj prompt)))
+
+(defn native-phase-cmd [prompt-cmd]
+  (fn [challenge-name phase-id _project-root model reasoning subsystem]
+    (prompt-cmd model reasoning
+                (str "Read .agents/skills/challenge-phase/SKILL.md and follow its instructions for "
+                     (phase-invocation-args challenge-name phase-id subsystem)
+                     ". Execute only this phase."))))
+
 (def agents
   {:claude {:phase-cmd claude-phase-cmd}
-   :codex  {:phase-cmd codex-phase-cmd}})
+   :codex  {:phase-cmd codex-phase-cmd :prompt-cmd codex-prompt-cmd}
+   :opencode {:phase-cmd (native-phase-cmd opencode-prompt-cmd)
+              :prompt-cmd opencode-prompt-cmd}
+   :pi {:phase-cmd (native-phase-cmd pi-prompt-cmd)
+        :prompt-cmd pi-prompt-cmd}})
+
+;; The same Python adapters serve saved histories and runner telemetry. Keep
+;; native output on disk; normalize once per invocation, not per metric.
+(def transcript-adapter
+  (str (fs/parent (fs/absolutize *file*)) "/transcript_events.py"))
+
+(defn normalize-agent-output [output]
+  (let [r @(p/process ["python3" transcript-adapter]
+                      {:in output :out :string :err :string})]
+    (when-not (zero? (:exit r))
+      (throw (ex-info "Transcript normalization failed" {:stderr (:err r)})))
+    (:out r)))
+
+(defn result-event [output]
+  (last (keep (fn [line]
+                (try (let [e (json/parse-string line true)]
+                       (when (= "result" (:type e)) e))
+                     (catch Exception _ nil)))
+              (str/split-lines output))))
 
 ;;; Pricing
 
@@ -252,7 +302,7 @@
 (defn format-cost
   "Format a cost value as a dollar string, or \"N/A\" when nil."
   [cost]
-  (if cost (format "$%.4f" cost) "N/A"))
+  (if cost (format "$%.4f" (double cost)) "N/A"))
 
 ;;; Encryption
 
@@ -334,10 +384,15 @@
                         ;; Claude: assistant event with Skill tool_use
                         (= "assistant" (:type parsed))
                         (reduce (fn [acc2 block]
-                                  (if (and (= "tool_use" (:type block))
-                                           (= "Skill" (:name block)))
+                                  (cond
+                                    (not= "tool_use" (:type block)) acc2
+                                    (= "Skill" (:name block))
                                     (conj acc2 (get-in block [:input :skill]))
-                                    acc2))
+                                    (contains? #{"Read" "Bash"} (:name block))
+                                    (into acc2 (map second
+                                                 (re-seq #"(?:skills|plugins)/(?:[^/]+/skills/)?([^/]+)/SKILL\.md"
+                                                         (json/generate-string (:input block)))))
+                                    :else acc2))
                                 acc
                                 (get-in parsed [:message :content] []))
 
@@ -511,8 +566,8 @@
          time-str        (.format t (java.time.format.DateTimeFormatter/ofPattern "HHmmss"))
          transcripts-dir (fs/path project-root ".." "transcripts")
          base            (cond
-                           (and model reasoning) (format "%s-%s-%s-%s-%s" date-str time-str agent-name model reasoning)
-                           model                 (format "%s-%s-%s-%s" date-str time-str agent-name model)
+                           (and model reasoning) (format "%s-%s-%s-%s-%s" date-str time-str agent-name (str/replace model #"[/\\\\]" "_") reasoning)
+                           model                 (format "%s-%s-%s-%s" date-str time-str agent-name (str/replace model #"[/\\\\]" "_"))
                            :else                 (format "%s-%s-%s" date-str time-str agent-name))
          sub-segment     (if subsystem (str "-" subsystem) "")
          retry-segment   (if (pos? (or retry 0)) (format "-retry%d" retry) "")
@@ -578,6 +633,14 @@
 (def ^:dynamic *fast-reasoning* nil)
 (def ^:dynamic *slow-model* nil)
 (def ^:dynamic *slow-reasoning* nil)
+(def ^:dynamic *isolate* false)
+
+(defn solver-command [cmd project-root challenge-name agent-name]
+  (if *isolate*
+    (into ["python3" (str (fs/path project-root "scripts/isolate_solver.py"))
+           "--repo" project-root "--challenge" challenge-name
+           "--agent" agent-name "--"] cmd)
+    cmd))
 
 (defn tier-config
   "Return [model reasoning] for a tier keyword (:fast | :slow)."
@@ -732,6 +795,7 @@
     (prn "CMD:" cmd)
     (flush))
   (let [start (System/currentTimeMillis)
+        started-at (str (java.time.Instant/now))
         result (try
                  ;; Always stream via futures so partial output is captured on timeout
                  (let [proc (p/process cmd {:dir project-root :in ""
@@ -769,7 +833,8 @@
                     :out ""
                     :err (str "Process error: " (.getMessage e))}))
         duration-s (quot (- (System/currentTimeMillis) start) 1000)]
-    (assoc result :duration-s duration-s)))
+    (assoc result :duration-s duration-s
+                  :started-at started-at :finished-at (str (java.time.Instant/now)))))
 
 ;;; Challenge scoring
 
@@ -824,16 +889,21 @@
 
 (defn run-alignment-scoring!
   "Run alignment scoring as a separate LLM call. Returns {:alignment int} or nil."
-  [project-root challenge-name model]
+  [project-root challenge-name model & [agent-fns]]
   (when-let [prompt (build-alignment-prompt project-root challenge-name)]
-    (let [cmd  (cond-> ["claude" "--print"]
-                 model (into ["--model" model]))
+    (let [cmd (if-let [build (:prompt-cmd agent-fns)]
+                (build model nil prompt)
+                (cond-> ["claude" "--print"] model (into ["--model" model])))
           start (System/currentTimeMillis)
-          proc (p/process cmd {:dir project-root :in prompt})
+          proc (p/process cmd {:dir project-root
+                              :in (if (:prompt-cmd agent-fns) "" prompt)
+                              :extra-env {"CHALLENGE_KEY" nil}})
           out-fut (future (slurp (:out proc)))
           err-fut (future (slurp (:err proc)))
           done @proc
-          output @out-fut
+          output (if (:prompt-cmd agent-fns)
+                   (or (:result (result-event (normalize-agent-output @out-fut))) "")
+                   @out-fut)
           err-output @err-fut
           duration-s (quot (- (System/currentTimeMillis) start) 1000)]
       (when *verbose*
@@ -918,21 +988,26 @@
 
 (defn run-test-alignment-scoring!
   "Run test-coverage alignment scoring. Returns {:test-alignment int} or nil."
-  [project-root challenge-name model]
+  [project-root challenge-name model & [agent-fns]]
   (if (agent-tests-use-harness? project-root challenge-name)
     (do (when *verbose*
           (println (format "  Test alignment 1/5: agent tests use rama-challenges.harness")))
         {:test-alignment 1
          :test-alignment-justification "Agent tests use rama-challenges.harness (automatic score of 1)."})
     (when-let [prompt (build-test-alignment-prompt project-root challenge-name)]
-      (let [cmd  (cond-> ["claude" "--print"]
-                   model (into ["--model" model]))
+      (let [cmd (if-let [build (:prompt-cmd agent-fns)]
+                  (build model nil prompt)
+                  (cond-> ["claude" "--print"] model (into ["--model" model])))
             start (System/currentTimeMillis)
-            proc (p/process cmd {:dir project-root :in prompt})
+            proc (p/process cmd {:dir project-root
+                                :in (if (:prompt-cmd agent-fns) "" prompt)
+                                :extra-env {"CHALLENGE_KEY" nil}})
             out-fut (future (slurp (:out proc)))
             err-fut (future (slurp (:err proc)))
             done @proc
-            output @out-fut
+            output (if (:prompt-cmd agent-fns)
+                     (or (:result (result-event (normalize-agent-output @out-fut))) "")
+                     @out-fut)
             err-output @err-fut
             duration-s (quot (- (System/currentTimeMillis) start) 1000)]
         (when *verbose*
@@ -1116,6 +1191,11 @@
                                   (catch Exception _ ::unparsed))]
                   (cond
                     (= ::unparsed parsed) line
+                    (contains? #{"error" "turn.failed"} (:type parsed))
+                    (json/generate-string (or (:error parsed) (:message parsed)))
+                    (and (= "message_end" (:type parsed))
+                         (= "error" (get-in parsed [:message :stopReason])))
+                    (get-in parsed [:message :errorMessage])
                     ;; `is_error` here is top-level (the run's own result event).
                     ;; Tool-level `is_error` lives nested under :message :content
                     ;; and is invisible to this check by design — a failed Bash
@@ -1150,7 +1230,9 @@
   needs to decide next steps and accumulate per-phase telemetry."
   [agent-fns challenge-name phase-id attempt subsystem
    project-root agent-name model reasoning run-start-time run-start-millis]
-  (let [cmd ((:phase-cmd agent-fns) challenge-name phase-id project-root model reasoning subsystem)
+  (let [cmd (solver-command
+             ((:phase-cmd agent-fns) challenge-name phase-id project-root model reasoning subsystem)
+             project-root challenge-name agent-name)
         remaining (long (time-remaining-s run-start-millis))
         effective-timeout (min *outer-timeout-s* remaining)
         phase-label (str (phase-id-str phase-id)
@@ -1172,8 +1254,18 @@
                                               phase-id attempt subsystem tries)
                 r (binding [*outer-timeout-s* eff]
                     (invoke-command! cmd project-root))
+                transcript (str (json/generate-string
+                                  {:type "run_metadata" :timestamp (:started-at r)
+                                   :isolation (if *isolate* "bubblewrap-public-only" "none")
+                                   :model model :effort reasoning :agent agent-name}) "\n"
+                                (:out r) "\n"
+                                (json/generate-string
+                                  {:type "run_metadata" :timestamp (:finished-at r)
+                                   :duration_s (:duration-s r) :exit (:exit r)
+                                   :stderr (:err r)
+                                   :timed_out (boolean (:timed-out? r))}) "\n")
                 path (save-transcript! project-root agent-name model reasoning
-                                       challenge-name (:out r) phase-id attempt
+                                       challenge-name transcript phase-id attempt
                                        run-start-time subsystem tries)
                 r (assoc r :retries tries :transcript-path path)]
             (if (and (transient-server-error? (:out r) (:err r))
@@ -1187,13 +1279,17 @@
                 (Thread/sleep (* backoff 1000))
                 (recur (inc tries)))
               r)))
+        canonical (normalize-agent-output out)
+        summary (result-event canonical)
         combined (str out "\n" err)
         verdict (parse-phase-verdict combined)
-        token-usage (parse-token-usage out)
-        cost (compute-cost token-usage (model->pricing model))
-        tool-uses (parse-tool-uses out)
-        skills-used (parse-skills-used out)
-        skill-refs-used (parse-skill-refs-used out)]
+        token-usage (parse-token-usage canonical)
+        cost (or (:total_cost_usd summary)
+                 (when (contains? #{"claude" "codex"} agent-name)
+                   (compute-cost token-usage (model->pricing model))))
+        tool-uses (parse-tool-uses canonical)
+        skills-used (parse-skills-used canonical)
+        skill-refs-used (parse-skill-refs-used canonical)]
     (when *verbose*
       (println (format "  Phase %s (attempt %d) finished: exit=%d duration=%ds retries=%d verdict=%s"
                        phase-label attempt exit duration-s retries
@@ -1202,7 +1298,7 @@
      :attempt attempt
      :retries retries
      :subsystem subsystem
-     :exit exit
+     :exit (if (and (zero? exit) (:is_error summary)) 1 exit)
      :timed-out? (boolean timed-out?)
      :duration-s duration-s
      :verdict verdict
@@ -1694,10 +1790,10 @@
                 (when (= :pass status)
                   (let [impl-scores (do (when *verbose*
                                           (println (format "Scoring alignment for %s..." challenge-name)))
-                                        (run-alignment-scoring! project-root challenge-name model))
+                                        (run-alignment-scoring! project-root challenge-name model agent-fns))
                         test-scores (do (when *verbose*
                                           (println (format "Scoring test alignment for %s..." challenge-name)))
-                                        (run-test-alignment-scoring! project-root challenge-name model))
+                                        (run-test-alignment-scoring! project-root challenge-name model agent-fns))
                         scores (merge impl-scores test-scores)]
                     (when (seq scores)
                       {:scores scores :composite (:alignment scores)})))]
@@ -1793,7 +1889,7 @@
   (let [agent-fns (get agents agent-key)]
     (when-not agent-fns
       (binding [*out* *err*]
-        (println (str "Error: unknown agent '" (name agent-key) "'. Use 'claude' or 'codex'.")))
+        (println (str "Error: unknown agent '" (name agent-key) "'. Use claude, codex, opencode, or pi.")))
       (System/exit 1))
     (println)
     (mapv #(run-challenge % agent-name agent-fns project-root model reasoning enc-key) challenges)))
@@ -1962,8 +2058,8 @@
                                  "yyyy-MM-dd HH:mm:ss"))
          reports-dir (fs/path project-root ".." "reports")
          filename (cond
-                    (and model reasoning) (format "%s-%s-%s-%s-%s.md" date-str time-str agent-name model reasoning)
-                    model                 (format "%s-%s-%s-%s.md" date-str time-str agent-name model)
+                    (and model reasoning) (format "%s-%s-%s-%s-%s.md" date-str time-str agent-name (str/replace model #"[/\\\\]" "_") reasoning)
+                    model                 (format "%s-%s-%s-%s.md" date-str time-str agent-name (str/replace model #"[/\\\\]" "_"))
                     :else                 (format "%s-%s-%s.md" date-str time-str agent-name))
          report-path (fs/path reports-dir filename)
          passed    (count (filterv #(= :pass (:status %)) results))
@@ -2105,6 +2201,17 @@
           (println "No challenges found matching filters.")
           (System/exit 0))
 
+        (when (and (:isolate opts) (contains? #{"claude" "opencode"} agent-name))
+          (let [{:keys [exit out err]}
+                (invoke-command! ["python3" "scripts/check_solver_models.py"
+                                  "--agent" agent-name
+                                  "--pair" fast-model fast-effort
+                                  "--pair" slow-model slow-effort] project-root)]
+            (when (not= 0 exit)
+              (throw (ex-info (str "Model/effort preflight failed: " out err)
+                              {:exit exit})))
+            (print out)))
+
         (print-run-header agent-name (count valid) opts model reasoning)
         (println (format "Models: fast=%s [%s] | slow=%s [%s]"
                          fast-model (resolve-effort fast-effort)
@@ -2114,6 +2221,7 @@
               start-ms      (System/currentTimeMillis)
               results       (binding [*verbose* (or (:verbose opts) (:pretty opts))
                                       *pretty* (boolean (:pretty opts))
+                                      *isolate* (boolean (:isolate opts))
                                       *fast-model* fast-model
                                       *fast-reasoning* fast-effort
                                       *slow-model* slow-model
