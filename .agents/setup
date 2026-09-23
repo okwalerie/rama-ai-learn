@@ -26,7 +26,7 @@ as_root() {
 install_system_packages() {
   local packages=()
   local package
-  for package in curl git jq nano rlwrap unzip python3 bubblewrap openjdk-17-jdk-headless; do
+  for package in curl git jq nano rlwrap unzip python3 bubblewrap ripgrep openjdk-17-jdk-headless; do
     if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'install ok installed'; then
       packages+=("$package")
     fi
@@ -123,6 +123,13 @@ install_opencode() {
   else
     npm install --global opencode-ai@1.18.32
   fi
+  # Public provider metadata only; no user authentication or model requests.
+  mkdir -p "${HOME}/.cache/opencode"
+  if [ ! -s "${HOME}/.cache/opencode/models.json" ]; then
+    curl -fsSL https://models.dev/api.json -o "${HOME}/.cache/opencode/models.json.tmp"
+    jq -e 'type == "object"' "${HOME}/.cache/opencode/models.json.tmp" >/dev/null
+    mv "${HOME}/.cache/opencode/models.json.tmp" "${HOME}/.cache/opencode/models.json"
+  fi
 }
 
 install_nrepl_tools() {
@@ -142,6 +149,9 @@ install_nrepl_tools() {
       --as clj-paren-repair-claude-hook \
       --main-opts '["-m" "clojure-mcp-light.hook"]'
   fi
+  # bbin installs Git sources but resolves Maven dependencies on first use.
+  # Warm those too, before solver caches are mounted read-only.
+  clj-nrepl-eval --help >/dev/null
 }
 
 prefetch_deps() {

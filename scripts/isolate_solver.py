@@ -3,7 +3,7 @@
 
 The host orchestrator retains private data. Only an allowlisted public snapshot
 and this challenge's writable implementation directory enter bubblewrap.
-Network is shared for provider access: see README for the threat model.
+Network defaults to shared; --network strict uses an exact-host CONNECT proxy.
 """
 import argparse
 import os
@@ -12,6 +12,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
+
+from solver_proxy import ProxyServer, allowed_hosts
 
 
 def copy_public(source, dest, *, source_tree=False):
@@ -48,7 +51,7 @@ def snapshot(repo, target, challenge):
         link.symlink_to("../../plugins/rama-skill/skills/rama")
 
 
-def isolated_command(repo, challenge, agent, command, staging):
+def isolated_command(repo, challenge, agent, command, staging, *, strict=False):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", challenge):
         raise ValueError("Invalid challenge name")
     if not shutil.which("bwrap"):
@@ -64,7 +67,9 @@ def isolated_command(repo, challenge, agent, command, staging):
     # Keep the original absolute project path so CLI output and recorded paths
     # continue to match the host's telemetry and implementation artifacts.
     args = ["bwrap", "--die-with-parent", "--new-session", "--unshare-all",
-            "--share-net", "--cap-drop", "ALL"]
+            "--cap-drop", "ALL"]
+    if not strict:
+        args += ["--share-net"]
     for path in ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/opt/java/openjdk"):
         if Path(path).exists():
             args += ["--ro-bind", path, path]
@@ -78,6 +83,8 @@ def isolated_command(repo, challenge, agent, command, staging):
              "--bind", str(impl), str(impl)]
     # Explicit dependency/tool paths, never all of HOME, .cache, or .config.
     for rel in (".m2/repository", ".gitlibs/libs", ".local/bin/bbin",
+                ".gitlibs/_repos/https/github.com/bhauman/clojure-mcp-light",
+                ".gitlibs/_repos/https/github.com/cognitect-labs/test-runner",
                 ".local/bin/clj-nrepl-eval", ".local/bin/clj-paren-repair-claude-hook"):
         path = home / rel
         if path.exists():
@@ -103,6 +110,24 @@ def isolated_command(repo, challenge, agent, command, staging):
     for key in keys.get(agent, ()):
         if key in os.environ:
             env[key] = os.environ[key]
+    if strict:
+        allowed_hosts(agent)  # Reject unsupported providers, never broaden policy.
+        args += ["--ro-bind", str(staging / "provider.sock"), "/run/provider.sock",
+                 "--ro-bind", str(Path(__file__).with_name("solver_proxy.py")), "/run/solver_proxy.py"]
+        command = ["python3", "/run/solver_proxy.py", "--bridge", "/run/provider.sock", *command]
+        if agent == "opencode":
+            catalog = home / ".cache/opencode/models.json"
+            if not catalog.is_file():
+                raise RuntimeError("Preseed OpenCode models.json on the host before strict runs")
+            args += ["--ro-bind", str(catalog), "/run/opencode-models.json"]
+            env.update(OPENCODE_MODELS_PATH="/run/opencode-models.json",
+                       OPENCODE_DISABLE_MODELS_FETCH="true", OPENCODE_DISABLE_AUTOUPDATE="true",
+                       OPENCODE_DISABLE_LSP_DOWNLOAD="true", OPENCODE_PURE="true",
+                       OPENCODE_DISABLE_DEFAULT_PLUGINS="true")
+            for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+                env.pop(key, None)
+        else:
+            env["DISABLE_AUTOUPDATER"] = "1"
     # Clearing before spawning bwrap also removes secrets from /proc/1/environ,
     # rather than merely removing them from the final CLI's environment.
     args += ["--chdir", str(repo), "--", *command]
@@ -114,6 +139,7 @@ def main():
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--challenge", required=True)
     parser.add_argument("--agent", choices=("claude", "opencode", "codex", "pi"), required=True)
+    parser.add_argument("--network", choices=("shared", "strict"), default="shared")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     opts = parser.parse_args()
     command = opts.command
@@ -122,9 +148,18 @@ def main():
     if not command:
         parser.error("a command is required after --")
     with tempfile.TemporaryDirectory(prefix="rama-solver-") as tmp:
+        strict = opts.network == "strict"
         args, env = isolated_command(opts.repo.resolve(), opts.challenge, opts.agent,
-                                     command, Path(tmp))
-        return subprocess.call(args, env=env, close_fds=True)
+                                     command, Path(tmp), strict=strict)
+        if not strict:
+            return subprocess.call(args, env=env, close_fds=True)
+        with ProxyServer(Path(tmp) / "provider.sock", allowed_hosts(opts.agent)) as proxy:
+            thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+            thread.start()
+            try:
+                return subprocess.call(args, env=env, close_fds=True)
+            finally:
+                proxy.shutdown()
 
 
 if __name__ == "__main__":
