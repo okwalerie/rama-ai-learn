@@ -1,0 +1,269 @@
+
+Running tests in #{"test-private"}
+
+Testing hld-search-autocomplete.independent-test
+INDEPENDENT-WORK 4 tasks suggest {:point 4, :iterator 1, :next 2, :writes 0} -> {:point 4, :iterator 1, :next 2, :writes 0}
+INDEPENDENT-WORK 4 tasks get-phrase {:point 5, :iterator 0, :next 0, :writes 0} -> {:point 5, :iterator 0, :next 0, :writes 0}
+INDEPENDENT-WORK 4 tasks search {:point 54, :iterator 0, :next 0, :writes 24} -> {:point 54, :iterator 0, :next 0, :writes 24}
+INDEPENDENT-WORK 4 tasks publish {:point 40, :iterator 0, :next 0, :writes 22} -> {:point 40, :iterator 0, :next 0, :writes 22}
+INDEPENDENT-DEPOT-TASKS 4 #{0 1 3 2}
+15:56:44.087 [Worker 39f355b1 00000000@2006 DTT 3 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc1756110216569542761/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/39f355b1-d479-eac7-1d26-765cd6a6b91c/local/*events/3/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc1756110216569542761/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/39f355b1-d479-eac7-1d26-765cd6a6b91c/local/*events/3/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:56:44.133 [Worker 39f355b1 00000000@2006 DTT 1 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc1756110216569542761/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/39f355b1-d479-eac7-1d26-765cd6a6b91c/local/*events/1/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc1756110216569542761/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/39f355b1-d479-eac7-1d26-765cd6a6b91c/local/*events/1/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:56:44.164 [Worker 39f355b1 00000000@2006 DTT 2 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc1756110216569542761/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/39f355b1-d479-eac7-1d26-765cd6a6b91c/local/*events/2/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc1756110216569542761/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/39f355b1-d479-eac7-1d26-765cd6a6b91c/local/*events/2/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:56:44.179 [Worker 39f355b1 00000000@2006 DTT 0 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc1756110216569542761/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/39f355b1-d479-eac7-1d26-765cd6a6b91c/local/*events/0/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc1756110216569542761/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/39f355b1-d479-eac7-1d26-765cd6a6b91c/local/*events/0/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:56:46.586 [clientside-cluster-manager-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - ModuleAssignmentInfoNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-search-autocomplete.module/AutocompleteModule, :module-instance-id bb1ad573-19b8-9cd8-68fb-0e6f684df992}
+
+FAIL in (independent-four-tasks) (independent_test.clj:115)
+expected: (= 2 (:sessions (p/get-phrase client "en" "ab0001")))
+  actual: (not (= 2 3))
+15:56:46.734 [clientside-cluster-manager-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - ModuleAssignmentInfoNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-search-autocomplete.module/AutocompleteModule, :module-instance-id bb1ad573-19b8-9cd8-68fb-0e6f684df992}
+
+FAIL in (independent-four-tasks) (independent_test.clj:116)
+expected: (= [{:phrase "ab0001", :score 10019} {:phrase "ab0000", :score 10000}] (p/suggest client "en" "ab" 2))
+  actual: (not (= [{:phrase "ab0001", :score 10019} {:phrase "ab0000", :score 10000}] [{:phrase "ab0001", :score 10029} {:phrase "ab0000", :score 10000}]))
+INDEPENDENT-WORK 2 tasks suggest {:point 4, :iterator 1, :next 2, :writes 0} -> {:point 4, :iterator 1, :next 2, :writes 0}
+INDEPENDENT-WORK 2 tasks get-phrase {:point 5, :iterator 0, :next 0, :writes 0} -> {:point 5, :iterator 0, :next 0, :writes 0}
+INDEPENDENT-WORK 2 tasks search {:point 54, :iterator 0, :next 0, :writes 24} -> {:point 54, :iterator 0, :next 0, :writes 24}
+INDEPENDENT-WORK 2 tasks publish {:point 34, :iterator 0, :next 0, :writes 18} -> {:point 34, :iterator 0, :next 0, :writes 18}
+INDEPENDENT-DEPOT-TASKS 2 #{0 1}
+15:57:01.086 [Worker 53c1a713 00000000@2003 DTT 0 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc11061744530240144524/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/53c1a713-965b-915c-ac05-95a4c8ff87e6/local/*events/0/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc11061744530240144524/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/53c1a713-965b-915c-ac05-95a4c8ff87e6/local/*events/0/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:57:01.106 [Worker 53c1a713 00000000@2003 DTT 1 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc11061744530240144524/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/53c1a713-965b-915c-ac05-95a4c8ff87e6/local/*events/1/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc11061744530240144524/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/53c1a713-965b-915c-ac05-95a4c8ff87e6/local/*events/1/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+15:57:02.454 [clientside-cluster-manager-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - ModuleAssignmentInfoNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-search-autocomplete.module/AutocompleteModule, :module-instance-id bb1ad573-19b8-9cd8-68fb-0e6f684df992}
+
+FAIL in (independent-two-tasks) (independent_test.clj:115)
+expected: (= 2 (:sessions (p/get-phrase client "en" "ab0001")))
+  actual: (not (= 2 3))
+
+FAIL in (independent-two-tasks) (independent_test.clj:116)
+expected: (= [{:phrase "ab0001", :score 10019} {:phrase "ab0000", :score 10000}] (p/suggest client "en" "ab" 2))
+  actual: (not (= [{:phrase "ab0001", :score 10019} {:phrase "ab0000", :score 10000}] [{:phrase "ab0001", :score 10029} {:phrase "ab0000", :score 10000}]))
+
+Testing hld-search-autocomplete.private-test
+
+FAIL in (four-tasks) (private_test.clj:53)
+en phrase apple
+expected: (= (expected-phrase state locale phrase) (p/get-phrase client locale phrase))
+  actual: (not (= {:generation 2, :in-corpus? true, :base 5, :sessions 2, :score 25, :blocked? false} {:generation 2, :in-corpus? true, :base 5, :sessions 3, :score 35, :blocked? false}))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix a k=1
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "a b", :score 25}] [{:phrase "apple", :score 35}]))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix a k=3
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "a b", :score 25} {:phrase "apple", :score 25} {:phrase "apex", :score 15}] [{:phrase "apple", :score 35} {:phrase "a b", :score 25} {:phrase "apex", :score 15}]))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix a k=10
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "a b", :score 25} {:phrase "apple", :score 25} {:phrase "apex", :score 15} {:phrase "atlas", :score 15}] [{:phrase "apple", :score 35} {:phrase "a b", :score 25} {:phrase "apex", :score 15} {:phrase "atlas", :score 15}]))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix ap k=1
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25}] [{:phrase "apple", :score 35}]))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix ap k=3
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25} {:phrase "apex", :score 15}] [{:phrase "apple", :score 35} {:phrase "apex", :score 15}]))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix ap k=10
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25} {:phrase "apex", :score 15}] [{:phrase "apple", :score 35} {:phrase "apex", :score 15}]))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix apple k=1
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25}] [{:phrase "apple", :score 35}]))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix apple k=3
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25}] [{:phrase "apple", :score 35}]))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix apple k=10
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25}] [{:phrase "apple", :score 35}]))
+
+FAIL in (four-tasks) (private_test.clj:53)
+en phrase apple
+expected: (= (expected-phrase state locale phrase) (p/get-phrase client locale phrase))
+  actual: (not (= {:generation 2, :in-corpus? true, :base 5, :sessions 2, :score 25, :blocked? false} {:generation 2, :in-corpus? true, :base 5, :sessions 3, :score 35, :blocked? false}))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix a k=1
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "a b", :score 25}] [{:phrase "apple", :score 35}]))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix a k=3
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "a b", :score 25} {:phrase "apple", :score 25} {:phrase "apex", :score 15}] [{:phrase "apple", :score 35} {:phrase "a b", :score 25} {:phrase "apex", :score 15}]))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix a k=10
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "a b", :score 25} {:phrase "apple", :score 25} {:phrase "apex", :score 15} {:phrase "atlas", :score 15}] [{:phrase "apple", :score 35} {:phrase "a b", :score 25} {:phrase "apex", :score 15} {:phrase "atlas", :score 15}]))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix ap k=1
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25}] [{:phrase "apple", :score 35}]))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix ap k=3
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25} {:phrase "apex", :score 15}] [{:phrase "apple", :score 35} {:phrase "apex", :score 15}]))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix ap k=10
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25} {:phrase "apex", :score 15}] [{:phrase "apple", :score 35} {:phrase "apex", :score 15}]))
+
+FAIL in (four-tasks) (private_test.clj:53)
+en phrase novel
+expected: (= (expected-phrase state locale phrase) (p/get-phrase client locale phrase))
+  actual: (not (= {:generation 3, :in-corpus? false, :base 0, :sessions 1, :score 10, :blocked? true} {:generation 3, :in-corpus? false, :base 0, :sessions 2, :score 20, :blocked? true}))
+
+FAIL in (four-tasks) (private_test.clj:53)
+en phrase novel
+expected: (= (expected-phrase state locale phrase) (p/get-phrase client locale phrase))
+  actual: (not (= {:generation 3, :in-corpus? false, :base 0, :sessions 1, :score 10, :blocked? false} {:generation 3, :in-corpus? false, :base 0, :sessions 2, :score 20, :blocked? false}))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix novel k=1
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "novel", :score 10}] [{:phrase "novel", :score 20}]))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix novel k=3
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "novel", :score 10}] [{:phrase "novel", :score 20}]))
+
+FAIL in (four-tasks) (private_test.clj:56)
+en prefix novel k=10
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "novel", :score 10}] [{:phrase "novel", :score 20}]))
+
+FAIL in (two-tasks) (private_test.clj:53)
+en phrase apple
+expected: (= (expected-phrase state locale phrase) (p/get-phrase client locale phrase))
+  actual: (not (= {:generation 2, :in-corpus? true, :base 5, :sessions 2, :score 25, :blocked? false} {:generation 2, :in-corpus? true, :base 5, :sessions 3, :score 35, :blocked? false}))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix a k=1
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "a b", :score 25}] [{:phrase "apple", :score 35}]))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix a k=3
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "a b", :score 25} {:phrase "apple", :score 25} {:phrase "apex", :score 15}] [{:phrase "apple", :score 35} {:phrase "a b", :score 25} {:phrase "apex", :score 15}]))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix a k=10
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "a b", :score 25} {:phrase "apple", :score 25} {:phrase "apex", :score 15} {:phrase "atlas", :score 15}] [{:phrase "apple", :score 35} {:phrase "a b", :score 25} {:phrase "apex", :score 15} {:phrase "atlas", :score 15}]))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix ap k=1
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25}] [{:phrase "apple", :score 35}]))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix ap k=3
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25} {:phrase "apex", :score 15}] [{:phrase "apple", :score 35} {:phrase "apex", :score 15}]))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix ap k=10
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25} {:phrase "apex", :score 15}] [{:phrase "apple", :score 35} {:phrase "apex", :score 15}]))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix apple k=1
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25}] [{:phrase "apple", :score 35}]))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix apple k=3
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25}] [{:phrase "apple", :score 35}]))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix apple k=10
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25}] [{:phrase "apple", :score 35}]))
+
+FAIL in (two-tasks) (private_test.clj:53)
+en phrase apple
+expected: (= (expected-phrase state locale phrase) (p/get-phrase client locale phrase))
+  actual: (not (= {:generation 2, :in-corpus? true, :base 5, :sessions 2, :score 25, :blocked? false} {:generation 2, :in-corpus? true, :base 5, :sessions 3, :score 35, :blocked? false}))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix a k=1
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "a b", :score 25}] [{:phrase "apple", :score 35}]))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix a k=3
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "a b", :score 25} {:phrase "apple", :score 25} {:phrase "apex", :score 15}] [{:phrase "apple", :score 35} {:phrase "a b", :score 25} {:phrase "apex", :score 15}]))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix a k=10
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "a b", :score 25} {:phrase "apple", :score 25} {:phrase "apex", :score 15} {:phrase "atlas", :score 15}] [{:phrase "apple", :score 35} {:phrase "a b", :score 25} {:phrase "apex", :score 15} {:phrase "atlas", :score 15}]))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix ap k=1
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25}] [{:phrase "apple", :score 35}]))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix ap k=3
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25} {:phrase "apex", :score 15}] [{:phrase "apple", :score 35} {:phrase "apex", :score 15}]))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix ap k=10
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "apple", :score 25} {:phrase "apex", :score 15}] [{:phrase "apple", :score 35} {:phrase "apex", :score 15}]))
+
+FAIL in (two-tasks) (private_test.clj:53)
+en phrase novel
+expected: (= (expected-phrase state locale phrase) (p/get-phrase client locale phrase))
+  actual: (not (= {:generation 3, :in-corpus? false, :base 0, :sessions 1, :score 10, :blocked? true} {:generation 3, :in-corpus? false, :base 0, :sessions 2, :score 20, :blocked? true}))
+
+FAIL in (two-tasks) (private_test.clj:53)
+en phrase novel
+expected: (= (expected-phrase state locale phrase) (p/get-phrase client locale phrase))
+  actual: (not (= {:generation 3, :in-corpus? false, :base 0, :sessions 1, :score 10, :blocked? false} {:generation 3, :in-corpus? false, :base 0, :sessions 2, :score 20, :blocked? false}))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix novel k=1
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "novel", :score 10}] [{:phrase "novel", :score 20}]))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix novel k=3
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "novel", :score 10}] [{:phrase "novel", :score 20}]))
+
+FAIL in (two-tasks) (private_test.clj:56)
+en prefix novel k=10
+expected: (= (expected-suggest state locale prefix k) (p/suggest client locale prefix k))
+  actual: (not (= [{:phrase "novel", :score 10}] [{:phrase "novel", :score 20}]))
+
+Ran 4 tests containing 358 assertions.
+48 failures, 0 errors.
+Execution error (ExceptionInfo) at cognitect.test-runner.api/test (api.clj:30).
+Test failures or errors occurred.
+
+Full report at:
+/tmp/clojure-18046181012538766315.edn

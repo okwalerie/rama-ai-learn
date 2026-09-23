@@ -1,0 +1,45 @@
+
+Running tests in #{"test-private"}
+
+Testing hld-search-autocomplete.independent-test
+INDEPENDENT-WORK 4 tasks suggest {:point 4, :iterator 1, :next 301, :writes 0} -> {:point 4, :iterator 1, :next 3001, :writes 0}
+
+FAIL in (independent-four-tasks) (independent_test.clj:30)
+4 tasks suggest work grew with unrelated state: {:point 4, :iterator 1, :next 301, :writes 0} -> {:point 4, :iterator 1, :next 3001, :writes 0}
+expected: (< (metric large) (* 4 (max 1 (metric small))))
+  actual: (not (< 3006 1224))
+INDEPENDENT-WORK 4 tasks get-phrase {:point 5, :iterator 0, :next 0, :writes 0} -> {:point 5, :iterator 0, :next 0, :writes 0}
+INDEPENDENT-WORK 4 tasks search {:point 54, :iterator 0, :next 0, :writes 24} -> {:point 54, :iterator 0, :next 0, :writes 24}
+INDEPENDENT-WORK 4 tasks publish {:point 40, :iterator 0, :next 0, :writes 22} -> {:point 40, :iterator 0, :next 0, :writes 22}
+INDEPENDENT-DEPOT-TASKS 4 #{0 1 3 2}
+16:11:40.591 [Worker add4e901 00000000@2006 DTT 2 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc1190940667127964164/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/add4e901-8254-ddec-93c3-276eae4cb346/local/*events/2/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc1190940667127964164/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/add4e901-8254-ddec-93c3-276eae4cb346/local/*events/2/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+16:11:40.615 [Worker add4e901 00000000@2006 DTT 3 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc1190940667127964164/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/add4e901-8254-ddec-93c3-276eae4cb346/local/*events/3/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc1190940667127964164/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/add4e901-8254-ddec-93c3-276eae4cb346/local/*events/3/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+16:11:40.620 [Worker add4e901 00000000@2006 DTT 1 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc1190940667127964164/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/add4e901-8254-ddec-93c3-276eae4cb346/local/*events/1/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc1190940667127964164/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/add4e901-8254-ddec-93c3-276eae4cb346/local/*events/1/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+16:11:40.702 [Worker add4e901 00000000@2006 DTT 0 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc1190940667127964164/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/add4e901-8254-ddec-93c3-276eae4cb346/local/*events/0/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc1190940667127964164/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/add4e901-8254-ddec-93c3-276eae4cb346/local/*events/0/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+16:11:43.209 [clientside-cluster-manager-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - ModuleAssignmentInfoNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-search-autocomplete.module/AutocompleteModule, :module-instance-id bb1ad573-19b8-9cd8-68fb-0e6f684df992}
+16:11:43.337 [clientside-cluster-manager-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - ModuleAssignmentInfoNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-search-autocomplete.module/AutocompleteModule, :module-instance-id bb1ad573-19b8-9cd8-68fb-0e6f684df992}
+INDEPENDENT-WORK 2 tasks suggest {:point 4, :iterator 1, :next 301, :writes 0} -> {:point 4, :iterator 1, :next 3001, :writes 0}
+
+FAIL in (independent-two-tasks) (independent_test.clj:30)
+2 tasks suggest work grew with unrelated state: {:point 4, :iterator 1, :next 301, :writes 0} -> {:point 4, :iterator 1, :next 3001, :writes 0}
+expected: (< (metric large) (* 4 (max 1 (metric small))))
+  actual: (not (< 3006 1224))
+INDEPENDENT-WORK 2 tasks get-phrase {:point 5, :iterator 0, :next 0, :writes 0} -> {:point 5, :iterator 0, :next 0, :writes 0}
+INDEPENDENT-WORK 2 tasks search {:point 54, :iterator 0, :next 0, :writes 24} -> {:point 54, :iterator 0, :next 0, :writes 24}
+INDEPENDENT-WORK 2 tasks publish {:point 34, :iterator 0, :next 0, :writes 18} -> {:point 34, :iterator 0, :next 0, :writes 18}
+INDEPENDENT-DEPOT-TASKS 2 #{0 1}
+16:12:01.707 [Worker bcddd6d7 00000000@2003 DTT 0 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc843804628997558907/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/bcddd6d7-6c5c-1ca8-4e97-3d75d9f3cd47/local/*events/0/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc843804628997558907/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/bcddd6d7-6c5c-1ca8-4e97-3d75d9f3cd47/local/*events/0/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+16:12:01.728 [Worker bcddd6d7 00000000@2003 DTT 1 0-background-0] ERROR rpl.shaded.kafka.log.Log - [Log partition=kafka-log-0, dir=/tmp/ipc843804628997558907/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/bcddd6d7-6c5c-1ca8-4e97-3d75d9f3cd47/local/*events/1/0/log/0/log/0] Could not find offset index file corresponding to log file /tmp/ipc843804628997558907/supervisors/00000000-0000-0000-0000-000000000000/objects/hld-search-autocomplete.module%2FAutocompleteModule/bcddd6d7-6c5c-1ca8-4e97-3d75d9f3cd47/local/*events/1/0/log/0/log/0/kafka-log-0/00000000000000000000.log, recovering segment and rebuilding index files...
+16:12:03.075 [clientside-cluster-manager-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - ModuleAssignmentInfoNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-search-autocomplete.module/AutocompleteModule, :module-instance-id bb1ad573-19b8-9cd8-68fb-0e6f684df992}
+16:12:03.184 [clientside-cluster-manager-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - ModuleAssignmentInfoNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-search-autocomplete.module/AutocompleteModule, :module-instance-id bb1ad573-19b8-9cd8-68fb-0e6f684df992}
+
+Testing hld-search-autocomplete.private-test
+16:12:05.769 [Worker bb1ad573 00000000@2002-worp-0] ERROR rpl.rama.distributed.worp.core.resolve - :rpl.rama.distributed.worp.core.resolve/worp-resolve-leader-exception LeaderNotFoundException from resolve-leader; clearing caches; rethrowing {:module-name hld-search-autocomplete.module/AutocompleteModule, :module-id bb1ad573-19b8-9cd8-68fb-0e6f684df992, :task-id 1, :replica-id nil}
+
+Ran 4 tests containing 356 assertions.
+2 failures, 0 errors.
+Execution error (ExceptionInfo) at cognitect.test-runner.api/test (api.clj:30).
+Test failures or errors occurred.
+
+Full report at:
+/tmp/clojure-17290436075307782714.edn
