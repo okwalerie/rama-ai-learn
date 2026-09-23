@@ -138,8 +138,8 @@ For each storage location, state whether the current design is minimal or whethe
 - Does the design duplicate data across storage locations? If so, justify why (latency constraint) or eliminate. -->
 
 ## Design difficulty log
-<!-- An honest, first-person record of where this design was hard to settle. Write it as you design, not as a summary. For each decision that was genuinely contested:
-- The decision (which PState schema, partitioning, placement, or topology).
-- The competing approach(es) you weighed, and how close the call was — was an alternative genuinely competitive, or was the choice forced once you costed it against the requirements?
-- What finally settled it.
-If nothing was contested — every choice was forced once the requirements were read — say so plainly and briefly. Do not manufacture difficulty; do not hide it. -->
+<!-- Record concise, shareable engineering summaries for design tradeoffs:
+- Decision: the selected PState schema, partitioning, placement, or topology.
+- Basis: relevant requirements, measured or estimated costs, and a brief technical comparison with viable alternatives.
+- Outcome: the selected design's consequences, remaining uncertainty, and any validation needed.
+Report technical conclusions and evidence, not private chain-of-thought, hidden reasoning, or introspective deliberation. If the requirements determine the design directly, state that briefly; do not invent competing alternatives. -->

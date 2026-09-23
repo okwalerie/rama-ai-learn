@@ -512,10 +512,14 @@
   ;; established decision/dead-end capture (or Codex's own skill invocation).
   (let [claude-prompt (slurp ".claude/commands/challenge-phase.md")
         amp-prompt (slurp ".agents/skills/challenge-phase/SKILL.md")
+        plan-template (slurp "plugins/rama-skill/skills/rama/references/artifact-plan.md")
         claude-cmd (claude-phase-cmd "test-ch" :decompose "/root" nil nil)
         codex-cmd (codex-phase-cmd "test-ch" :decompose "/root" nil nil)]
     (is (some #{"/challenge-phase test-ch decompose"} claude-cmd))
     (is (some #{"$challenge-phase test-ch decompose"} codex-cmd))
+    (is (re-find #"Decision:.*\n- Basis:.*\n- Outcome:" plan-template))
+    (is (re-find #"not private chain-of-thought" plan-template))
+    (is (not (re-find #"first-person|Write it as you design|how close the call was" plan-template)))
     (is (re-find #"Decision:.*\n  Basis:.*\n  Outcome:" claude-prompt))
     (is (re-find #"(?i)do not write private chain-of-thought" claude-prompt))
     (is (re-find #"rejected alternatives\s+and dead ends" claude-prompt))
