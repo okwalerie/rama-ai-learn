@@ -1,9 +1,19 @@
 # HLD program state
 
-Owner: https://ampcode.com/threads/T-01a0cd1f-f3a0-77ae-b5c5-f68127682fa0
+Owner: https://ampcode.com/threads/T-01a0cf2e-5564-7089-b6eb-65b1fc722312
+Source checkpoint: https://ampcode.com/threads/T-01a0cd1f-f3a0-77ae-b5c5-f68127682fa0
 Parent: https://ampcode.com/threads/T-01a0cd0c-8923-7366-bb23-3409896b6644
 
 ## Latest checkpoint — September 23, 2026, memory-pressure stop
+
+Cleanup completed: scoped orphan JVM cleanup stopped119483;129798 already exited.
+Memory fell from3381MiB used/549MiB available to1879MiB used/2051MiB available
+(3931MiB total, no swap). Source committed the full integrated checkpoint as
+dabdb3e2073dda3faa34a4f8cad2cde4497cb302; only .amp transfer material remained
+untracked. A clean successor was created while source remained unresponsive;
+it now owns remaining validation/shipment/evaluations. Source performs only
+checkpoint transfer and reporting, no further heavy work. Bundle plus frozen
+contract manifests transfer the exact unpushed branch; do not rely on commit ID.
 
 Parent Puck explicitly instructed no further concurrent JVMs or evaluation
 fan-out from this memory-pressured coordinator. Preserve/checkpoint first,
