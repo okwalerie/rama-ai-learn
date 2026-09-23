@@ -115,6 +115,37 @@ everything needed. Missing prerequisites fail rather than enabling shared
 network access. Claude telemetry and OpenCode npm requests may appear as denied
 destinations; both tested CLIs still completed the logistics smoke requests.
 
+### OpenRouter credentials in project orbs
+
+`.agents/setup` installs a pinned, SHA-256-verified Bitwarden Secrets Manager CLI
+(`bws`), but does not authenticate or retrieve secrets. The existing personal-scope
+Amp masked Secret named `BWS_API_KEY` must be available to this project's orbs
+through Amp Secrets settings. Do not create a duplicate project-scope credential,
+enter its value in chat, or put it in `.env`, shell history, or the repository. If
+it is not injected, refresh the orb's environment after checking the masked
+Secrets configuration (for example, `amp orb restart-processes`).
+
+Set `OPENROUTER_BWS_SECRET_ID` to the **non-secret UUID** of the one Bitwarden
+Secrets Manager secret whose key is `OPENROUTER_API_KEY`. Obtain the UUID from
+the Bitwarden Secrets Manager UI or a trusted project owner; it is not defined
+in this repository. The machine account behind `BWS_API_KEY` needs read access
+to that secret. Do not run a vault-wide list to discover it. For a command that
+needs the key, use:
+
+```bash
+OPENROUTER_BWS_SECRET_ID=<secret-uuid> scripts/with-openrouter-key bb run-challenges --agent opencode --batch 1
+```
+
+The wrapper maps the injected `BWS_API_KEY` to bws's native
+`BWS_ACCESS_TOKEN` only for the targeted `bws secret get` child, checks the
+returned ID and key, then executes the trusted command with `OPENROUTER_API_KEY`
+in its environment. It does not save or print either credential; it removes the
+Bitwarden token from the consumer's environment. Do not invoke the consumer with
+environment-logging/debug flags or shell tracing. This is process-scoped
+injection, not a sandbox against a malicious consumer or other same-user host
+processes. `bws secret get` outputs the value in JSON, so never run it directly
+when stdout/stderr may be recorded.
+
 **Residual guarantees:** this is CONNECT-authority and public TCP-endpoint
 enforcement, **not exact HTTP-authority or response-content enforcement**. TLS
 stays end-to-end: the proxy does not inspect SNI, HTTP Host, or HTTP/2 authority.

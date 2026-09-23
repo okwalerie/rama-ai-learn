@@ -40,6 +40,33 @@ install_system_packages() {
   as_root rm -rf /var/lib/apt/lists/*
 }
 
+install_bws() {
+  local version=2.1.0
+  local checksum=ba8233c3a4aee5d43e3c73bbd04d99e9bc5aba13bbbfd06d89b073abe732b860
+  if command -v bws >/dev/null 2>&1 && [ "$(bws --version)" = "bws $version" ]; then
+    echo "Bitwarden Secrets Manager CLI $version already installed."
+    return
+  fi
+  if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
+    echo 'Unsupported bws platform (expected Linux x86_64).' >&2
+    return 1
+  fi
+  (
+    local tmp archive
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    archive="bws-x86_64-unknown-linux-gnu-$version.zip"
+    curl -fsSL "https://github.com/bitwarden/sdk-sm/releases/download/bws-v$version/$archive" -o "$tmp/$archive"
+    printf '%s  %s\n' "$checksum" "$tmp/$archive" | sha256sum -c -
+    unzip -p "$tmp/$archive" bws > "$tmp/bws"
+    as_root install -m 755 "$tmp/bws" /usr/local/bin/bws
+  )
+  [ "$(/usr/local/bin/bws --version)" = "bws $version" ] || {
+    echo "bws $version installation verification failed." >&2
+    return 1
+  }
+}
+
 install_clojure_cli() {
   if command -v clojure >/dev/null 2>&1 && clojure -Sdescribe >/dev/null 2>&1; then
     echo 'Clojure CLI already installed.'
@@ -167,6 +194,7 @@ prefetch_deps() {
 }
 
 step 'Install system packages' install_system_packages
+step 'Install Bitwarden Secrets Manager CLI' install_bws
 step 'Install Clojure CLI' install_clojure_cli
 step 'Install Babashka' install_babashka
 step 'Install clj-kondo' install_clj_kondo

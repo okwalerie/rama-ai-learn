@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Run one trusted command with the named Bitwarden secret, without persisting it.
+set +x
+set -euo pipefail
+
+if [ "$#" -eq 0 ]; then
+  echo 'Usage: scripts/with-openrouter-key command [args...]' >&2
+  exit 2
+fi
+for required in bws jq; do
+  if ! command -v "$required" >/dev/null 2>&1; then
+    echo "Missing prerequisite: $required (run .agents/setup)." >&2
+    exit 1
+  fi
+done
+if [ -z "${BWS_API_KEY:-}" ]; then
+  echo 'Missing BWS_API_KEY: ensure the existing personal masked Amp secret is injected into this orb.' >&2
+  exit 1
+fi
+if [ -z "${OPENROUTER_BWS_SECRET_ID:-}" ]; then
+  echo 'Missing OPENROUTER_BWS_SECRET_ID: set the non-secret Bitwarden secret UUID.' >&2
+  exit 1
+fi
+
+# bws JSON contains the value. Never echo it, including on lookup/parse failure.
+if ! OPENROUTER_API_KEY="$(
+  BWS_ACCESS_TOKEN="$BWS_API_KEY" bws secret get "$OPENROUTER_BWS_SECRET_ID" 2>/dev/null |
+    jq -er --arg id "$OPENROUTER_BWS_SECRET_ID" \
+      'select(.id == $id and .key == "OPENROUTER_API_KEY") | .value | select(type == "string" and length > 0)' 2>/dev/null
+)" || [ -z "$OPENROUTER_API_KEY" ]; then
+  echo 'OpenRouter secret lookup failed or returned an unexpected ID, key, or empty value.' >&2
+  exit 1
+fi
+export OPENROUTER_API_KEY
+unset BWS_API_KEY BWS_ACCESS_TOKEN
+exec "$@"

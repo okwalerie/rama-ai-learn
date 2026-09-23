@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Resume is deliberately limited to cheap health checks. Dependency installation belongs in setup.
-for command_name in java clojure bb clj-kondo clojure-lsp claude codex; do
+for command_name in java clojure bb clj-kondo clojure-lsp claude codex bws; do
   command -v "$command_name" >/dev/null 2>&1 || {
     echo "Missing required orb command: $command_name" >&2
     exit 1
