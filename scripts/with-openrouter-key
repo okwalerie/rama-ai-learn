@@ -17,15 +17,29 @@ if [ -z "${BWS_API_KEY:-}" ]; then
   echo 'Missing BWS_API_KEY: ensure the existing personal masked Amp secret is injected into this orb.' >&2
   exit 1
 fi
-if [ -z "${OPENROUTER_BWS_SECRET_ID:-}" ]; then
-  echo 'Missing OPENROUTER_BWS_SECRET_ID: set the non-secret Bitwarden secret UUID.' >&2
-  exit 1
+secret_id="${OPENROUTER_BWS_SECRET_ID:-}"
+if [ -z "$secret_id" ]; then
+  list_args=(secret list)
+  if [ -n "${OPENROUTER_BWS_PROJECT_ID:-}" ]; then
+    list_args+=("$OPENROUTER_BWS_PROJECT_ID")
+  fi
+  # bws list includes values in JSON; pipe directly to jq and retain only one ID.
+  if ! secret_id="$(
+    BWS_ACCESS_TOKEN="$BWS_API_KEY" bws "${list_args[@]}" 2>/dev/null |
+      jq -er 'if type == "array" then
+        map(select(.key == "OPENROUTER_API_KEY")) |
+        if length == 1 then .[0].id | select(type == "string" and length > 0) else empty end
+      else empty end' 2>/dev/null
+  )" || [ -z "$secret_id" ]; then
+    echo 'Unable to resolve exactly one OPENROUTER_API_KEY secret by name (or listing failed).' >&2
+    exit 1
+  fi
 fi
 
 # bws JSON contains the value. Never echo it, including on lookup/parse failure.
 if ! OPENROUTER_API_KEY="$(
-  BWS_ACCESS_TOKEN="$BWS_API_KEY" bws secret get "$OPENROUTER_BWS_SECRET_ID" 2>/dev/null |
-    jq -er --arg id "$OPENROUTER_BWS_SECRET_ID" \
+  BWS_ACCESS_TOKEN="$BWS_API_KEY" bws secret get "$secret_id" 2>/dev/null |
+    jq -er --arg id "$secret_id" \
       'select(.id == $id and .key == "OPENROUTER_API_KEY") | .value | select(type == "string" and length > 0)' 2>/dev/null
 )" || [ -z "$OPENROUTER_API_KEY" ]; then
   echo 'OpenRouter secret lookup failed or returned an unexpected ID, key, or empty value.' >&2
