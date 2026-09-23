@@ -1,0 +1,6 @@
+[
+  {
+    "name": "metrics-pipeline",
+    "scope": "The whole spec: README.md (sole authority) and the MetricsPipeline protocol docstrings in src/hld_metrics_pipeline/protocol.clj, plus the harness Synchronizable contract. Owns every operation: advance-clock!, ingest-sample!, get-series-info, query-raw, query-rollup, and wait-for-processing!. Must figure out all durable state for a series — the state supporting 'Clock' and 'Series info' (the per-series clock and cumulative admission counters), the state supporting 'Sample' admission and 'Raw retention' (including the duplicate check under 'Rollups'/'Sample' rule order), the state supporting 'Rollups' for both widths with completeness and retention as defined there, and whatever query topologies serve 'Queries' within the 'Efficiency contract'. Must satisfy 'Write ordering and synchronization' (per-series order across both write kinds, durability, multi-client visibility, task-count independence). test-resources/development/IMPLICIT_SPEC.md is derived guidance; where it states latency or throughput figures that the README does not, those are not requirements."
+  }
+]
