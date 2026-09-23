@@ -8,7 +8,7 @@
 (defn exercise [tasks]
   (s/launch-with
    (requiring-resolve 'hld-ad-click-aggregation.module/create-module) tasks
-   (fn [ipc wrap-client]
+   (fn [ipc _module wrap-client]
      (let [a (wrap-client ipc)
            b (wrap-client ipc)
            billed (s/one-click-window 0 "CA" "phone" (s/counters 1 1 0 0 17))]

@@ -4,19 +4,15 @@
 
    Method: RocksDB operation events (reads, iterator seeks, iterator steps)
    are captured around each operation with `rtest/with-event-hook`. Costs
-   are compared between a small state and a grown state in which only
-   irrelevant data was added — other campaigns, out-of-range windows on the
-   same campaign, and late-only audit records on the same campaign — while
-   the relevant result is unchanged. A design whose work is proportional to
-   the requested window(s) and the touched request stays flat; a design
-   that scans a campaign's request-ids, its whole window map, or other
-   campaigns grows by hundreds of operations. Only growth is asserted, and
-   only for the bounds the README publishes (`record-click!`, `get-request`,
-   `get-window`, `get-windows`); the bound (after <= 2 * before + 20) is
-   deliberately generous so any layout that meets the published bound
-   passes, including iterator- or index-based range reads that touch a few
-   extra keys around the range. No absolute operation counts, no topology
-   type, and no PState layout are required.
+   are compared across irrelevant-state growth. For range reads, compare
+   already-populated indexes (hundreds then thousands of out-of-range
+   windows) with identical three-window output; a tiny index is not a fair
+   baseline for a fixed-page iterator. For writes, also grow distinct pairs
+   in the target window. Only the README-published operations are measured.
+   The ratio (after <= 2 * before + 20) is a scaling heuristic, not a
+   universal proof: a sufficiently large fixed iterator page can still
+   cross these finite fixture sizes. There are no absolute operation counts,
+   topology assumptions, or PState layout requirements.
 
    `get-watermark` and `advance-watermark!` costs are NOT asserted: the
    README's efficiency contract publishes no bound for them, and the growth
@@ -133,7 +129,6 @@
 
           (let [req-1   (:cost (capture #(p/get-request c R "r-6000-0")))
                 win-1   (:cost (capture #(p/get-window c R 6060)))
-                range-1 (:cost (capture #(p/get-windows c R 6000 6180)))
                 click-1 (:cost (capture #(do (apply click* c R probe-1) (sync! c))))
                 late-1  (:cost (capture #(do (click* c R "late-1" 100 "US" "m" 1 true false) (sync! c))))
                 rep-1   (:cost (capture #(do (apply click* c R probe-1) (sync! c))))
@@ -178,7 +173,6 @@
 
               (let [req-2   (:cost (capture #(p/get-request c R "r-6000-0")))
                     win-2   (:cost (capture #(p/get-window c R 6060)))
-                    range-2 (:cost (capture #(p/get-windows c R 6000 6180)))
                     click-2 (:cost (capture #(do (apply click* c R probe-2) (sync! c))))
                     late-2  (:cost (capture #(do (click* c R "late-x" 101 "US" "m" 1 true false) (sync! c))))
                     rep-2   (:cost (capture #(do (apply click* c R probe-2) (sync! c))))
@@ -191,10 +185,6 @@
                   (is (within-growth? win-1 win-2)
                       (str "get-window rocks ops grew from " win-1 " to " win-2
                            " after adding 150 other windows to the campaign")))
-                (testing "get-windows work is proportional to windows inside the range"
-                  (is (within-growth? range-1 range-2)
-                      (str "get-windows over 3 windows: rocks ops grew from " range-1 " to " range-2
-                           " after adding 150 out-of-range windows to the campaign")))
                 (testing "record-click! does bounded work independent of campaign size"
                   (is (within-growth? click-1 click-2)
                       (str "counted click rocks ops grew from " click-1 " to " click-2))
@@ -202,6 +192,46 @@
                       (str "late click rocks ops grew from " late-1 " to " late-2))
                   (is (within-growth? rep-1 rep-2)
                       (str "replay rocks ops grew from " rep-1 " to " rep-2)))
+                (testing "range read scaling across two already-populated indexes"
+                  (let [S "eff-scale"
+                        fixed (for [ws [6000 6060 6120]]
+                                [(str "fixed-" ws) ws "US" "m" 2 true false])
+                        expected (windows-in (expected-windows 0 (rows fixed)) 6000 6180)]
+                    (doseq [[rid ts geo device spend valid? fraud?] fixed]
+                      (click* c S rid ts geo device spend valid? fraud?))
+                    (doseq [i (range 700)]
+                      (click* c S (str "scale-a-" i) (+ 12000 (* 60 i)) "DE" "d" 1 true false))
+                    (sync! c)
+                    (is (= expected (p/get-windows c S 6000 6180)))
+                    (let [before (:cost (capture #(p/get-windows c S 6000 6180)))]
+                      (doseq [i (range 2200)]
+                        (click* c S (str "scale-b-" i) (+ 54000 (* 60 i)) "FR" "m" 1 true false))
+                      (sync! c)
+                      (is (= expected (p/get-windows c S 6000 6180)))
+                      (let [after (:cost (capture #(p/get-windows c S 6000 6180)))]
+                        (is (within-growth? before after)
+                            (str "get-windows over 3 windows: rocks ops grew from " before
+                                 " to " after " as out-of-range windows grew from 700 to 2900"))))))
+                (testing "counted write cost does not grow with target-window breakdown"
+                  (let [S "eff-wide"
+                        fill! (fn [lo hi]
+                                (doseq [i (range lo hi)]
+                                  (click* c S (str "pair-" i) 6060 (str "geo-" i) "m" 1 true false)))]
+                    (fill! 0 128)
+                    (sync! c)
+                    (let [before (:cost (capture #(do (click* c S "wide-probe-1" 6061 "geo-0" "m" 1 true false)
+                                                       (sync! c))))]
+                      (fill! 128 512)
+                      (sync! c)
+                      (let [after (:cost (capture #(do (click* c S "wide-probe-2" 6062 "geo-0" "m" 1 true false)
+                                                      (sync! c))))
+                            w (p/get-window c S 6060)]
+                        (is (= 512 (count (:breakdown w))))
+                        (is (= (counters 514 514 0 0 514) (:totals w)))
+                        (is (= (counters 3 3 0 0 3) (get (:breakdown w) ["geo-0" "m"])))
+                        (is (within-growth? before after)
+                            (str "counted write rocks ops grew from " before " to " after
+                                 " as target breakdown grew from 128 to 512 pairs"))))))
                 ;; stale then effective advance: correctness only (no published bound)
                 (adv* c R 500)
                 (adv* c R 1002)
@@ -221,7 +251,9 @@
                     (is (= 1000000000000 (p/get-watermark c R)))
                     (is (= (windows-in exp-2b 6000 6180) (p/get-windows c R 6000 6180))
                         "closure changes nothing stored")
-                    (is (= 153 (count (p/get-windows c R 0 1000000000020))))
+                    (is (= (mapv exp-2b (sort (keys exp-2b)))
+                           (p/get-windows c R 0 1000000000020))
+                        "all 153 window maps remain unchanged, not merely their count")
                     (click* c R "after-jump" 6063 "US" "m" 1 true false)
                     (sync! c)
                     (is (= :late (:disposition (p/get-request c R "after-jump"))))

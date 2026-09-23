@@ -23,13 +23,13 @@
 
 (defn launch-with
   "Deploys the module with exactly `tasks` tasks and calls
-   (f ipc wrap-client). Closes the cluster afterwards."
+   (f ipc module wrap-client). Closes the cluster afterwards."
   [create-module-fn tasks f]
   (let [{:keys [module wrap-client]} (create-module-fn)]
     (is (fn? wrap-client) "create-module must return a :wrap-client fn")
     (with-open [ipc (rtest/create-ipc)]
       (rtest/launch-module! ipc module {:tasks tasks :threads 2})
-      (f ipc wrap-client))))
+      (f ipc module wrap-client))))
 
 (defn click* [c cid rid ts geo device spend valid? fraud?]
   (p/record-click! c cid rid ts geo device spend valid? fraud?))
@@ -111,7 +111,7 @@
   [create-module-fn tasks]
   (launch-with
    create-module-fn tasks
-   (fn [ipc wrap-client]
+   (fn [ipc module wrap-client]
      (let [ca (wrap-client ipc)
            cb (wrap-client ipc)]
        (is (satisfies? harness/Synchronizable ca)
@@ -509,7 +509,7 @@
          (click* ca "rst" "r2" 700 "US" "m" 4 true false)   ; window 660 closes at 840: late
          (click* ca "rst" "r3" 1010 "DE" "m" 5 false false)
          (sync! ca)
-         (rtest/update-module! ipc (:module (create-module-fn)))
+         (rtest/update-module! ipc module)
          (is (= 1000 (wm* cb "rst")))
          (is (= (audit "r1" 1000 960 "US" "m" 3 true false :billed 1000) (req* cb "rst" "r1")))
          (is (= (audit "r2" 700 660 "US" "m" 4 true false :late 1000) (req* cb "rst" "r2")))

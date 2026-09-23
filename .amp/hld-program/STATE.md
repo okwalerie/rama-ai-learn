@@ -22,9 +22,22 @@ No package shipped; all 30 evaluation cells remain UNSTARTED.
 Accepted locally after parent inspection and independent private harness runs:
 metrics 4 tests/312 assertions; URL 4/270; rate 4/360, all zero failures/errors.
 Local integration commits c2692c9, 6374ec1, fcb810d respectively.
-File-sync is an implemented candidate (author 2/710 green), not accepted yet.
-Clicks is an implemented candidate (author 4/388 green) needing known harness
-fairness fixes. Scheduler reference is partial; nine others are plan-only.
+File-sync and clicks are now accepted locally too (five accepted total).
+Parent inspected references, contract alignment and returned private changes;
+`clojure -J-Xmx1600m -X:test-private-harness` passed file-sync 2 tests/710
+assertions and combined clicks 6 tests/426 assertions, zero failures/errors,
+exit 0, explicit 2/4 tasks. Logs: `/tmp/hld-file-sync-parent-final.log` and
+`/tmp/hld-click-parent-final.log`. Public manifests and reference hashes stayed
+unchanged. File-sync allows input-proportional writes for the 1024-hash case;
+post-fix Oracle found no concrete reference bug. Click fairness repairs retain
+the deployed module for update, compare populated indexes, measure target-window
+breakdown growth and assert all 153 window maps. Parent adapted the independent
+test callback to the helper's added module argument before the combined run.
+IPC index-recovery/leader-cache messages occurred during click updates without
+test errors. Growth tests remain finite heuristics; opaque value bytes and actual
+process-loss retry behavior remain outside executable coverage. Worker mutation
+evidence is retained but was not rerun by parent. Scheduler remains partial;
+nine others are still implementation-in-progress from plan-only checkpoints.
 
 Click independent semantic validation returned two private files (worker local
 271ee78): campaign-scoped identity, divergent 179/180 watermark boundaries,
@@ -36,9 +49,8 @@ expectations/helpers against the public contract and ran selected suite:
 match frozen inputs. Worker additionally reports full suite 6/414 green and
 compiled late-replay mutant 6 failures/0 errors, restored byte-identically;
 parent has not rerun that mutant. These are explicit replay checks, not process
-loss injection. Click acceptance still awaits separate fairness fixes and final
-combined parent suite; do not overwrite the new independent private files when
-transferring that worker's package.
+loss injection. Subsequent combined parent suite passed 6/426 after fairness
+fixes, as recorded above; the new independent private files were preserved.
 
 Frozen inputs are `.amp/hld-program/transfers/hld-*.tar.gz`, each with README,
 protocol and deps SHA256 manifest plus IMPLEMENTER_BRIEF. New workers verify
