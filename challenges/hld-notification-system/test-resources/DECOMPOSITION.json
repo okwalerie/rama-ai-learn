@@ -1,0 +1,6 @@
+[
+  {
+    "name": "notification-core",
+    "scope": "The whole spec. Owns every operation of the NotificationSystem protocol (src protocol.clj) and all state named by role in README.md and test-resources/IMPLICIT_SPEC.md: the device registry, preferences, first-wins submissions with fan-out snapshots, delivery lifecycle, dead letters, and receipts. All requirements, bounds, workloads, and edge cases bind by reference to those files; nothing is restated here."
+  }
+]

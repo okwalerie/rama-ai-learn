@@ -1,0 +1,10 @@
+[
+  {
+    "name": "revisioned-entities",
+    "scope": "Owns put-document!, delete-document!, put-document-acl!, put-user-groups!, get-document, get-user-groups, and the Synchronizable contract (README 'Write ordering and synchronization', 'Synchronization: Synchronizable'). Figure out: the per-tenant document state holding both facets under README 'Three revision streams' and the protocol docstrings (content facet with tombstones, ACL facet, the 'never interact' rules, the atomicity noted in IMPLICIT_SPEC 'A duplicated or retried write is harmless only if...'); the per-tenant user membership state; and the durable per-tenant token-to-chunk state that put-document!/delete-document! must maintain as this stage's deliverable interface for the query stage, bound by README 'Efficiency contract' (the query bullet's 'must not scan documents or chunks that contain none of the query tokens', the put/delete bullet, and the ACL/membership bullet forbidding document- or chunk-proportional work). Bound by README 'Domain model', 'Input assumptions', the get-document/get-user-groups result shapes in protocol.clj, and the IMPLICIT_SPEC state x write matrix rows for those reads."
+  },
+  {
+    "name": "authorized-query",
+    "scope": "Owns query. Figure out the read path over the state delivered by revisioned-entities: candidate lookup by token, per-document eligibility evaluated against current content, ACL, and membership state at query time (IMPLICIT_SPEC 'Eligibility is evaluated against current state at query time'), scoring, total ordering, and truncation after authorization, per README 'Eligibility', 'Scoring and ordering', 'Result shape', the query docstring in protocol.clj, the query bullet of README 'Efficiency contract' (including tenant isolation), and the query rows of the IMPLICIT_SPEC matrix and edge cases. Any query-topology state it needs is its own to design."
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "name": "execution-lifecycle",
+    "scope": "Owns `submit-execution!` and `advance-clock!` (README 'Domain model' > Execution, Clock; protocol docstrings). Figure out the durable per-execution state holding the validated immutable DAG and the logical clock, which later stages read to decide claims and completions and to derive node status (README 'Node status'). This state must make achievable the README 'Efficiency contract' and 'Write ordering and synchronization' sections for all later operations on the same execution, and the `Synchronizable` contract for the whole module."
+  },
+  {
+    "name": "claims-and-leases",
+    "scope": "Owns `claim!` and `get-claim` (README 'Domain model' > Claims; protocol docstrings; worked example steps 2-4, 7, 11-12 and the `\"nope\"` example). Figure out the per-node lease/token/attempt state and the per-execution claim-decision record, including decisions recorded for executions that do not exist and their persistence across a later submission. This state is consumed by the completion stage (README 'Completion') and by status derivation (README 'Node status', lease validity rule); it must respect the same-execution ordering in README 'Write ordering and synchronization' relative to `advance-clock!`."
+  },
+  {
+    "name": "completion-and-reads",
+    "scope": "Owns `complete!`, `get-execution`, `get-node`, and `get-claimable-nodes` (README 'Domain model' > Completion, Effect identity, Node status; protocol docstrings; worked example steps 1, 5-6, 8-10, 13-14). Figure out the write-once result state per node (README 'Effect identity') and the derivation of node and execution status at the current clock from the state built by the two earlier stages, consistent across all three read operations."
+  }
+]

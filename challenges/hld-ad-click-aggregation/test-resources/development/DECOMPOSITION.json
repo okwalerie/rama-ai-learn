@@ -1,0 +1,6 @@
+[
+  {
+    "name": "click-accounting",
+    "scope": "Whole spec (README.md, src/hld_ad_click_aggregation/protocol.clj, test-resources/development/IMPLICIT_SPEC.md). Single stage: the one hard core is `record-click!` — it must, per the README 'Disposition' table and 'Write ordering and synchronization' section, dedupe by campaign-scoped request-id, judge against the campaign watermark in per-campaign invocation order, and apply the audit record, window totals, and [geo device] breakdown together (IMPLICIT_SPEC 'Exactly-once effect per write under retries'). Every other operation reads that state, and `record-click!` touches all of it, so no boundary yields a non-trivial earlier stage. Owns all operations: `advance-watermark!`, `record-click!`, `get-watermark`, `get-request`, `get-window`, `get-windows`, and harness `Synchronizable`. State to figure out, by role: per-campaign watermark (README 'Watermark'); per-campaign audit record per request-id (protocol `get-request`); per-campaign window counters with breakdown, ordered so `get-windows` meets the README 'Efficiency contract' and IMPLICIT_SPEC `get-windows` work bound; and the ingestion path that meets 'Write ordering and synchronization', 'Task-count independence', and 'Campaign isolation' in IMPLICIT_SPEC."
+  }
+]
