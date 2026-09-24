@@ -254,6 +254,11 @@ resolved blockers, without requesting private chain-of-thought. The Amp
 
 ## Inspecting transcripts
 
+For the shared Amp/Claude/OpenCode/Pi instruction and skill layout, and a
+metadata-only inventory workflow for stopped runs, see
+[agent layout and run review](docs/agent-layout-and-run-review.md). Do not
+publish raw native histories or private-test output as solver review bundles.
+
 After a run, transcripts can be analyzed via:
 
 ```bash
