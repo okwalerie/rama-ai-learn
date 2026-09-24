@@ -29,22 +29,26 @@ EOF
 chmod +x "$tmp/bws"
 
 run() {
-  env -i HOME="$tmp" PATH="$tmp:/usr/bin:/bin" MOCK_MODE="${MOCK_MODE:-normal}" \
+  env -i HOME="$tmp" PATH="$tmp:/usr/local/bin:/usr/bin:/bin" MOCK_MODE="${MOCK_MODE:-normal}" \
     TEST_KEY="${TEST_KEY:-OPENROUTER_API_KEY}" BWS_API_KEY=test-token \
     OPENROUTER_BWS_SECRET_ID="${OPENROUTER_BWS_SECRET_ID:-}" \
     OPENROUTER_BWS_PROJECT_ID="${OPENROUTER_BWS_PROJECT_ID:-}" \
-    "$repo_root/scripts/with-openrouter-key" "$@"
+    "$repo_root/scripts/with-openrouter-key.bb" "$@"
 }
 consumer=(bash -c '[[ "$OPENROUTER_API_KEY" == test-only-placeholder && -z "${BWS_API_KEY:-}" && -z "${BWS_ACCESS_TOKEN:-}" ]]')
 run "${consumer[@]}" # exact name, not the similarly prefixed decoy
 OPENROUTER_BWS_PROJECT_ID=test-project run "${consumer[@]}"
 OPENROUTER_BWS_SECRET_ID=test-id MOCK_MODE=list-failure run "${consumer[@]}" # ID override skips list
 
-if env -i HOME="$tmp" PATH="$tmp:/usr/bin:/bin" \
-  "$repo_root/scripts/with-openrouter-key" true >"$tmp/out" 2>&1; then
+if env -i HOME="$tmp" PATH="$tmp:/usr/local/bin:/usr/bin:/bin" \
+  "$repo_root/scripts/with-openrouter-key.bb" true >"$tmp/out" 2>&1; then
   echo 'Expected missing token to fail.' >&2; exit 1
 fi
 grep -q 'Missing BWS_API_KEY' "$tmp/out"
+
+status=0
+run bash -c 'exit 23' || status=$?
+[[ "$status" -eq 23 ]] || { echo 'Consumer exit status was lost.' >&2; exit 1; }
 
 expect_failure() {
   local expected="$1"

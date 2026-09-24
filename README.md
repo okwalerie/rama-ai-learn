@@ -117,35 +117,19 @@ destinations; both tested CLIs still completed the logistics smoke requests.
 
 ### OpenRouter credentials in project orbs
 
-`.agents/setup` installs a pinned, SHA-256-verified Bitwarden Secrets Manager CLI
-(`bws`), but does not authenticate or retrieve secrets. The existing personal-scope
-Amp masked Secret named `BWS_API_KEY` must be available to this project's orbs
-through Amp Secrets settings. Do not create a duplicate project-scope credential,
-enter its value in chat, or put it in `.env`, shell history, or the repository. If
-it is not injected, refresh the orb's environment after checking the masked
-Secrets configuration (for example, `amp orb restart-processes`).
-
-The Bitwarden Secrets Manager secret is named `OPENROUTER_API_KEY`. The machine
-account behind `BWS_API_KEY` needs read access to it. Run a trusted command with:
+Follow the installed `agent-skills:fetching-project-secrets` skill for safe
+Bitwarden use. Orb setup installs `bws`; the existing **personal-scope** masked
+Amp `BWS_API_KEY` must be injected, with read access to the Bitwarden secret named
+`OPENROUTER_API_KEY` (do not create a project-scope duplicate). To run a trusted
+command with that key only in the consumer's environment:
 
 ```bash
-scripts/with-openrouter-key bb run-challenges --agent opencode --batch 1
+scripts/with-openrouter-key.bb bb run-challenges --agent opencode --batch 1
 ```
 
-The wrapper maps the injected `BWS_API_KEY` to bws's native
-`BWS_ACCESS_TOKEN` only for the `bws` children. Because `bws secret get` requires
-an ID, the wrapper lists accessible secrets and selects **exactly one** matching
-name, then retrieves that ID and verifies the returned ID, key, and nonempty
-value. Zero or multiple matches fail closed. To narrow the list to one Bitwarden
-project, set the non-secret `OPENROUTER_BWS_PROJECT_ID`; alternatively, set the
-non-secret `OPENROUTER_BWS_SECRET_ID` to bypass listing when the ID is already
-known. Both commands return JSON containing values; the wrapper pipes it through
-`jq` without writing or printing it. It executes the consumer with
-`OPENROUTER_API_KEY` in its environment and removes the Bitwarden token from the
-consumer's environment. Do not invoke the consumer with environment-logging/debug
-flags or shell tracing. This is process-scoped injection, not a sandbox against
-a malicious consumer or other same-user host processes. Never run raw `bws
-secret list` or `bws secret get` when output may be recorded.
+The wrapper requires one exact-name match. Optional non-secret
+`OPENROUTER_BWS_PROJECT_ID` scopes discovery; `OPENROUTER_BWS_SECRET_ID` skips
+discovery when the UUID is known. Never log the consumer's environment.
 
 **Residual guarantees:** this is CONNECT-authority and public TCP-endpoint
 enforcement, **not exact HTTP-authority or response-content enforcement**. TLS
