@@ -1,0 +1,214 @@
+[
+  {
+    "slug": "profile-module",
+    "title": "Profile module",
+    "kind": "Rama module",
+    "summary": "Registers accounts and edits user profiles with UUID-aware registration and task-generated IDs.",
+    "source": "challenges/profile-module/README.md; challenges/profile-module/src/profile_module/protocol.clj; challenges/profile-module/test-resources/rama/gallery/profile_module.clj",
+    "requirements": [
+      "Register a username and create its profile.",
+      "Reject a different UUID for a username that is already owned.",
+      "Apply requested profile edits without replacing other fields."
+    ],
+    "nonfunctional": [
+      "Process registration by username ownership; key profile records by generated user ID."
+    ],
+    "constraints": [
+      "The source accepts a repeated registration with the same UUID and creates a new ID; it does not return a stable ID."
+    ],
+    "invariants": [
+      "The first registration stores username ownership and emits a generated ID.",
+      "Only edited fields change after registration."
+    ],
+    "acceptance": [
+      "Registration, conflicts, ID and profile readback, and field edits work after a processing barrier.",
+      "Repeated registration with the same UUID matches the source behavior."
+    ],
+    "actors": [
+      "Registration client",
+      "Profile editor",
+      "Profile reader"
+    ],
+    "environment": [
+      "Rama stream module with registration and edit depots."
+    ],
+    "interfaces": [
+      "profile-module.protocol/ProfileModule; create-module returns :module and :wrap-client."
+    ],
+    "decisions": [
+      "The registration depot hashes by username; the edit depot hashes by user ID.",
+      "ModuleUniqueIdPState generates task-associated unique IDs."
+    ],
+    "tradeoffs": [
+      "UUID checks username ownership; it is not a durable idempotency key."
+    ],
+    "seam": [
+      "No external module dependency."
+    ],
+    "depots": [
+      "*registration-depot",
+      "*profile-edits-depot"
+    ],
+    "etls": [
+      "profiles stream: claims username, generates an ID, writes the profile, and expands field edits."
+    ],
+    "pstates": [
+      "$$username->registration",
+      "$$profiles",
+      "$$id"
+    ],
+    "queries": [
+      "No query topology; client directly selects $$profiles by user ID."
+    ],
+    "flow": {
+      "write": [
+        "Registration routes by username; the accepted path records UUID and ID, then hashes the generated ID to write the profile.",
+        "Edit events hash by user ID, expand requested fields, and update the profile."
+      ],
+      "read": [
+        "Client directly selects the profile by user ID."
+      ],
+      "partition": "Username ownership and user profile are on different hashed owners; accepted registration relocates by generated ID."
+    },
+    "caveat": "Same UUID append generates a fresh user ID in the source, and can leave the earlier profile record behind. This behavior is tested rather than corrected."
+  },
+  {
+    "slug": "rest-api-integration-module",
+    "title": "REST API integration module",
+    "kind": "Rama module",
+    "summary": "Fetches response bodies asynchronously with a task-scoped HTTP client and stores the latest body for each URL.",
+    "source": "challenges/rest-api-integration-module/README.md; challenges/rest-api-integration-module/src/rest_api_integration_module/protocol.clj; challenges/rest-api-integration-module/test-resources/rama/gallery/rest_api_integration_module.clj",
+    "requirements": [
+      "Send HTTP GET requests without blocking the caller.",
+      "Store the latest response body for each URL.",
+      "Close HTTP client resources at the end of their lifecycle."
+    ],
+    "nonfunctional": [
+      "Stream processing waits for each asynchronous GET to complete. No latency or retry guarantee is made."
+    ],
+    "constraints": [
+      "Tests use a disposable local HTTP fixture; they do not depend on a public API.",
+      "The source extracts a body from completed NettyResponse without checking status. Transport exceptions fail processing and trigger retries."
+    ],
+    "invariants": [
+      "The response PState is keyed by requested URL."
+    ],
+    "acceptance": [
+      "Read local response bodies after processing.",
+      "Keep the body from completed non-2xx HTTP responses."
+    ],
+    "actors": [
+      "URL fetch caller",
+      "Remote HTTP endpoint",
+      "Response reader"
+    ],
+    "environment": [
+      "Rama stream ETL, AsyncHttpClient task global, local HTTP test server."
+    ],
+    "interfaces": [
+      "rest-api-integration-module.protocol/RestApiIntegrationModule."
+    ],
+    "decisions": [
+      "Hash by URL for depot ownership; $$responses is keyed by URL.",
+      "A CompletableFuture passes the HTTP response into the topology."
+    ],
+    "tradeoffs": [
+      "The source does not set a timeout or response-size limit, or check status. Retry bounds are unverified."
+    ],
+    "seam": [
+      "The tests use a loopback HTTP fixture only."
+    ],
+    "depots": [
+      "*get-depot"
+    ],
+    "etls": [
+      "get-http stream waits for the HTTP result asynchronously and extracts the response body."
+    ],
+    "pstates": [
+      "$$responses"
+    ],
+    "queries": [
+      "No query topology; client directly selects response by URL."
+    ],
+    "flow": {
+      "write": [
+        "A GET request enters the URL-hashed depot; the task-local client returns a future; the completed response body replaces the stored value for that URL."
+      ],
+      "read": [
+        "The client selects the latest stored body directly."
+      ],
+      "partition": "URL hash aligns source event with same URL response record."
+    },
+    "caveat": "The source establishes task-scoped client creation, closing, and body extraction, but does not establish transport retry count."
+  },
+  {
+    "slug": "music-catalog-migration",
+    "title": "Music catalog migration",
+    "kind": "Rama module",
+    "summary": "Updates a catalog module to migrate album song strings into parsed records and index new data in that format.",
+    "source": "challenges/music-catalog-migration/README.md; challenges/music-catalog-migration/src/music_catalog_migration/protocol.clj; challenges/music-catalog-migration/test-resources/rama/gallery/migrations_music_catalog_modules.clj",
+    "requirements": [
+      "Index old albums with song strings before the update.",
+      "Migrate old PState values during the module update.",
+      "Parse songs added after the update and preserve values across repeated updates and reads."
+    ],
+    "nonfunctional": [
+      "The challenge covers one A-to-B module lifecycle."
+    ],
+    "constraints": [
+      "The parser is case-sensitive, splits on ft/feat markers, and uses only the first two segments."
+    ],
+    "invariants": [
+      "Album artist/name keys persist across the schema update.",
+      "Structured song records retain song names and featured artist values."
+    ],
+    "acceptance": [
+      "Old and new album records return structured songs after the update.",
+      "Repeated updates and reads preserve migrated data."
+    ],
+    "actors": [
+      "Catalog writer",
+      "Module operator applying generation update",
+      "Catalog reader"
+    ],
+    "environment": [
+      "Two generations of one Rama module name; albums microbatch topology."
+    ],
+    "interfaces": [
+      "music-catalog-migration.protocol/MusicCatalog; factory exposes :module and :update-module."
+    ],
+    "decisions": [
+      "Albums are keyed by artist, then subindexed by album name.",
+      "Migration wraps the new album schema with ID parse-song-data."
+    ],
+    "tradeoffs": [
+      "The parser does not cover the full music-title grammar; an already-new first song bypasses conversion."
+    ],
+    "seam": [
+      "The lifecycle adapter binds the client to a stable module name."
+    ],
+    "depots": [
+      "*albums-depot"
+    ],
+    "etls": [
+      "albums microbatch writes album values and parses input for the new generation."
+    ],
+    "pstates": [
+      "$$albums"
+    ],
+    "queries": [
+      "No query topology; the client selects an album directly by artist and album name."
+    ],
+    "flow": {
+      "write": [
+        "Album events hash by artist and index subindexed album names.",
+        "The update migrates old values in place; the new-generation ETL parses strings before indexing."
+      ],
+      "read": [
+        "The client selects an album by artist and title."
+      ],
+      "partition": "Artist owns the album subtree; album name is a subindexed child key."
+    },
+    "caveat": "The A-to-B update and protocol/client continuity form one lifecycle. The parser follows the source and is not a complete feature-credit parser."
+  }
+]

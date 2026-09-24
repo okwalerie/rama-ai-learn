@@ -5,7 +5,7 @@ import { flows, diagramCard } from './diagrams.mjs';
 import { mermaidSource } from './graph.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const entries = ['hld-a', 'hld-b', 'modules', 'other'].flatMap(name => JSON.parse(readFileSync(new URL(`data/${name}.json`, import.meta.url))));
+const entries = ['hld-a', 'hld-b', 'modules', 'other', 'references-a', 'references-b', 'references-c'].flatMap(name => JSON.parse(readFileSync(new URL(`data/${name}.json`, import.meta.url))));
 const directories = readdirSync(`${root}challenges`, { withFileTypes: true }).filter(x => x.isDirectory());
 const expected = directories.filter(x => !/\*\*Source:\*\* leetcode/i.test(readFileSync(`${root}challenges/${x.name}/README.md`, 'utf8'))).map(x => x.name).sort();
 assert.equal(directories.length - expected.length, 8, 'LeetCode exclusions from README provenance');

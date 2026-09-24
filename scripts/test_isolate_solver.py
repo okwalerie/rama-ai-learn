@@ -22,6 +22,7 @@ class IsolationTests(unittest.TestCase):
                     "challenges/demo/test-resources/secret", "challenges/demo/test/secret",
                     "challenges/demo/test-harness/secret", "challenges/demo/src/secret.enc",
                     "challenges/other/README.md", "private-key",
+                    "docs/atlas/data/reference-decisions.json", "review/answer.clj",
                     "plugins/rama-skill/skills/rama/SKILL.md"):
             path = self.repo / rel
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -34,6 +35,14 @@ class IsolationTests(unittest.TestCase):
                        check=True)
         self.assertEqual(subprocess.check_output(
             ["git", "-C", str(self.repo), "show", "HEAD:private-key"], text=True), "fixture")
+
+    def test_authoring_references_are_not_in_solver_snapshot(self):
+        public = self.root / "public"
+        snapshot(self.repo, public, "demo")
+        for rel in ("docs/atlas/data/reference-decisions.json", "review/answer.clj"):
+            self.assertEqual((self.repo / rel).read_text(), "fixture")
+            with self.assertRaises(FileNotFoundError):
+                (public / rel).read_text()
 
     def test_snapshot_rejects_symlink_parent(self):
         (self.repo / "challenges/alias").symlink_to(self.repo / "challenges/demo")
@@ -62,6 +71,7 @@ root = Path.cwd()
 assert (root / 'challenges/demo/README.md').read_text() == 'fixture'
 assert (root / '.agents/skills/rama/SKILL.md').read_text() == 'fixture'
 blocked = ['.git/config', 'private-key', 'challenges/other/README.md',
+ 'docs/atlas/data/reference-decisions.json', 'review/answer.clj',
  'challenges/demo/src/test_support.clj', 'challenges/demo/src/secret.enc',
  'challenges/demo/test-private/secret', 'challenges/demo/test-resources/secret',
  'challenges/demo/test/secret', 'challenges/demo/test-harness/secret']
@@ -106,6 +116,9 @@ print('blocked private files, Git, sibling mounts, key, host /proc; public skill
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("blocked private files", result.stdout)
         self.assertEqual((self.repo / "implementations/demo/result").read_text(), "persisted")
+        # The solver's blocked reads must not destroy or encrypt authoring data.
+        for rel in ("docs/atlas/data/reference-decisions.json", "review/answer.clj"):
+            self.assertEqual((self.repo / rel).read_text(), "fixture")
 
 
 if __name__ == "__main__":

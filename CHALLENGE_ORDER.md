@@ -54,3 +54,16 @@
 - hld-job-scheduler
 - hld-feature-flag-service
 - hld-enterprise-rag
+
+## Batch 9: Next-level Backends
+- family-tree
+- collaborative-document-editor
+- who-to-follow
+- timed-notifications
+- content-moderation
+
+## Batch 10: Demo Gallery
+- profile-module
+- top-users-module
+- rest-api-integration-module
+- music-catalog-migration

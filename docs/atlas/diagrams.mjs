@@ -4,9 +4,13 @@ import hldA from './data/flows-hld-a.mjs';
 import hldB from './data/flows-hld-b.mjs';
 import modules from './data/flows-modules.mjs';
 import other from './data/flows-other.mjs';
+import referencesA from './data/flows-references-a.mjs';
+import referencesB from './data/flows-references-b.mjs';
+import referencesC from './data/flows-references-c.mjs';
 import { componentOverview } from './data/overviews.mjs';
 
-export const flows = Object.fromEntries(Object.entries({ ...exemplars, ...hldA, ...hldB, ...modules, ...other }).map(([slug, graphs]) => {
+export const referenceSlugs = new Set(Object.keys({ ...referencesA, ...referencesB, ...referencesC }));
+export const flows = Object.fromEntries(Object.entries({ ...exemplars, ...hldA, ...hldB, ...modules, ...other, ...referencesA, ...referencesB, ...referencesC }).map(([slug, graphs]) => {
   const prior = graphs.filter(g => g.view === 'lr');
   const overview = componentOverview(slug, prior.flatMap(g => g.sources));
   if (overview) overview.notes.push(...prior.flatMap(g => g.notes));
@@ -14,7 +18,9 @@ export const flows = Object.fromEntries(Object.entries({ ...exemplars, ...hldA, 
 }));
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const plain = text => text.replace(/\\n/g, ' ');
-const sourceLink = s => `https://github.com/okwalerie/rama-ai-learn/blob/e2bfe2e0dcca2a5b2683fe818acfe15b0c1b8dc5/${s.path}#L${s.lines.split(',')[0].replace('-', '-L')}`;
+const sourceLink = s => referenceSlugs.has(s.path.split('/')[1])
+  ? `/source/${s.path}#L${s.lines.split(',')[0].split('-')[0]}`
+  : `https://github.com/okwalerie/rama-ai-learn/blob/e2bfe2e0dcca2a5b2683fe818acfe15b0c1b8dc5/${s.path}#L${s.lines.split(',')[0].replace('-', '-L')}`;
 let engine;
 let renderSerial = 0;
 const cache = new Map();

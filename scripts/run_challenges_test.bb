@@ -1053,6 +1053,22 @@
       (is (empty? (filterv (fn [[p _ _]] (= :full-spec-review p)) invocations))
           "full-spec review never runs"))))
 
+(deftest reference-surfaces-require-strict-isolation-test
+  (let [root (fs/create-temp-dir {:prefix "reference-isolation-"})
+        command ["claude" "-p" "fixture"]]
+    (try
+      (doseq [surface ["docs/atlas" "review"]]
+        (fs/create-dirs (fs/path root surface))
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"require --isolate-network"
+              (solver-command command (str root) "demo" "claude")))
+        (binding [*isolate* true]
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"require --isolate-network"
+                (solver-command command (str root) "demo" "claude"))))
+        (binding [*isolate-network* true]
+          (is (some #{"strict"} (solver-command command (str root) "demo" "claude"))))
+        (fs/delete-tree (fs/path root surface)))
+      (finally (fs/delete-tree root)))))
+
 (deftest isolated-solver-command-test
   (let [cmd ["opencode" "run" "--" "prompt with spaces"]]
     (is (= cmd (solver-command cmd "/project" "demo" "opencode")))

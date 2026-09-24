@@ -639,7 +639,18 @@
 (def ^:dynamic *isolate* false)
 (def ^:dynamic *isolate-network* false)
 
+(defn require-reference-isolation!
+  "Reference-bearing authoring surfaces require both filesystem and network isolation.
+   Encryption hides challenge files, not atlas pages, Git history or live Portals."
+  [project-root strict?]
+  (when (and (not strict?)
+             (some #(fs/exists? (fs/path project-root %)) ["docs/atlas" "review"]))
+    (throw (ex-info
+            "Reference-bearing docs/atlas or review is present: solver launches require --isolate-network (Claude or OpenCode). Encryption and --isolate alone do not block reference Portals or upstream source downloads."
+            {:reason :reference-isolation-required}))))
+
 (defn solver-command [cmd project-root challenge-name agent-name]
+  (require-reference-isolation! project-root *isolate-network*)
   (if (or *isolate* *isolate-network*)
     (into (cond-> ["python3" (str (fs/path project-root "scripts/isolate_solver.py"))
                    "--repo" project-root "--challenge" challenge-name "--agent" agent-name]
@@ -2207,6 +2218,8 @@
         (when (empty? valid)
           (println "No challenges found matching filters.")
           (System/exit 0))
+
+        (require-reference-isolation! project-root (:isolate-network opts))
 
         (when (and (:isolate-network opts) (not (contains? #{"claude" "opencode"} agent-name)))
           (throw (ex-info "--isolate-network supports Claude and OpenCode/OpenRouter only" {})))

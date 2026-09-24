@@ -8,7 +8,7 @@
 .graph-tools button { border: 1px solid #b5beb9; background: transparent; color: var(--ink); border-radius: 3px; min-height: 32px; padding: 4px 9px; font-size: 13px; }
 .graph-tools button:hover { background: #e9ece6; }
 .graph-tools output { min-width: 42px; text-align: center; font: 13px var(--mono); }
-.graph-viewport { overflow: auto; min-height: 120px; overscroll-behavior: contain; cursor: grab; scrollbar-color: #9ba5a0 #eff1ec; }
+.graph-viewport { overflow: auto; min-height: 120px; overscroll-behavior: contain auto; cursor: grab; scrollbar-color: #9ba5a0 #eff1ec; }
 .graph-viewport:active { cursor: grabbing; }
 .graph-canvas { width: max-content; min-width: 100%; padding: 12px; }
 .graph-canvas svg { display: block; max-width: none !important; overflow: visible; }
@@ -22,7 +22,7 @@
 .graph-notes p { margin: 0 0 6px; }
 .graph-notes p:last-child { margin-bottom: 0; }
 .graph-card.expanded { position: fixed; inset: 0; z-index: 30; padding: 20px; margin: 0; overflow: auto; background: var(--paper); }
-.graph-card.expanded .graph-viewport { max-height: calc(100vh - 220px); }
+.graph-card.expanded .graph-viewport { max-height: calc(100vh - 220px); overscroll-behavior: contain; }
 .view-intro { font-size: 14px; line-height: 1.6; color: var(--muted); margin: 0 0 14px; }
 .diagram-help { margin: 0 0 18px; color: var(--muted); font-size: 14px; }
 .diagram-help summary { cursor: pointer; }

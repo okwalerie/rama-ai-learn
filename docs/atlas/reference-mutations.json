@@ -1,0 +1,128 @@
+[
+  {
+    "package": "who-to-follow",
+    "file": "nlb/who_to_follow.clj",
+    "source_sha256": "e6436ec77d2a8cb26ff9a28576f1f704cb927cf3fe44d320039e7f95da5765ad",
+    "before": "(not *already-follows?)",
+    "after": "true",
+    "baseline": {
+      "tests": 1,
+      "assertions": 16,
+      "failures": 0,
+      "errors": 0,
+      "exit": 0
+    },
+    "mutant": {
+      "tests": 1,
+      "assertions": 16,
+      "failures": 8,
+      "errors": 0,
+      "exit": 1
+    }
+  },
+  {
+    "package": "timed-notifications",
+    "file": "nlb/timed_notifications.clj",
+    "source_sha256": "efa3bb803ce44f86dfbdb8ed81755de6492d84de548b7ac92deb73b3f2992825",
+    "before": "(termval *post)",
+    "after": "(termval \"mutated\")",
+    "baseline": {
+      "tests": 1,
+      "assertions": 18,
+      "failures": 0,
+      "errors": 0,
+      "exit": 0
+    },
+    "mutant": {
+      "tests": 1,
+      "assertions": 18,
+      "failures": 14,
+      "errors": 0,
+      "exit": 1
+    }
+  },
+  {
+    "package": "top-users-module",
+    "file": "rama/gallery/top_users_module.clj",
+    "source_sha256": "50bcd919a45f0405dc8b3ce147f300beb1ee99a00cea5e0a56bface56a1371b3",
+    "before": "(def TOP-AMOUNT 500)",
+    "after": "(def TOP-AMOUNT 499)",
+    "baseline": {
+      "tests": 1,
+      "assertions": 14,
+      "failures": 0,
+      "errors": 0,
+      "exit": 0
+    },
+    "mutant": {
+      "tests": 1,
+      "assertions": 14,
+      "failures": 4,
+      "errors": 0,
+      "exit": 1
+    }
+  },
+  {
+    "package": "profile-module",
+    "file": "rama/gallery/profile_module.clj",
+    "source_sha256": "46e6860dd074fc995f2108cd0d103a8cda421649943efc6af5363a48ff56571c",
+    "before": "(termval *pwd-hash)",
+    "after": "(termval \"mutated\")",
+    "baseline": {
+      "tests": 1,
+      "assertions": 28,
+      "failures": 0,
+      "errors": 0,
+      "exit": 0
+    },
+    "mutant": {
+      "tests": 1,
+      "assertions": 28,
+      "failures": 14,
+      "errors": 0,
+      "exit": 1
+    }
+  },
+  {
+    "package": "rest-api-integration-module",
+    "file": "rama/gallery/rest_api_integration_module.clj",
+    "source_sha256": "0211bee0d99f4469fcdf08d5d8d4fef284e44e447a298814bfc7deaac6b123c4",
+    "before": "(.getResponseBody response)",
+    "after": "\"mutated\"",
+    "baseline": {
+      "tests": 1,
+      "assertions": 24,
+      "failures": 0,
+      "errors": 0,
+      "exit": 0
+    },
+    "mutant": {
+      "tests": 1,
+      "assertions": 24,
+      "failures": 10,
+      "errors": 0,
+      "exit": 1
+    }
+  },
+  {
+    "package": "music-catalog-migration",
+    "file": "rama/gallery/migrations_music_catalog_modules.clj",
+    "source_sha256": "68cbfe9bd304c2f4561d5e6b0045ec700b9e32b223cf766d5f72387718b1ab16",
+    "before": "(->Song name features)",
+    "after": "(->Song name [])",
+    "baseline": {
+      "tests": 1,
+      "assertions": 24,
+      "failures": 0,
+      "errors": 0,
+      "exit": 0
+    },
+    "mutant": {
+      "tests": 1,
+      "assertions": 24,
+      "failures": 12,
+      "errors": 0,
+      "exit": 1
+    }
+  }
+]

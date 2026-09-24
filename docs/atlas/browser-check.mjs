@@ -61,8 +61,11 @@ export async function run() {
         const viewport = card.querySelector('.graph-viewport');
         check(viewport.scrollWidth <= viewport.clientWidth + 1, `${id}: Fit leaves horizontal overflow`);
         check(getComputedStyle(viewport).backgroundImage === 'none', `${id}: decorative diagram background`);
+        check(getComputedStyle(viewport).overscrollBehaviorY === 'auto', `${id}: inline diagram traps page scrolling`);
+        check(getComputedStyle(viewport).overscrollBehaviorX === 'contain', `${id}: horizontal scroll containment`);
         card.querySelector('[data-action=expand]').click();
         check(card.classList.contains('expanded'), `${id}: expand`);
+        check(getComputedStyle(viewport).overscrollBehaviorY === 'contain', `${id}: expanded diagram leaks page scrolling`);
         check(document.documentElement.scrollWidth <= innerWidth + 1, `${id}: expanded page overflow`);
         card.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         check(!card.classList.contains('expanded'), `${id}: escape`);

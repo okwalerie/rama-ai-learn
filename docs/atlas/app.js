@@ -1,8 +1,8 @@
-import { flows, diagramCard, renderGraphs } from './diagrams.mjs';
+import { flows, diagramCard, renderGraphs, referenceSlugs } from './diagrams.mjs';
 
 const groups = ['HLD', 'Rama module', 'Rama diagnosis', 'Rama Q&A', 'AtCoder'];
-const labels = { HLD: 'HLD case studies', 'Rama module': 'Earlier Rama modules', 'Rama diagnosis': 'Diagnosis', 'Rama Q&A': 'Rama Q&A', AtCoder: 'AtCoder algorithms' };
-const files = ['hld-a', 'hld-b', 'modules', 'other'];
+const labels = { HLD: 'HLD case studies', 'Rama module': 'Rama modules', 'Rama diagnosis': 'Diagnosis', 'Rama Q&A': 'Rama Q&A', AtCoder: 'AtCoder algorithms' };
+const files = ['hld-a', 'hld-b', 'modules', 'other', 'references-a', 'references-b', 'references-c'];
 let entries = [];
 let activeFilter = 'All';
 let query = '';
@@ -10,12 +10,12 @@ const main = document.querySelector('#main');
 const nav = document.querySelector('#challenge-nav');
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const list = items => items?.length ? `<ul>${items.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '<p class="empty">Not specified in this challenge.</p>';
-const repoFile = path => `https://github.com/okwalerie/rama-ai-learn/blob/master/${path}`;
+const repoFile = path => referenceSlugs.has(path.split('/')[1]) ? `/source/${path}` : `https://github.com/okwalerie/rama-ai-learn/blob/master/${path}`;
 const sourceURL = slug => repoFile(`challenges/${encodeURIComponent(slug)}/README.md`);
 const sources = item => {
   const raw = Array.isArray(item.source) ? item.source : [];
   const paths = typeof item.source === 'string' ? item.source.split(';').map(x => x.trim()).filter(x => /\.(clj|md)$/.test(x)).map(x => x.startsWith('challenges/') || x.startsWith('plugins/') ? x : `challenges/${item.slug}/${x}`) : [];
-  const urls = [...new Set([sourceURL(item.slug), ...raw.filter(x => /^https:\/\//.test(x)).map(x => x.replace('/blob/main/', '/blob/master/')), ...paths.map(repoFile)])];
+  const urls = [...new Set([sourceURL(item.slug), ...raw.filter(x => /^https:\/\//.test(x)).map(x => x.replace('/blob/main/', '/blob/master/')), ...raw.filter(x => x.startsWith('challenges/')).map(repoFile), ...paths.map(repoFile)])];
   return urls.map((url, i) => {
     const name = url.includes('handbook.academy') ? 'HLD case study' : url.endsWith('protocol.clj') ? 'Protocol' : url.endsWith('module.clj') ? 'Reference module' : url.endsWith('HLD_CASE_STUDIES.md') ? 'Attribution & scope' : i === 0 ? 'Challenge README' : 'Source';
     return `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${name} ↗</a>`;
@@ -43,7 +43,7 @@ function renderFilters() {
 }
 function renderHome() {
   const cards = filtered();
-  main.innerHTML = `<section class="hero"><h2>Challenge architectures</h2><p>Trace reference implementations from inputs to state and queries. Compare their requirements, users and design choices.</p><p class="coverage">${entries.length} challenges: 15 HLD adaptations, 7 earlier Rama modules, 10 algorithms, 2 Q&A and 1 diagnosis. The 8 LeetCode challenges are excluded.</p></section>
+  main.innerHTML = `<section class="hero"><h2>Challenge architectures</h2><p>Trace reference implementations from inputs to state and queries. Compare their requirements, users and design choices.</p><p class="coverage">${entries.length} challenges: ${entries.filter(x => x.kind === 'HLD').length} HLD adaptations, ${entries.filter(x => x.kind === 'Rama module').length} Rama modules, 10 algorithms, 2 Q&A and 1 diagnosis. The 8 LeetCode challenges are excluded.</p></section>
   <div class="intro-grid"><div class="note-card"><h3>HLD scope and attribution</h3><p>The HLD cases adapt bounded correctness problems from the Handbook. Each README lists exclusions. Rama depots, ETLs and PStates handle the included queue, worker and storage responsibilities.</p><p>Adapted under <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>; see the <a href="https://github.com/okwalerie/rama-ai-learn/blob/master/HLD_CASE_STUDIES.md">attribution catalogue</a> and each README. No affiliation or endorsement is implied.</p></div><div class="note-card"><h3>Views</h3><ul><li>LR: Depot / ETL / PState / Query overview.</li><li>TD: event branches, routing, outcomes and state ownership.</li><li>One-pagers: requirements, users and reference decisions.</li><li>Algorithm and Q&A diagrams trace functions and reasoning.</li></ul></div></div>
   <div class="catalog-head"><h3>Challenges</h3><span>${cards.length} shown</span></div><div class="catalog">${cards.map(x => `<a href="#${esc(x.slug)}"><small>${esc(labels[x.kind])}</small><strong>${esc(x.title)}</strong><p>${esc(x.summary)}</p></a>`).join('')}</div>`;
 }
