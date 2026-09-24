@@ -183,13 +183,12 @@ install_nrepl_tools() {
 
 prefetch_deps() {
   cd "$repo_root"
-  clojure -P
-  clojure -P -A:nrepl
+  step 'Prepare root dependencies' clojure -P
+  step 'Prepare root nREPL dependencies' clojure -P -A:nrepl
   while IFS= read -r -d '' deps_file; do
     local challenge_dir
     challenge_dir="$(dirname "$deps_file")"
-    echo "Preparing dependencies in ${challenge_dir#"$repo_root"/}"
-    (cd "$challenge_dir" && clojure -P -A:test)
+    (cd "$challenge_dir" && step "Prepare ${challenge_dir#"$repo_root"/} dependencies" clojure -P -A:test)
   done < <(find "$repo_root/challenges" -name deps.edn -print0 | sort -z)
 }
 
