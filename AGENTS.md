@@ -352,7 +352,7 @@ Facts already established:
   `scripts/transcript_events.py` normalizes transcripts across harnesses.
 - LangChain4j has no agent-CLI model provider. In AOR, CLI calls are traced by
   hand with `aor/record-nested-op!` and `aor/stream-chunk!`; a working
-  `claude -p` → trace adapter exists in `~/dev/rama-waler/modules/aor-toys`.
+  `claude -p` → trace adapter exists in `rama-impl/aor-toys` on this branch.
 - AOR gives at-least-once execution per node, memoized completed nodes on retry,
   and no per-node timeouts, backoff or restart-proof timers. `challenges/hld-job-scheduler`
   is the closest existing model for a lease/heartbeat runner.
@@ -365,3 +365,42 @@ https://agentrama.fawn-augmented.ts.net, shell `ssh core@waler`, operated with
 `rama-ctl`). Deploying, invoking agents from a shell, secrets (`with-bws`), tracing
 conventions, the local REPL loop and known gotchas are documented in
 `~/dev/rama-waler/AGENTS.md`; read it before touching the cluster.
+
+### `rama-impl/aor-toys`
+
+Toy AOR module deployed on waler as `waler.aor-toys.module/AorToysModule`
+(namespaces keep the `waler.` prefix so the deployed module name is stable):
+`JevTriage` (TypeSafe Jev only) and `ClaudeJevAgent` (`claude -p` traced →
+Jev judges the answer). Build and deploy: rsync the directory to
+`/mnt/service-data/rama/build/aor-toys` on waler, run the lein container build
+from `~/dev/rama-waler/AGENTS.md`, then `rama-ctl update <jar> waler.aor-toys.module/AorToysModule`.
+
+### Tracing conventions for CLI agents in AOR
+
+- LangChain4j `ChatModel`/`StreamingChatModel` agent objects are auto-traced. Anything else must
+  call `aor/record-nested-op!` (`:model-call` info keys `inputTokenCount`/`outputTokenCount`/
+  `totalTokenCount`/`firstTokenTimeMillis`/`failure` feed analytics) and `aor/stream-chunk!`.
+- `waler.aor-toys.claude-cli/invoke!` turns `claude -p --output-format stream-json --verbose` into
+  one `:tool-call` span per tool use plus one `:model-call` span (tokens, cost, session id, turns).
+  Never pass `--bare`: it forces `ANTHROPIC_API_KEY`. Auth comes from `CLAUDE_CODE_OAUTH_TOKEN`
+  (subscription usage; the Agent-SDK credit change is paused as of 2026-09-25).
+- Jev API: `POST https://api.typesafe.ai/v1/systemone`; question types are `noul`/`choice`/`score`
+  (spec: `rama-impl/aor-toys/docs/typesafe-openapi.json`; LiteLLM's docs have the wrong shape).
+- Raw traces: PState `"$$_agent-node-<Agent>"`, map of node-invoke-id → {:node :nested-ops :emits ..};
+  query with `(foreign-select [ALL] ps {:pkey <task-id>})` (pkey is a task number, not a UUID).
+
+### Local dev loop (laptop)
+
+- `rama-impl/aor-toys/repl.sh` starts nREPL :7888 with vault secrets. In `dev/user.clj`, `(start!)`
+  launches the module in an in-process cluster with the AOR UI on :1975, and `(invoke "Agent" arg)`
+  calls an agent. Evaluate with `clj-nrepl-eval -p 7888 '<code>'`.
+- Lint: `clj-kondo --lint src dev` (import dependency configs once with
+  `clj-kondo --lint "$(clojure -Spath)" --dependencies --copy-configs --skip-lint`).
+
+### Gotchas already hit
+
+- AOR node fns need a fixed arity; no `& args`.
+- Rama/AOR module compilation needs `-Xss6m` (project.clj `:jvm-opts`), or you get a StackOverflowError.
+- A reload that fails to parse (e.g. unescaped `"` in a docstring) leaves stale code running in the
+  in-process cluster. Restart the REPL rather than reloading on top of it.
+- `ProcessHandle` is not auto-imported in Clojure; use `java.lang.ProcessHandle`.

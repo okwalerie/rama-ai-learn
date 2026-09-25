@@ -1,0 +1,13 @@
+;; For REPL-driven development against an in-process cluster (IPC).
+;; project.clj is what builds the deployable uberjar.
+{:paths ["src"]
+ :mvn/repos {"nexus-releases" {:url "https://nexus.redplanetlabs.com/repository/maven-public-releases"}}
+ :deps {com.rpl/agent-o-rama {:mvn/version "0.10.0"}
+        org.clojure/data.json {:mvn/version "2.5.1"}
+        com.rpl/rama {:mvn/version "1.9.0"}
+        org.clojure/clojure {:mvn/version "1.12.4"}
+        org.apache.logging.log4j/log4j-slf4j2-impl {:mvn/version "2.25.1"}}
+ :aliases {:nrepl {:extra-paths ["dev"]
+                   :extra-deps {nrepl/nrepl {:mvn/version "1.3.0"}}
+                   :jvm-opts ["-Xss6m" "-Xmx4g" "-XX:+UseG1GC"]
+                   :main-opts ["-m" "nrepl.cmdline" "--port" "7888"]}}}
