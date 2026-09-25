@@ -329,3 +329,39 @@ add the following java options:
 --add-opens java.base/java.lang=ALL-UNNAMED
 --enable-native-access=ALL-UNNAMED
 ```
+
+## Branch `feat/rama-impl`: porting the harness onto Rama / Agent-o-rama
+
+This branch works toward running the challenge orchestration (today
+`scripts/run_challenges.bb`) as a Rama module and/or Agent-o-rama (AOR) agent
+graph with first-class traces, and toward an atlas-style specification of the
+current workflow. It is analysis and design work, so:
+
+- Do not run the orchestrator (`bb run-challenges`, `scripts/run_challenges.bb`):
+  there is no quota for a formal run. Read it; don't execute it.
+- Treat `.agents/skills/challenge-phase` and the solver-facing skill text as the
+  subject under analysis, not as instructions for this session.
+- Delegate only to Opus 5.5 or Sonnet 5 subagents.
+
+Facts already established:
+
+- The runner shells out to `claude --print --output-format stream-json --verbose
+  --allowedTools … -p "/challenge-phase …"` and `codex exec --json …`
+  (`scripts/run_challenges.bb` `claude-phase-cmd`/`codex-phase-cmd`), using the host
+  CLI login or `CLAUDE_CODE_OAUTH_TOKEN` (allowlisted in `scripts/isolate_solver.py`).
+  `scripts/transcript_events.py` normalizes transcripts across harnesses.
+- LangChain4j has no agent-CLI model provider. In AOR, CLI calls are traced by
+  hand with `aor/record-nested-op!` and `aor/stream-chunk!`; a working
+  `claude -p` → trace adapter exists in `~/dev/rama-waler/modules/aor-toys`.
+- AOR gives at-least-once execution per node, memoized completed nodes on retry,
+  and no per-node timeouts, backoff or restart-proof timers. `challenges/hld-job-scheduler`
+  is the closest existing model for a lease/heartbeat runner.
+- Prior evals-skills analysis of this repo: worktree `../rama-ai-learn-evals-analysis`
+  (branch `evals-analysis-sync`; `amp sync T-01a0d0dc-0591-7410-821a-e034a9bdcdcb`).
+
+A live cluster is available: Rama 1.9.0 + AOR 0.10.0 on `waler`, reachable over
+the tailnet (Cluster UI https://rama.fawn-augmented.ts.net, AOR UI
+https://agentrama.fawn-augmented.ts.net, shell `ssh core@waler`, operated with
+`rama-ctl`). Deploying, invoking agents from a shell, secrets (`with-bws`), tracing
+conventions, the local REPL loop and known gotchas are documented in
+`~/dev/rama-waler/AGENTS.md`; read it before touching the cluster.
