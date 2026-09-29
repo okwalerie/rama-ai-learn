@@ -1,64 +1,240 @@
 # HLD notification system reference idiom review
 
-Baseline: `43abd3fccff8777d8995f8a29658f3c4c97df01a` (`Import nine source-backed Rama challenges with isolated evaluation and atlas`). The review is against `challenges/hld-notification-system/test-resources/hld_notification_system/module.clj` and its README/protocol contract. This is a review only; the reference, README, protocol, private tests, and skill were not changed.
+Baseline: `43abd3fccff8777d8995f8a29658f3c4c97df01a`. Subject:
+`challenges/hld-notification-system/test-resources/hld_notification_system/module.clj`
+(cited as `module.clj`), checked against `README.md`, `protocol.clj`, both private test
+namespaces, the reference's own design artifacts (`test-resources/PLAN.md`,
+`PLAN_VALIDATION.md`), the `auction-module` and `chat-app` references, and
+`plugins/rama-skill/skills/rama/SKILL.md`. This is a review only: the reference, README,
+protocol, private tests, and skill are unchanged.
 
-## Findings
+This revision replaces an earlier draft of this file (commit `d8dba7a`). That draft had
+three substantive errors, corrected below:
 
-### Barrier check: no cross-client counter defect found in this harness model
+- It called `$$task-pos` a partition-alignment bug. It is a deliberate task-local counter and
+  is correct (§3).
+- It suggested replacing the rank arbitration with a direct first-arrival claim at
+  `hash(submission-id)`. The private tests reject that design (§2).
+- It called `:ingress-seq` a Rama feature. It is an application-level field name from another
+  challenge's plan, not a Rama API (§2).
 
-`counter` is allocated once per `create-module` result, outside the `wrap-client` function (`module.clj:190-203`), so the `a` and `b` wrappers created from that result share it. The append lock covers both the depot append and counter increment (`:199-203`), and the barrier waits through the resulting shared count (`:227-230`). This matches the private tests' pattern of writing through one wrapper and waiting through the other (`notification_test.clj:14-18`; `independent_test.clj:62-67`). The specific suspected per-wrapper counter bug is therefore not present for the challenge's single-process test setup. This conclusion does not claim that an in-memory counter is a cross-process production barrier; that deployment scope is outside what these tests establish.
+It also misdescribed the comparison depots (§1) and treated the harness append lock as a module
+throughput issue (§6).
 
-The shared lock also serializes every `foreign-append!` made through wrappers from this factory result, including unrelated user and submission owners (`:199-202`). That is a throughput bottleneck against the README's 400,000/s combined peak, even though it simplifies the counter/barrier bookkeeping. A replacement should preserve the tested barrier semantics without placing all client writes behind one monitor; measure the acknowledgement or watermark strategy under concurrent clients rather than assuming atomic-counter bookkeeping is free.
+## Summary
 
-### 1. `$$task-pos` is read and written without establishing partition alignment
+The reference is idiomatic. Its unusual parts (per-task rank, `+group-by`/`+limit`
+arbitration, a materialized second batch block) each follow from a contract clause or a
+documented Rama rule. The remaining items are small clarity improvements, not correctness or
+I/O defects. No rewrite is warranted.
 
-**Evidence:** After reading the current task ID, the submission path selects and transforms `$$task-pos` by that ID (`module.clj:137-140`), but there is no `(|hash *task)` or other partitioner between `ops/current-task-id` and those local PState operations. The source depot is partitioned by the polymorphic `:owner` (`:102`); the submission path later needs user-key state and then submission-key state (`:131-161`). The Rama skill requires each local PState operation to be aligned to the owning partition (canonical skill `SKILL.md:61`).
+## 1. Multiplexed depot + microbatch
 
-**Impact:** `local-select>` / `local-transform>` are local operations, not distributed lookups. The rank allocator's accesses therefore do not establish that the key `*task` is on the current task. If the key is not local, the rank may be absent or unrelated; the code silently produces misleading candidate ranks. Because ranks are used to select a first-wins candidate (`:151-154`), this is in a correctness-sensitive path even though rank is only auxiliary metadata.
+**Evidence.** A single depot `*events (hash-by :owner)` (`module.clj:102`) carries five record
+types (`:10-14`). The wrapper sets `:owner` to the user ID for register/preference/submit and to
+the submission ID for attempt/receipt (`:205-214`). One microbatch topology `core` consumes it
+(`:103,126-127`). Blocks 1 and 3 each re-read `%mb` and select their records with
+`filter>` + `instance?` predicates (`:92-99,129-130,163-164`).
 
-**Idiomatic alternative:** Remove the rank PState if it is not required by the public ordering contract. If a sequence is required, allocate it where its owner is already local, or explicitly repartition to the sequence key before local access and account for the return repartition. Rama's `:ingress-seq` is a candidate only if its documented scope and ordering match the required first-wins semantics; it should not be substituted merely to avoid the alignment proof. Re-check all local reads/writes whenever introducing a new partitioner.
+**Assessment: sound.** The README ordering rule is per logical owner: a recipient user, or a
+submission for attempts and receipts (`README.md:155-156`; `protocol.clj:11-12`). Hashing each
+record by its owner gives each owner one depot partition, so per-owner invocation order holds.
+All user-owned records (register, preference, submit) must go through the same partition and
+the same block. Otherwise a submit's device/preference snapshot could observe a later
+registration (`PLAN_VALIDATION.md:90-92`; exercised at `notification_test.clj:69-85`).
 
-### 2. A single `:owner` depot key multiplexes two ownership domains
+Microbatch is the right default (`SKILL.md:63`). Every write family is non-idempotent (generation
+bump, `submit-seq`, `dl-seq`, `task-pos`, list appends), and the submit path spans three
+partitions (user → submission → user). Microbatch's exactly-once replay covers both without
+extra dedup state (`PLAN_VALIDATION.md:26-28,39-42`). No read requires stream-latency
+visibility, because tests read only after `wait-for-processing!` (`README.md:150-151`).
 
-**Evidence:** All five event record types share `*events (hash-by :owner)` (`module.clj:10-14,101-103`). User/profile/submission events set owner to user ID, whereas attempt and receipt events set it to submission ID (`:205-214`). All are consumed by one microbatch topology and dispatched through separately filtered batches (`:126-188`). The workload calls for 100,000 submissions/s plus roughly 300,000 attempt/receipt events/s (`README.md:87-92`).
+**Comparison.** `chat-app` also multiplexes many record types on one owner-hashed depot
+(`*user-actions-depot (hash-by :user-id)`, `chat_app/module.clj:26-30,160`). It uses a separate
+depot only where the partition key differs (`*register-depot (hash-by :handle)`, `:159`), and it
+dispatches with `<<subsource` (`:200-201,280-282`). `auction-module` partitions its bid depot by
+the listing owner, not the bid (`hash-by nested-listing-user-id`,
+`auction_module/module.clj:66-71`), so each bid first lands where the listing state it updates
+lives. The shared lesson is: partition each record by the owner of the state it touches first.
+This reference already does that.
 
-**Impact:** `:owner` means recipient for some records and submission for others. This can colocate/order each domain's events, but it hides two distinct key contracts behind one partitioner, couples their throughput and batch scheduling, and makes it harder to reason about hot-user versus hot-submission skew. The code still explicitly repartitions as it moves from recipient state to submission state and back (`:157-180`). A single microbatch is not automatically wrong: durable cross-state effects and exactly-once processing matter here. The concern is whether this shared ingestion/processing boundary remains a good fit at the stated aggregate rate and whether the necessary ordering is preserved when it is changed.
+**Optional clarity alternative.** Split the depot into `*user-events (hash-by :user-id)` and
+`*delivery-events (hash-by :submission-id)`, both consumed by the same `core` microbatch.
 
-**Idiomatic alternative:** Use explicit depots keyed by the logical owner for each write family (recipient-owned device/preference/submit writes versus submission-owned attempt/receipt writes), with clear record routing and a documented ordering argument. Keep the state transitions that need atomicity together; do not split PState ownership across independent topologies without resolving write ownership, retry behavior, and the barrier contract. `auction-module` demonstrates separate listing- and bid-keyed depots feeding topologies (`auction-module/module.clj:69-76,95-114`); `chat-app` uses distinct depots for distinct key spaces and documents which topology consumes each (`chat-app/module.clj:26-30,158-165,279-283`). These are comparison patterns, not drop-in designs for this contract.
+- This removes the synthetic `:owner` field that duplicates `:user-id` or `:submission-id`.
+- Block 1 then sources only user events and block 3 only delivery events, so neither block
+  filters the other's records.
+- Dispatch within block 1 by type (`<<subsource` as in chat-app, or the current `<<cond`).
+- Keep register, preference, and submit on one depot. Splitting those would break the
+  same-owner ordering described above.
+- Costs: the barrier must count appends to both depots, and the gain is readability plus
+  skipping an in-memory type check. There is no I/O change.
 
-### 3. The `+group-by`/materialize arbitration stage is more machinery than the contract appears to require
+## 2. Arbitration idioms: `:ingress-seq`, `+group-by`, `+vec-agg`, sort, `loop<-`, repartition
 
-**Evidence:** The code tracks a per-user submit sequence, allocates per-task positions, derives `candidate-rank`, groups submissions by ID, sorts via `aggs/+limit` options, materializes winners, then checks the final submission PState before storing (`module.clj:134-161`). There is no `:ingress-seq`, `+vec-agg`, explicit `sort`, or `loop<-` in this reference; the actual arbitration mechanism is `+group-by` + ranked `+limit` + `materialize>`.
+**What the reference uses.** For each `Submit` on the user's task, the code does the following
+(`module.clj:134-144`):
 
-**Impact:** The grouped stage introduces transient state, extra materialization work, and a second pass over candidate submissions to implement first-wins deduplication. The rank is not an ingress sequence: it combines task ID and task-local position (`:89-90,137-154`), so its relationship to arrival order is not self-evident. The contract requires invocation order for sequential writes from one client to the same logical owner, but allows different clients' writes to serialize in any order (`README.md:155-159`). The implementation should establish whether deterministic arbitration is actually needed beyond that contract.
+- reads `[user :profile]` (one seek, `:132`);
+- advances the per-user `submit-seq`;
+- advances a per-task position in `$$task-pos`;
+- builds the snapshot record;
+- emits a candidate with `rank = task × 2^40 + pos` (`:89-90,143`).
 
-**Idiomatic alternative:** Prefer a direct idempotent point claim/update at the submission-ID owner if the deployed Rama processing semantics allow a correct first processed write to win under retries. If cross-partition same-batch contenders need explicit arbitration, retain grouping but specify the tie-break contract, make the rank source correctly aligned and retry-safe, and test same-batch and cross-batch races. Do not introduce `+vec-agg` + client/topology-side sorting or a `loop<-` repartition cycle by default: they do not by themselves provide first-wins correctness, and a loop of PState hops adds repeated reads/partitioner traffic. Use aggregation/sort only where a bounded result set and a specified ordering genuinely require it.
+Then `(+group-by *sid (aggs/+limit [1] … :+options {:sort *rank}))` keeps the minimum-rank
+contender per submission ID, and `materialize>` saves it to `$$winners` (`:151-154`). Block 2
+reads `$$winners` on `hash(sid)`, skips IDs already persisted, writes the record, and returns
+with `|hash *user` to append `recent[seq]` (`:155-161`). The reference uses no `+vec-agg`,
+explicit sort, `loop<-`, or ingress-sequence field.
 
-### 4. The large PState collections are subindexed, but intentionally unbounded
+**Why this design is needed.** Consider crossed submissions: client A submits `x` then `y` for
+user `u`, while client B submits `y` then `x` for user `v`. Plain first-arrival at `hash(sid)`
+lets `x→v` and `y→u` both win. No serial history explains that outcome, because it contradicts
+both clients' invocation orders (`PLAN_VALIDATION.md:73-89,139-144`). The private test asserts
+exactly this: owners `["v" "u"]` are excluded (`notification_test.clj:137-155`). The same-owner
+case `repeat` requires the earlier payload to win without a barrier (`:156-160`).
 
-**Evidence:** The user's recent-submission IDs and dead letters are per-user maps keyed by monotonically increasing sequence numbers and have `{:subindex? true}` (`module.clj:104-115`); page reads take only 100 entries from the sorted tail (`:221-226`). Submission records are keyed independently by submission ID and keep a bounded delivery map (maximum 8 devices) (`:116-123`). The README explicitly allows up to 100,000 submissions and 100,000 dead-letter entries per recipient (`README.md:90-92`) and requires page work bounded independently of history (`:99-105`).
+`(task, pos)` is a total order that extends every per-owner depot order (`PLAN.md:49-65`). The
+minimum rank per ID therefore always yields a serializable winner set. A direct point claim at
+the submission owner would reintroduce the cross-owner race. That is only acceptable if the
+contract is relaxed.
 
-**Impact:** Subindexing makes the indexed page read bounded; it does not cap retained history or the storage footprint. Recent IDs and dead-letter entries continue to grow for the lifetime of a user, as does the global submission-ID PState. That may be correct because the protocol exposes historical submission lookup and does not authorize deletion, but it must be treated as an explicit retention/storage choice rather than assuming that a 100-entry page bounds storage.
+**`:ingress-seq`.** This is not a Rama API. It is an application PState field in another
+challenge's plan (`challenges/hld-hotel-reservation/test-resources/PLAN.md:60,176-180,214-235`).
+There, it gives a durable per-owner position so a whole batch of one owner's commands can be
+grouped and applied in order. Here `$$task-pos` plays the analogous role, with one difference:
+the order must be total across all owners on a task, not per owner. A per-user sequence (the
+existing `submit-seq`) cannot serve as the rank. With `u` and `v` on the same task, the crossed
+case gives `x: min(u1, v2) = u` and `y: min(u2, v1) = v`, which is again the forbidden cycle.
 
-**Idiomatic alternative:** Preserve the current subindexed sorted range access for bounded latest-page reads. If bounded retention is a product requirement, first add an explicit retention contract (including whether `get-submission` remains valid after pruning), then delete/compact using an indexed range operation or time/sequence buckets. Do not silently cap to 100: the current protocol does not say older records may be discarded, and the skill says not to delete data absent an explicit requirement (`plugins/rama-skill/skills/rama/SKILL.md:34`). The fixed-size `:devices` and `:prefs` maps are different: their limits are explicit (8 devices, 16 categories) and their fixed-work access is appropriate.
+**`+limit [1]` vs `+vec-agg` + sort vs `loop<-`.**
 
-### 5. Client reads are direct distributed PState selections, not multi-read client joins
+- `+limit [1]` with `:sort` is the minimal batch-only top-1-per-group reducer
+  (`references/aggregators.md:108-113,263-269`). It keeps one row per group.
+- `+vec-agg` + sort would move every contender to the group task and sort there. It has the same
+  semantics and was the plan's documented fallback (`PLAN.md:59-61`), but it keeps more
+  transient data.
+- `loop<-` over sorted contenders is the right tool only when each contender's outcome depends
+  on applying the previous ones to state (sequential command application). Here only the winner
+  matters and losers have no effects, so `loop<-` would only add iterations. `SKILL.md:26` also
+  flags long loops as a task-blocking risk.
+- Keep `+limit`.
 
-**Evidence:** `get-devices` and `get-preferences` each make one keyed `foreign-select-one` against `$$users`; `get-submission` makes one point select against `$$submissions`; each page read makes one bounded range select (`module.clj:215-226`). There are no query topologies in this module.
+**Repartitions.** A submit takes exactly three hops: user task (snapshot plus rank), `+group-by`
+to `hash(sid)`, then `|hash *user` for `recent`. That return hop cannot move into block 1's
+post-agg, because partitioners are not allowed in post-agg (`references/batch.md:48,219`).
+Hence `materialize>` plus a second `<<batch`, which is the documented pattern
+(`references/batch.md:184-199`; `references/microbatch.md:44-52`).
 
-**Assessment:** This is a sound choice for the current API: every method reads one keyed PState path, and page reads are bounded. Replacing these calls with query topologies would add a topology invocation without eliminating a multi-PState client round trip. The client does not stitch several independently fetched partitions together.
+Writing `recent` on hop 1 would save the return hop. But contest losers would then appear in the
+recipient's list, violating first-wins (`protocol.clj:57-59,130-133`; `PLAN_VALIDATION.md:53`).
+The delivery path does fixed work at `hash(sid)`, with one conditional hop to `hash(user)` only
+for invalidations and dead letters (`module.clj:165-188`). No hop is removable.
 
-**Idiomatic alternative:** Keep direct foreign reads for these single-state point/range reads. Add a query topology when a future read must join state across keys/PStates, fan out across partitions, or perform work that should not be exposed as several client network round trips. The `chat-app` reference uses query topologies for multi-stage room/profile and user-room/room-sequence lookups (`chat-app/module.clj:417-433,468-478`), while its simple key lookups remain direct client selections (`:546-553`).
+## 3. `$$task-pos` layout (correction of the prior draft's "misalignment" finding)
+
+**Evidence.** `$$task-pos {Long Long}` (`module.clj:124`) is read and written only at the key
+`(ops/current-task-id)`, with `local-select>`/`local-transform>` on the current task
+(`:137-140`).
+
+**Assessment: correct.** Partition alignment (`SKILL.md:61`) matters when a key's owning
+partition is chosen by a partitioner, so that other code (a later hop, a foreign select) can
+find it. Here each task accesses only its own key and nothing else ever routes to it. Each
+partition therefore holds exactly one entry, its own counter, and every access is local by
+construction (`PLAN.md:151-152`; `PLAN_VALIDATION.md:11-12`). It is a PState, so microbatch
+retry restores it and replay reassigns identical ranks (`PLAN.md:52-54`).
+
+**Caveat (clarity only).** The key does not follow the usual `hash(key)` placement. A client
+`foreign-select` of `$$task-pos` by task ID would route by hash and read the wrong partition.
+Nothing does this. The design comment in `PLAN.md:151-152` explains the invariant but is
+missing from `module.clj:124`, and adding it would prevent the misreading the prior draft made.
+The cost is one small point read plus one write per submit, against a hot single-key partition.
+
+## 4. Growing single-PState collections
+
+**Evidence.**
+
+- `$$users` holds each recipient's inline `:profile` together with two per-user collections
+  that grow for the recipient's lifetime: `:recent` (seq → sid) and `:dead-letters`
+  (seq → entry). Both are `{:subindex? true}` (`module.clj:104-115`).
+- Page reads are `sorted-map-range-to-end 100` (one seek plus ≤100 iterations), reversed on the
+  client (`:221-226`).
+- `:devices` (≤8, enforced at `:23`), `:prefs` (≤16 by workload, `README.md:92`), and each
+  submission's `:deliveries` (≤8, `module.clj:120-123`) are inline.
+- All topology reads target `[user :profile]` (`:132,178`) or a single dead-letter-seq field
+  (`:182`). None reads the top-level user value, which would pull the subindex handles.
+
+**Assessment: correct sizing.** The README permits 100,000 submissions and 100,000 dead letters
+per recipient (`README.md:90-91`) and requires page work independent of history
+(`:104-105`). Subindexing gives exactly that (`SKILL.md:59`). Inlining the ≤8/≤16 maps avoids
+subindex overhead where it would buy nothing. The independent cost test checks this empirically
+by comparing reads, iterators, and writes at 240 vs 1040 history entries
+(`independent_test.clj:23-30,58-87`).
+
+**Retention.** Subindexing bounds read work, not storage. `:recent`, `:dead-letters`, and
+`$$submissions` grow without bound. That is required: `get-submission` must answer for any
+past ID, and the protocol never authorizes discarding history (`protocol.clj:117-142`;
+`SKILL.md:34`). Storage balance comes from partitioning. User data is hashed over 100M users,
+submissions over unbounded IDs. The only skew is one heavy recipient's subindexed lists, which
+the workload caps at 100,000 entries each. Do not cap pages by deleting old entries unless a
+retention contract is added.
+
+## 5. Client-side distributed queries
+
+**Evidence.** Each read method is one `foreign-select-one`/`foreign-select` on a single keyed
+path, and the wrapper does no cross-partition stitching (`module.clj:215-226`):
+
+- `get-devices` / `get-preferences`: `[user :profile :devices|:prefs]`
+- `get-submission`: `[sid]`
+- page reads: a bounded tail range under `[user :recent|:dead-letters]`
+
+**Assessment: correct.** Each read is one network round trip and one seek (plus ≤100
+iterations for pages). A query topology would add an invocation hop without removing a round
+trip. `SKILL.md:39` recommends query topologies to collapse multiple client round trips, and
+there are none to collapse.
+
+Compare `chat-app`. It uses query topologies where one read fans out across partitions:
+
+- `room-page` joins message → profile (`chat_app/module.clj:417-433`);
+- `unread-counts` joins user rooms → room seq/cursor (`:468-478`).
+
+Its single-key lookups stay direct `foreign-select-one` (`:546-553`). Its `get-online-members`
+is a genuine client-side distributed loop: chunked member reads alternating with an
+`online-filter` query (`:564-580`). That is the pattern to avoid or justify. This reference has
+nothing like it.
+
+Minor: `(or (foreign-select-one [… (nil->val {})] users) {})` (`module.clj:216,218`) applies the
+default twice. Either the navigator default or the `or` alone suffices.
+
+## 6. Client wrapper barrier (harness-only)
+
+`counter` is one atom per `create-module` result, shared by every wrapper built from it
+(`module.clj:191`), so the tests' cross-wrapper barriers are covered
+(`notification_test.clj:14-15`; `independent_test.clj:62-63`).
+
+`append` holds `(locking counter …)` around `foreign-append!` + increment (`:199-202`).
+`wait-for-processing!` holds the same monitor while blocking in
+`wait-for-microbatch-processed-count` (`:228-230`). So a barrier call stalls all other wrappers'
+appends until processing catches up. This is conservative but sound for the harness, because
+no uncounted append can be in flight while the target count is sampled.
+
+The comparison wrappers use an unlocked atom (`auction_module/module.clj:175,208-212`;
+`chat_app/module.clj:514-519,596-597`). This is test-synchronization machinery, not module
+design. The README's 400,000/s workload is served by the module, not by one in-process wrapper,
+so the lock is not a production throughput finding.
 
 ## Disposition
 
-Doc-only. No reference rewrite was attempted: the local PState alignment finding affects correctness, and choosing a replacement would require re-deriving submission arbitration and re-running the complete private suite. This checkout has a review deadline context but no explicit remaining-time budget; the existing implementation is not sufficiently safe to rewrite speculatively. Per request, no challenge README, protocol, private tests, or skill files were edited, and no solver or `bb run-challenges` run was made.
+Doc-only. The reference is correct and idiomatic on every audited axis. The optional items (depot
+split with `<<subsource`, a `$$task-pos` invariant comment, the redundant `or`) are clarity
+edits, not safety or I/O fixes. They do not justify rewriting a validated reference.
 
-## Files and line references consulted
+Test status for this review: the reference was not changed, so the private suite was not re-run
+for this doc-only revision. Recorded historical results in the repo, not re-verified here:
 
-- `challenges/hld-notification-system/README.md:85-162` — workload, bounded-work contracts, barrier and ordering semantics.
-- `challenges/hld-notification-system/src/hld_notification_system/protocol.clj:22-142` — method-level state and transition contract.
-- `challenges/hld-notification-system/test-private/hld_notification-system/notification_test.clj:1-188` and `independent_test.clj:1-128` — lifecycle, duplicate IDs, pages, cross-client barriers, bounded work, and module update coverage.
-- `challenges/hld-notification-system/test-resources/hld_notification_system/module.clj:10-230` — reference implementation.
-- `challenges/auction-module/test-resources/auction_module/module.clj:69-114,161-218` and `challenges/chat-app/test-resources/chat_app/module.clj:26-35,158-179,279-283,392-494,496-597` — comparative depot, topology, and query patterns.
-- `plugins/rama-skill/skills/rama/SKILL.md:22-68` — correctness, partition alignment, collection sizing, topology and I/O guidance.
+- `test-private/hld_notification_system/independent_full.log:19-20`: 12 tests, 188 assertions,
+  0 failures, 0 errors.
+- `test-resources/VERIFICATION.log:8-9`: 8 tests, 90 assertions, 0 failures, 0 errors.
+
+`scripts/test_reference_packages.py` does not list this challenge (`PACKAGES`, lines 11-13), so
+it does not apply. No `bb run-challenges` or solver run was made.
