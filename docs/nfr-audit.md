@@ -1,6 +1,6 @@
-# NFR test coverage audit — 26 challenges
+# NFR test coverage audit — 31 challenges
 
-Benchmark: auction, bank-transfer, fanout, social-graph-and-fanout, chat-app private performance tests. Probe scripts were throwaway and are not committed.
+The five benchmark challenges (`auction-module`, `bank-transfer-module`, `chat-app`, `fanout`, `social-graph-and-fanout`) are audited in the last section, "NFR test coverage audit: benchmark modules". Probe scripts used in other sections were throwaway and are not committed.
 
 ---
 
@@ -1588,109 +1588,238 @@ None. It uses one PState keyed by `FlagId` with a revision guard (`module.clj:31
 
 # NFR test coverage audit: benchmark modules
 
-These five are the gold-standard benchmark challenges. Each has a private `performance_test_support.clj` alongside functional tests. Each test launches on 2 or 4 tasks, chosen at random.
+Challenges: `auction-module`, `bank-transfer-module`, `chat-app`, `fanout`, `social-graph-and-fanout`.
+
+Method: I read each challenge's README, protocol, every file under `test-private/` and the reference module under `test-resources/`. I did not run tests or probes. None of the five has a public `test/` directory, so every assertion below is private. Every suite launches 2 or 4 tasks at random, with 2 to `tasks` threads (for example `auction-module/test-private/auction_module/performance_test_support.clj:38-41`). Paths below are relative to `challenges/<challenge>/`.
 
 ## 1. auction-module
 
 **Stated NFRs**
-- None beyond "use simulated time" for expiry checks. The README states no cost, latency or fault-tolerance rule.
+- Listings are readable, and bids visible, "within 5 milliseconds" (`src/auction_module/protocol.clj:8-9,12-13`).
+- Expiry uses simulated time (`README.md:7`). In production it must be "automatic time-driven expiration"; `process-expirations!` exists only for tests (`protocol.clj:30-35`).
+- A bidder's earlier bid is replaced only by a higher amount (`protocol.clj:11-12`).
 
-**Tested NFRs (all private)**
-- Topology type: a `:topology-event` hook requires `:stream` for `list-item!` and `bid!` (the test message cites "millisecond visibility").
-- Exactly-once under retry: `failed-streaming` fails the first `:streaming-complete` of `list-item!` and of two `process-expirations!` calls. Seller, winner and loser must each get exactly one notification.
-- Bounded expiry work: a `:local-select` hook must see `:allow-yield?` true during expiry processing.
-- Subindexing: `get-listings`, `get-bids` and `get-notifications` must each record a non-zero `:rocks-iterator-read` count.
-- Unique listing IDs across two clients.
+**Implied NFRs** (not in the README or protocol)
+- Exactly-once notifications. A sale, win or loss is an external effect and must not repeat under retry.
+- Listings per seller, bids per listing and notifications per user grow without bound, so they must be subindexed.
+- Expiry work per tick is proportional to due listings, and a listing with many bidders must not block its task.
+- The highest bid is maintained on write, not computed on read.
 
-**Gaps (with a wrong design that passes)**
-- Every tested NFR is unstated. A solver must infer stream topology, retry safety and subindexing from the domain. This is a README gap, not a test gap.
-- Read cost is checked only as "iterator used", never bounded. Wrong design: `get-bids` pages the whole subindexed bid map then sorts on the client. It passes with 3 bids.
-- No concurrent-bid race. Wrong design: `get-highest-bid` read on the bidder partition and compared after a hop. It passes because bids arrive from one thread.
-- No growth pair on expiry. Wrong design: expiry scans every listing with `:allow-yield? true`. It passes the flag check.
+**Tested NFRs** (all private, `test-private/auction_module/performance_test_support.clj` unless noted)
+| NFR | Mechanism | Lines |
+|---|---|---|
+| 5 ms visibility for listings | `:topology-event` types seen during `list-item!` must include `:stream` | 55-63 |
+| 5 ms visibility for bids | The same check around `bid!` | 65-74 |
+| Exactly-once notifications under retry | `failed-streaming` returns `:fail` from the first `:streaming-complete`, around `list-item!` and around two `process-expirations!` calls. Seller, winner and loser must each get exactly one notification | 21-29, 76-99 |
+| Expiry is not a retrying stream | The same `failed-streaming` wrap around `process-expirations!` (comment at 84) | 85, 88 |
+| Yielding reads during expiry | Some `:local-select` with `:allow-yield?` true must occur while listings expire | 101-118 |
+| Subindexed listings, bids and notifications | `get-listings`, `get-bids` and `get-notifications` must each emit a `:rocks-iterator-read` | 12-19, 120-125 |
+| Unique listing IDs across clients | 20 listings from two clients must have distinct IDs | 127-136 |
+| Idempotent expiry tick | A repeated `process-expirations!` adds no notification (`functional_test_support.clj:135-140`) | — |
 
-**Verdict: PARTIAL.** The retry and topology tests are strong and reusable. The README states none of what they enforce, and read cost is proven only by "iterator used".
+**Gaps: wrong designs that pass**
+- **Retry on `bid!` is not injected.** Retries are forced only around `list-item!` and expiry. Wrong design: `bid!` appends the bidder to a per-listing vector with `AFTER-ELEM` and deduplicates on read. A stream retry adds a second entry, and expiry sends that loser two `:lost` notifications.
+- **`get-highest-bid` cost is not measured.** Wrong design: keep only the bid map and find the maximum on each read. Cost grows with bidders; the test listing has 3 bids.
+- **Expiry cost is checked only by the yield flag.** Wrong design: on each tick, scan every listing on every task with a yielding select and compare its expiry time. Cost is O(all listings) per tick, and it passes.
+- **No concurrent bids.** All bids come from one client in sequence. Wrong design: the client reads the top bid with `foreign-select-one` and appends a record that overwrites it when higher. Two racing bidders can lower the top bid.
+
+**Test weaknesses**
+- The iterator checks are `pos?` only (`:120-125`). They prove subindexing, not a read bound.
+
+**Reference-implementation concern**
+- `bid!` overwrites the bidder's amount without comparing (`test-resources/auction_module/module.clj:106-107`; `$$user-bids` at `:113`). A lower re-bid from the same bidder replaces a higher one in `get-bids`, which breaks `protocol.clj:11-12`. The top bid is safe (`:108-111`). No test places a lower re-bid from the same bidder (`functional_test_support.clj:98-100` only raises).
+- Otherwise the reference fits the recommended tests: bids and the top bid live on the listing owner's task (`:70-71`, `:102-111`), and expiry runs through `TopologyScheduler` in a microbatch (`:115-158`).
+
+**Recommended tests**
+1. `failed-streaming` around one `bid!` plus a barrier, then expire. Assert one entry per bidder in `get-bids` and exactly one `:lost` per loser.
+2. Capture `get-highest-bid` on a listing with 3 bids and with 300 bids. Assert total reads under 5 at both sizes.
+3. Capture one idle `process-expirations!` with 50 and with 500 far-future listings. Assert reads do not grow.
+
+**Verdict: ADEQUATE.** The protocol's 5 ms bound is tested through topology type, and retry safety, yielding and subindexing are tested with injected faults and event hooks. The gaps are retry on `bid!`, the read cost of the top bid, and expiry scan cost.
 
 ## 2. bank-transfer-module
 
 **Stated NFRs**
-- Fault tolerant: "never double process or fail to process" deposits or transfers.
-- Transfer IDs are unique, so no client dedupe is needed.
+- "fault-tolerant and never double process or fail to process successful appends of deposits or transfers" (`README.md:3`).
+- The same transfer ID is never appended twice, so no dedupe is needed (`README.md:3`).
 
-**Tested NFRs (all private)**
-- Exactly-once proxy: every topology event during deposits and 49 transfers must be `#{:microbatch}`.
-- Write and read cost: a deposit is exactly `{:rocks-read 1 :rocks-writes 1}`. A transfer is at most 8 reads and 6 writes.
-- Subindexed history: `get-incoming-transfers` and `get-outgoing-transfers` over 50 transfers are exactly 1 read, 1 iterator and 50 iterator reads.
-- Balance: deposits to keys from `gen-hashing-index-keys` must give equal `:depot-read` counts per task, with no `:partitioner` events.
+**Implied NFRs**
+- Transfers must not overdraw an account, even when several run at once.
+- Transfer history grows without bound, so it must be subindexed.
+- Deposits and transfers spread across tasks by user.
 
-**Gaps (with a wrong design that passes)**
-- No retry injection. Microbatch type is a proxy. Wrong design: a microbatch that appends the credit leg to a second internal depot, consumed by another microbatch. A retry duplicates the append; every test passes.
-- No concurrent-transfer race. Transfers come from one client in sequence, so an overdraft race is never exercised. Microbatch makes this safe, but the test would not catch a stream fallback that also passed the type check.
-- Exact op counts are brittle: an equally good design with one extra read fails.
+**Tested NFRs** (all private, `test-private/bank_transfer_module/performance_test_support.clj` unless noted)
+| NFR | Mechanism | Lines |
+|---|---|---|
+| Exactly-once processing | Every `:topology-event` during 2 deposits and 49 transfers must be microbatch; the set must equal `#{:microbatch}` | 58-69 |
+| Deposit cost | A deposit plus barrier must cost exactly `{:rocks-read 1 :rocks-writes 1}` | 71-76 |
+| Transfer cost | A transfer plus barrier: at most 8 reads and 6 writes, and no iterator use | 78-85 |
+| Subindexed history | `get-incoming-transfers` and `get-outgoing-transfers` over 50 transfers must cost exactly 1 read, 1 iterator and 50 iterator reads | 87-96 |
+| Task balance | Deposits to 10 × tasks keys from `rtest/gen-hashing-index-keys` must give equal `:depot-read` counts per task, with no `:partitioner` event | 23-45, 97 |
+| Failed transfers change nothing | Insufficient, zero and unknown balances leave both balances unchanged and are recorded as failed (`functional_test_support.clj:66-91,121-128`) | — |
 
-**Verdict: ADEQUATE.** The stated NFR (exactly once) is enforced by topology type, and cost, subindexing and balance are pinned tightly.
+**Gaps: wrong designs that pass**
+- **Exactly-once is inferred from topology type; no batch is failed.** Wrong design: a microbatch that forwards the credit leg with `depot-append!` to an internal depot consumed by a second microbatch. Every event is microbatch, so the type check passes. No test retries a batch to show whether the credit lands once.
+- **No concurrent transfers.** All transfers come from one client in sequence. Wrong design: the client reads the sender's balance with `foreign-select-one` and appends a transfer already marked as success or failure. Two concurrent transfers can both pass the check and overdraw.
+- **Balance is checked for deposits only.** Wrong design: transfers go through `|global` to one task "for ordering". The partitioner check wraps only the deposits (`:34-36`), so it passes.
+
+**Test weaknesses**
+- Exact counts (`:76`, `:91`, `:96`) fail equally good designs that do one extra read, such as a deposit that first checks the account.
+- The protocol has no paging for history (`src/bank_transfer_module/protocol.clj:11-16`), so 50 iterator reads for 50 transfers is the required cost. The test proves subindexing, not a page bound.
+
+**Reference-implementation concern**: none. One microbatch topology, `banking`, debits on the sender's task, hops once to the receiver and keeps both histories subindexed (`test-resources/bank_transfer_module/module.clj:18-70`, hop at `:61`, histories at `:22-36`).
+
+**Recommended tests**
+1. **Overdraft race**: fund one account with 100, then send 20 concurrent transfers of 10 from it through two clients. Assert exactly 10 succeed and the balance is 0.
+2. **Transfer balance**: extend the even `:depot-read` check to transfers whose senders come from `gen-hashing-index-keys`.
+
+**Verdict: ADEQUATE.** The one stated NFR, exactly-once processing, is enforced through topology type. Write cost, read cost, subindexing and balance are pinned with exact counts. The gaps are that no failure is injected and no transfers run concurrently.
 
 ## 3. chat-app
 
 **Stated NFRs**
-- Workload: 10M users, 2,000 messages per second, rooms up to 50,000 members, 100,000 heartbeats per second.
-- Visibility within 5 milliseconds for register, profile, room creation and posts.
-- Fixed read work for `get-room-page`, `get-recent-threads` and `get-mentions-page`. `get-unread-counts` costs O(1) per room.
-- Presence is online if a heartbeat arrived in the last 120 seconds.
+- Workload (`README.md:8-24`): 10M users, 1M rooms, rooms of up to 50,000 members, about 2,000 messages per second, about 100,000 heartbeats per second, and reads as the dominant load. Every docstring bound is part of the spec (`README.md:28-31`).
+- 5 ms visibility for `register!` (`src/chat_app/protocol.clj:24-25`), `set-profile!` (`:27-28`), `create-room!` (`:37-38`), and posts and replies in their pages (`:50-51`, `:55-56`).
+- Of concurrent `register!` or `create-room!` calls for one name, exactly one wins, with no partial effects (`:21-24`, `:34-37`).
+- A user is online if a heartbeat arrived in the last 120 seconds (`:30-31`); presence "does not need to be 100% reliable" (`:73`).
+- Fixed read work for `get-room-page`, `get-thread-page`, `get-recent-threads` and `get-mentions-page` (`:98-99`, `:103-104`, `:116-117`, `:128-130`). `get-unread-counts` costs O(1) per room (`:122`). Reads complete in about 50 ms (`:78-79`, `:85`, `:99`).
+- Only the 200 most recently active threads are visible (`:115`).
 
-**Tested NFRs (all private)**
-- Write volume: heartbeats write fewer than 10 records. A post to a 300-member room writes fewer than 40. `mark-room-read!` writes fewer than 15 and reads fewer than 60.
-- Read cost: page reads over a 250-message room stay under 250 reads. Unread counts over 10 rooms stay under 120. Recent threads with 10 replies each stay under 200. Mentions stay under 250. Online members stay under 400.
-- Fault tolerance: `update-module!` keeps every durable view exact, resets presence to offline, and keeps processing writes.
+**Implied NFRs**
+- Heartbeats at 100,000 per second write nothing durable.
+- A post to a large room does not write per member.
+- Derived counters (unread, reply counts) are exactly-once under retry.
 
-**Gaps (with a wrong design that passes)**
-- The 5 ms visibility bound is untested. Wrong design: every write goes through a microbatch topology. It passes all tests.
-- No retry injection. Wrong design: a stream topology that bumps unread counters and appends derived records through an internal depot. A retry double-counts unread; no test fails.
-- Mention and thread-participant fanout cost is not measured. Wrong design: a reply that rewrites every participant's recent-threads list as one value. It passes with 10 replies.
+**Tested NFRs** (all private, `test-private/chat_app/performance_test_support.clj` unless noted)
+| NFR | Mechanism | Lines |
+|---|---|---|
+| No durable heartbeat writes | 100 heartbeats must write fewer than 10 records | 55-62 |
+| Post write volume | A post to a 300-member room, plus barrier, must write fewer than 40 records; the unread count is still 1 | 64-73 |
+| `mark-room-read!` is O(1) | Fewer than 15 writes and fewer than 60 reads after 50 messages | 75-88 |
+| Room page read cost | Under 250 reads (point plus iterator) over a 250-message room | 117-122 |
+| Unread counts are O(rooms) | Under 120 reads for 10 rooms holding about 430 messages | 124-141 |
+| Recent-threads read cost | Under 200 reads with 25 threads of 10 replies each | 143-161 |
+| Mentions read cost | Under 250 reads with 60 mentions | 163-171 |
+| Online-members read cost | Under 400 reads for a 32-member room | 173-181 |
+| Durable views survive restart | After `update-module!`, every durable view is exact, presence resets to offline, and writes continue | 183-237 |
+| Visible on return | Reads right after `register!`, `create-room!` and `post-message!`, with no barrier (`functional_test_support.clj:37-47,72-80,199-204`) | — |
+| Unique-name races | 8 concurrent `register!` and 8 concurrent `create-room!` for one name: exactly one winner (`functional_test_support.clj:62-95`) | — |
+| Concurrent posts | 30 concurrent posts all land once and count once in unread (`functional_test_support.clj:390-399`) | — |
+| 200-thread cap | 205 threads; the 5 least recently active drop out (`functional_test_support.clj:401-419`) | — |
 
-**Verdict: PARTIAL.** Write and read cost bounds are the best in the repo. The stated latency bound and retry safety of derived counters are not tested.
+**Gaps: wrong designs that pass**
+- **No retry injection.** Wrong design: a stream topology bumps a per-room message counter with `(term inc)` for unread counts. A stream retry counts the message twice. `update-module!` is a clean restart, so no test notices.
+- **Visibility is checked as "visible when the call returns", not by time or topology type.** Wrong design: `post-message!` appends to a microbatch topology and blocks until the batch commits. Reads without a barrier pass, and latency is hundreds of milliseconds.
+- **Thread-reply fan-out cost is not measured.** Wrong design: each reply rewrites every participant's recent-threads list as one non-subindexed value. Reading that list counts as one read, and test threads have at most 10 replies.
+- **The 120-second presence window is not tested.** See the reference concern.
+- **Read latency of about 50 ms is not measured.** Read counts stand in for it. Low priority.
+
+**Test weaknesses**
+- Each bound is absolute at one size, with no small-versus-large pair. "Under 250 reads" over 250 messages (`:121`) admits a design that reads most of the history.
+- `(= :offline ...)` after `update-module!` (`:224`) forces presence to be in memory, although the test itself calls the reset a "permitted loosening" (`:225`). A cheap durable presence design fails.
+
+**Reference-implementation concern**
+- `ONLINE-WINDOW-MS` is 30,000 (`test-resources/chat_app/module.clj:60`), but the protocol says 120 seconds (`protocol.clj:30-31`). A user whose last heartbeat was 60 s ago shows offline. The protocol allows some unreliability (`:73`), not a quarter of the window. No test checks the window.
+- Each thread reply writes about 3 entries per participant (`module.clj:363-383`), for up to 1,000 participants (`README.md:16`). That is bounded, but it is the largest write fan-out in the module, and nothing measures it.
+- The reference is retry-safe: stream writes are keyed by message ID (`:226-245`), and counters live in the `derived` microbatch (`:254-390`).
+
+**Recommended tests**
+1. `failed-streaming` around `post-message!` and `reply-in-thread!` plus barrier. Assert an unread count of 1, a reply count of 1 and one mention entry.
+2. A growth pair for `get-room-page`: 250 and 2,500 messages, with reads differing by fewer than 10.
+3. Align the presence window: change the reference to 120 s, or state 30 s in the protocol.
+
+**Verdict: ADEQUATE.** Write volume, read cost, name races, the thread cap and restart durability are all tested with event hooks and concurrent clients. The gaps are retry safety of derived counters, a visibility check that a blocking microbatch client passes, and a presence window the reference does not meet.
 
 ## 4. fanout
 
 **Stated NFRs**
-- No durable write per follower during fanout; per-follower state is in memory only, and must survive restart by another route.
-- Fanout is balanced across tasks and fair: one post's delay on another must not scale with follower count.
-- No permanent backlog. `post!` is visible on the user timeline within 5 ms; fanout completes within about a second.
+- The social graph is heavily unbalanced: most users have under 100 followers, some have millions (`README.md:7-8`).
+- Constraint 1: no PState or depot write per follower during fanout; per-follower state is in memory and must be recoverable (`README.md:23-29`).
+- Constraint 2: fanout is balanced across tasks (`:30`).
+- Constraint 3: fanout is fair; one post's delay on another is bounded, not proportional to follower count (`:31-33`).
+- Constraint 4: no permanent backlog (`:34`). Constraint 5: a user posts at most once every 5 seconds (`:35`).
+- Profiles and the poster's own timeline are visible within 5 ms; fanout may take up to a second (`src/fanout/protocol.clj:16`, `:20-25`).
+- Timeline reads do fixed work in about 50 ms, and only 800 entries are visible. Latency may loosen during recovery (`:41-50`).
 
-**Tested NFRs (all private)**
-- Write amplification: a post to 500 followers must write fewer than 20 RocksDB records, and all 500 must see it.
-- Fault tolerance: after `update-module!`, a reader's timeline over 30 round-robin posts is rebuilt exactly, in strict order, with profiles attached, and new fanout still works.
+**Implied NFRs**
+- In-memory delivery happens once per post, even if a batch retries.
+- Recovery rebuilds up to 800 entries, not a fixed handful per followee.
 
-**Gaps (with a wrong design that passes)**
-- Balance is untested. Wrong design: fan out every follower on the poster's task. With one poster of 500 followers it passes.
-- Fairness is untested. Wrong design: one microbatch processes a whole post's follower list before the next post. No test mixes a large and a small poster.
-- Latency and backlog are untested. Wrong design: fanout in a slow tick with no chunk bound. It passes because tests wait for processing.
+**Tested NFRs** (all private, `test-private/fanout/performance_test_support.clj` unless noted)
+| NFR | Mechanism | Lines |
+|---|---|---|
+| No per-follower durable writes | A post to 500 followers, plus barrier, must write fewer than 20 records, and all 500 followers must see it | 110-149 |
+| Recovery after restart | 30 round-robin posts from 3 followees, then `update-module!`. The reader's timeline must be exact, strictly ordered and carry current names; post logs and profiles survive; new fanout works | 46-108 |
+| Profile visible on return | `get-profile` right after `set-profile!`, with no barrier (`functional_test_support.clj:42-46`) | — |
+| 800-entry cap | 850 posts, paged: exactly the newest 800 (`functional_test_support.clj:200-226`) | — |
 
-**Verdict: PARTIAL.** The per-follower write ban and restart recovery are tested well. Balance and fairness, two of the four numbered constraints, are not tested.
+**Gaps: wrong designs that pass**
+- **Balance (constraint 2) is untested.** The bundled social graph adds a task only every 1,000 followers (`src/fanout/social_graph.clj:37`, `:39-60`), so the test's 500 followers sit on one task. Wrong design: call the `get-followers` query, which gathers every follower to one place, and deliver from the poster's task. It passes.
+- **Fairness (constraint 3) is untested, and the reference's chunking path never runs.** The reference reads 1,000 followers per task per microbatch (`test-resources/fanout/module.clj:17`) and saves the rest in `$$pending-fanouts` (`:209-225`, `:242-246`). No test poster has 1,000 followers on one task. Wrong design: deliver a post's whole follower list in one event, or chunk and drop the remainder. Both pass.
+- **Timeline read cost is not measured.** Wrong design: build each page entry by scanning the poster's whole post log for the post ID instead of a keyed lookup. Cost grows with the poster's history, and it passes.
+- **No retry injection.** Wrong design: a stream topology that appends to in-memory timelines with no batch or post-ID guard. A retry delivers the post twice.
+- **The own-timeline 5 ms bound is untested.** `get-user-timeline` is always read after a barrier (`functional_test_support.clj:52`).
+
+**Test weaknesses**
+- The recovery test uses exactly 10 posts per followee (`:65`). That matches the reference's reconstruction limit (below), so it cannot detect a recovery that keeps only the last 10 posts per followee.
+
+**Reference-implementation concern**
+- Recovery reads at most the first 300 followees by ID and the latest 10 posts of each (`module.clj:18`, `:277-294`; the 10 is at `:286`). A reader who follows one active account recovers 10 entries, not up to 800. A reader who follows more than 300 accounts loses the rest. The protocol allows loosened latency and two named omissions (`protocol.clj:47-50`), not this. A recovery test with 50 posts from one followee would fail the reference.
+- Otherwise the design is sound: delivery is guarded by microbatch ID (`:105-111`), and pending work is read with `:allow-yield? true` (`:211`).
+
+**Recommended tests**
+1. **Balance**: lower `sg/NEW-TASK-CUTOFF` with `with-redefs`, as `test-private/fanout/social_graph_test.clj:66` does, and give one poster 50 × tasks followers. Capture the post and group follower reads by `:task-id`. Assert every task reads.
+2. **Fairness**: give one account 3,000 followers, post from it, then post from a 1-follower account. Assert the small post is delivered before every one of the 3,000 followers has the large post. This needs a way to observe partial progress, which the protocol does not yet expose.
+3. **Recovery depth**: 50 posts from one followee, restart, and assert 50 entries. This fails the reference until it is fixed.
+
+**Verdict: PARTIAL.** The per-follower write ban and restart recovery are tested. Balance and fairness, two of the five constraints, are not. The reference's chunking path never runs, and the recovery test is sized to the reference's own limit.
 
 ## 5. social-graph-and-fanout
 
 **Stated NFRs**
-- Near-optimal disk work and even CPU across tasks for any follower distribution (three example distributions given).
-- The same five fanout constraints as fanout: no per-follower durable writes, balance, fairness, no backlog, one post per 5 seconds.
-- Workload: 7,000 posts per second, 100 follows per second, at most 5,000 followees.
+- CPU across tasks must be even, and total disk work near-optimal, for any follower distribution; three example distributions are given (`README.md:6-40`, property at `:45-52`).
+- At most 5,000 followees per account; about 7,000 posts and 100 follows per second (`:54-55`).
+- The same five fanout constraints as `fanout` (`:57-71`).
+- Follow and unfollow are idempotent, and their effects are visible after the barrier (`src/social_graph_and_fanout/protocol.clj:12-18`). Profile and own-timeline visibility within 5 ms, fixed-work timeline reads and the 800-entry cap match `fanout` (`:19-26`, `:51-60`).
 
-**Tested NFRs (all private)**
-- Write amplification: a post to 500 followers writes fewer than 20 RocksDB records, and all 500 see it.
-- Fault tolerance: the same restart-and-rebuild test as fanout.
+**Implied NFRs**
+- A small account's followers stay on one task, so its posts touch one task.
+- Per-follow cost is O(1) whatever the target's follower count, so follower sets are subindexed.
+- Unfollow cleans every index.
 
-**Gaps (with a wrong design that passes)**
-- The headline property is untested. Wrong design: followers stored as one subindexed set per account on one task. A celebrity's fanout runs on one task; it passes.
-- No growth or distribution test. Wrong design: tuned to a heavy tail, with a per-post full follower scan. No test compares distributions.
-- `follow!`, `unfollow!` and `get-followers` cost is not measured. Wrong design: a follower list stored as one value. It passes with 500 followers.
+**Tested NFRs** (all private, `test-private/social_graph_and_fanout/performance_test_support.clj` unless noted)
+| NFR | Mechanism | Lines |
+|---|---|---|
+| No per-follower durable writes | 500 followers through `follow!`; a post plus barrier must write fewer than 20 records, and all 500 must see it | 103-139 |
+| Recovery after restart | The same restart-and-rebuild test as `fanout` | 42-101 |
+| Graph correctness | Both directions, idempotent follow, unfollow and no-op unfollow, on at most 5 followers (`functional_test_support.clj:17-70`). The file says it assumes no partitioning strategy (`:2-6`) | — |
+| Profile visible on return, 800-entry cap | As in `fanout` (`functional_test_support.clj:86-90,251-278`) | — |
 
-**Verdict: PARTIAL.** Only the per-follower write ban and restart are tested. The distribution-independent balance and near-optimal work claims that define the challenge have no test.
+**Gaps: wrong designs that pass**
+- **The headline property is untested.** Wrong design: a plain `{target #{follower}}` hashed by target. A celebrity's followers, and its fanout, sit on one task. With 500 followers it passes.
+- **Small-account locality is untested.** Wrong design: scatter every account's followers across all tasks. It is balanced, but every post by a small account touches every task. It passes.
+- **Follow, unfollow and `get-followers` costs are not measured.** Wrong design: a non-subindexed follower set, read and rewritten whole on each follow. It passes with 500 followers.
+- **The `fanout` gaps also apply**: no fairness test, the chunking path never runs (the reference uses the same 1,000 limits, `test-resources/social_graph_and_fanout/module.clj:59,61`), and no retry injection.
+
+**Reference-implementation concern**
+- The same recovery limit as `fanout`: the first 300 followees and 10 posts from each (`module.clj:62`, `:400-417`).
+- Unfollow removes the follower from `$$partitioned-followers` but not from `$$partitioned-follower-tasks` (`:276-284`). The allocator counts that map to place new followers (`:261-262`), so churn inflates the count, and the index grows without bound.
+- For balance the design is sound: a target gains a task every 1,000 followers and round-robins once all tasks are used (`:64-85`), and `get-followers` reads each slice with `:allow-yield? true` (`:378-389`).
+
+**Recommended tests** (no README change needed; the property is already stated)
+1. **Celebrity balance**: give one account 1,100 × tasks followers. Capture `get-followers` and a post, and group `:rocks-iterator-read` by `:task-id`. Assert every task reads and max/mean ≤ 1.5.
+2. **Small-account locality**: capture `get-followers` for a 30-follower account. Assert iterator reads touch one task.
+3. **Per-follow cost**: capture one `follow!` into the celebrity. Assert fewer than 40 reads and 20 writes.
+4. The `fanout` recommendations on fairness and recovery depth.
+
+**Verdict: PARTIAL.** The per-follower write ban and restart recovery are tested. The distribution-independent balance and near-optimal work that define the challenge have no test.
 
 ## Summary table
 
 | Challenge | Verdict | Top gap |
 |---|---|---|
-| auction-module | PARTIAL | Tests enforce stream topology, retry safety and subindexing that the README never states; read cost is checked only as "iterator used" |
-| bank-transfer-module | ADEQUATE | No retry injection: a microbatch that appends a transfer leg to a second internal depot duplicates it on retry and passes |
-| chat-app | PARTIAL | The 5 ms visibility bound is untested (all-microbatch passes); no retry test for derived unread counters |
-| fanout | PARTIAL | Stated balance and fairness are untested: fanning out all followers on the poster's task passes |
-| social-graph-and-fanout | PARTIAL | The distribution-independent balance and near-optimal work property is untested: one task per celebrity passes |
+| auction-module | ADEQUATE | Retry is not injected on `bid!`, and the costs of `get-highest-bid` and of an expiry tick are not measured |
+| bank-transfer-module | ADEQUATE | Exactly-once is inferred from topology type with no injected failure, and transfers never run concurrently |
+| chat-app | ADEQUATE | No retry test for derived counters; a blocking microbatch client passes the visibility check; the reference's 30 s presence window contradicts the stated 120 s |
+| fanout | PARTIAL | Balance and fairness are untested: 500 followers sit on one task, so the chunking path never runs. The reference recovers 10 posts per followee, and the test uses exactly 10 |
+| social-graph-and-fanout | PARTIAL | Distribution-independent balance and near-optimal work are untested: a follower set hashed by target passes |

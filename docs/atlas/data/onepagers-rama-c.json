@@ -156,7 +156,7 @@
     "matrix": {
       "write_amp": "implied",
       "read_cost": "implied",
-      "topology_type": "na",
+      "topology_type": "implied",
       "exactly_once": "implied",
       "task_balance": "implied",
       "races": "na",
@@ -506,7 +506,7 @@
       "task_balance": "na",
       "races": "implied",
       "bounded_work": "implied",
-      "retention": "stated"
+      "retention": "na"
     }
   }
 ]

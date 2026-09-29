@@ -1,0 +1,760 @@
+[
+  {
+    "slug": "auction-module",
+    "contract": "The solver builds an auction module. Sellers list items with an expiration time, and bidders place bids; the module keeps one latest amount per bidder and tracks the highest bid. When a listing expires, driven by time, the seller gets a sale or no-sale notification and each bidder gets a won or lost notification. Listings and bids must be visible within 5 milliseconds.",
+    "study": {
+      "number": "8.41",
+      "title": null,
+      "url": null,
+      "then": [],
+      "reason": "Mapped to handbook case study 8.41. Its title and link are not yet confirmed, so treat the fit as provisional.",
+      "fit": "partial"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*listing-depot",
+          "partition": "hash by seller id"
+        },
+        {
+          "name": "*bid-depot",
+          "partition": "hash by the listing's seller id"
+        },
+        {
+          "name": "*expire-tick",
+          "partition": "global tick every 30 s in production; appendable in test mode"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$user-listings",
+          "schema": "{Long {UUID {:item String :expiration-time-millis Long}}}, inner map subindexed",
+          "key": "seller id, then listing id"
+        },
+        {
+          "name": "$$listing-bidders",
+          "schema": "{UUID {Long Long}}, inner map subindexed",
+          "key": "listing id, then bidder id"
+        },
+        {
+          "name": "$$listing-top-bid",
+          "schema": "{UUID {:user-id Long :amount Long}}",
+          "key": "listing id"
+        },
+        {
+          "name": "$$user-bids",
+          "schema": "{Long {ListingId Long}}, inner map subindexed",
+          "key": "bidder id, then listing id"
+        },
+        {
+          "name": "$$finished-listings",
+          "schema": "{UUID Boolean}",
+          "key": "listing id"
+        },
+        {
+          "name": "$$notifications",
+          "schema": "{Long [AuctionResult]}, vector subindexed",
+          "key": "user id"
+        },
+        {
+          "name": "$$scheduler",
+          "schema": "owned by the TopologyScheduler helper; time-ordered pending listings",
+          "key": "per task"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "auction",
+          "type": "stream",
+          "does": "stores listings; rejects bids on finished listings, records each bid and raises the top bid, then records the bid for the bidder"
+        },
+        {
+          "name": "expirations",
+          "type": "microbatch",
+          "does": "schedules each listing by expiration time and, on each tick, marks due listings finished and writes seller, winner and loser notifications"
+        }
+      ],
+      "ownership": "The seller id owns listings, and every bid on a listing goes to the seller's task, so the finished check, the bidder map and the top bid change on one task. A bid then hops by |hash to the bidder's task. Expiry runs on the seller's task, writes the seller's notification, then reads bidders with a yielding select and hops to each bidder."
+    },
+    "nfr": {
+      "verdict": "ADEQUATE",
+      "stated": [
+        "Listings are readable and bids visible within 5 milliseconds",
+        "Expiry uses simulated time and is driven automatically by time in production",
+        "A bidder's earlier bid is replaced only by a higher amount"
+      ],
+      "tested": [
+        {
+          "nfr": "5 ms visibility",
+          "mechanism": "Topology events seen during list-item! and bid! must include a stream topology"
+        },
+        {
+          "nfr": "Exactly-once notifications under retry",
+          "mechanism": "The first stream completion around list-item! and around two expiry calls is forced to fail; seller, winner and loser must each get exactly one notification"
+        },
+        {
+          "nfr": "Yielding reads during expiry",
+          "mechanism": "Some local select during expiry must allow yielding"
+        },
+        {
+          "nfr": "Subindexed listings, bids and notifications",
+          "mechanism": "Each of the three reads must use a RocksDB iterator"
+        },
+        {
+          "nfr": "Unique listing ids",
+          "mechanism": "20 listings from two clients must have distinct ids"
+        }
+      ],
+      "gaps": [
+        {
+          "gap": "Retry is not injected on bid!",
+          "wrongDesign": "bid! appends the bidder to a per-listing vector and deduplicates on read; a stream retry adds a second entry, and expiry sends that loser two lost notifications"
+        },
+        {
+          "gap": "Read cost of the highest bid is not measured",
+          "wrongDesign": "Keep only the bid map and find the maximum on every get-highest-bid; the test listing has 3 bids"
+        },
+        {
+          "gap": "Expiry cost is checked only by the yield flag",
+          "wrongDesign": "On each tick, scan every listing on every task with a yielding select and compare expiry times"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "implied",
+      "read_cost": "tested",
+      "topology_type": "tested",
+      "exactly_once": "tested",
+      "task_balance": "implied",
+      "races": "implied",
+      "bounded_work": "tested",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "bank-transfer-module",
+    "contract": "The solver builds a banking module that tracks each user's balance and the history of transfers in and out. A transfer succeeds only when the sender has enough funds, and failed transfers are still recorded. Every appended deposit and transfer must be processed exactly once, even after failures.",
+    "study": {
+      "number": "8.19",
+      "title": "Payment System",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/payment-system/",
+      "then": [],
+      "reason": "The ledger core of the payment system is the nearest match: move money between accounts exactly once and keep a per-account transaction history. The challenge leaves out double entry, idempotency keys and refunds.",
+      "fit": "partial"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*deposit-depot",
+          "partition": "hash by user id"
+        },
+        {
+          "name": "*transfer-depot",
+          "partition": "hash by sender user id"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$funds",
+          "schema": "{String Long}",
+          "key": "user id"
+        },
+        {
+          "name": "$$outgoing-transfers",
+          "schema": "{String {String {:to-user-id String :amt Long :success? Boolean}}}, inner map subindexed",
+          "key": "sender id, then transfer id"
+        },
+        {
+          "name": "$$incoming-transfers",
+          "schema": "{String {String {:from-user-id String :amt Long :success? Boolean}}}, inner map subindexed",
+          "key": "receiver id, then transfer id"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "banking",
+          "type": "microbatch",
+          "does": "adds deposits; checks the sender's balance, debits it and records the outgoing transfer, then credits the receiver and records the incoming transfer"
+        }
+      ],
+      "ownership": "The user id owns the balance and both histories. A transfer starts on the sender's task, where the balance check and debit happen together, then makes one |hash hop to the receiver's task for the credit. Reads are direct point and range selects."
+    },
+    "nfr": {
+      "verdict": "ADEQUATE",
+      "stated": [
+        "Never double process or fail to process an appended deposit or transfer",
+        "A transfer id is never appended twice, so no dedupe is needed"
+      ],
+      "tested": [
+        {
+          "nfr": "Exactly-once processing",
+          "mechanism": "Every topology event during deposits and 49 transfers must come from a microbatch topology"
+        },
+        {
+          "nfr": "Write and read cost per operation",
+          "mechanism": "A deposit must cost exactly 1 read and 1 write; a transfer at most 8 reads and 6 writes"
+        },
+        {
+          "nfr": "Subindexed history",
+          "mechanism": "Reading 50 transfers in or out must cost exactly 1 read, 1 iterator and 50 iterator reads"
+        },
+        {
+          "nfr": "Task balance",
+          "mechanism": "Deposits to keys generated to hash evenly must give equal depot reads per task, with no partitioner event"
+        }
+      ],
+      "gaps": [
+        {
+          "gap": "Exactly-once is inferred from topology type; no batch is failed",
+          "wrongDesign": "A microbatch forwards the credit through an internal depot to a second microbatch; the type check passes and no test retries a batch"
+        },
+        {
+          "gap": "Transfers never run concurrently",
+          "wrongDesign": "The client checks the sender's balance and appends a transfer already marked as success; two concurrent transfers overdraw the account"
+        },
+        {
+          "gap": "Balance is checked for deposits only",
+          "wrongDesign": "Transfers go through |global to one task; the partitioner check wraps only the deposits"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "tested",
+      "topology_type": "tested",
+      "exactly_once": "tested",
+      "task_balance": "tested",
+      "races": "implied",
+      "bounded_work": "na",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "chat-app",
+    "contract": "The solver builds the backend of a Slack-like chat product: registration with unique handles, profiles, presence, rooms with membership, messages and threads. It also keeps per-user unread counts, a mentions inbox and a recent-threads feed. The protocol sets 5 ms visibility for writes, fixed-work paginated reads and a workload of 2,000 messages and 100,000 heartbeats per second.",
+    "study": {
+      "number": "8.55",
+      "title": null,
+      "url": null,
+      "then": [],
+      "reason": "Mapped to handbook case study 8.55. Its title and link are not yet confirmed, so treat the fit as provisional.",
+      "fit": "partial"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*register-depot",
+          "partition": "hash by handle"
+        },
+        {
+          "name": "*user-actions-depot",
+          "partition": "hash by acting user id"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$handles",
+          "schema": "{String Long}",
+          "key": "handle"
+        },
+        {
+          "name": "$$users",
+          "schema": "{Long String}",
+          "key": "user id"
+        },
+        {
+          "name": "$$room-names",
+          "schema": "{String Long}",
+          "key": "room name"
+        },
+        {
+          "name": "$$rooms",
+          "schema": "{Long String}",
+          "key": "room id"
+        },
+        {
+          "name": "$$profiles",
+          "schema": "{Long {:name String :title String}}",
+          "key": "user id"
+        },
+        {
+          "name": "$$room-messages",
+          "schema": "{Long {UUID {:user-id Long :content String}}}, inner map subindexed",
+          "key": "room id, then message id"
+        },
+        {
+          "name": "$$thread-replies",
+          "schema": "{UUID {UUID {:user-id Long :content String}}}, inner map subindexed",
+          "key": "root message id, then reply id"
+        },
+        {
+          "name": "$$room-members",
+          "schema": "{Long #{Long}}, set subindexed",
+          "key": "room id"
+        },
+        {
+          "name": "$$user-rooms",
+          "schema": "{Long #{Long}}, set subindexed",
+          "key": "user id"
+        },
+        {
+          "name": "$$room-seq",
+          "schema": "{Long Long}",
+          "key": "room id; count of room messages ever"
+        },
+        {
+          "name": "$$read-cursors",
+          "schema": "{Long {Long Long}}, inner map subindexed",
+          "key": "room id, then user id"
+        },
+        {
+          "name": "$$room-reply-counts",
+          "schema": "{Long {UUID Long}}, inner map subindexed",
+          "key": "room id, then root message id"
+        },
+        {
+          "name": "$$thread-meta",
+          "schema": "{UUID {:room-id Long :reply-count Long}}",
+          "key": "root message id"
+        },
+        {
+          "name": "$$thread-participants",
+          "schema": "{UUID #{Long}}, set subindexed",
+          "key": "root message id"
+        },
+        {
+          "name": "$$mentions",
+          "schema": "{Long {UUID {:room-id Long :sender Long :content String}}}, inner map subindexed",
+          "key": "mentioned user id, then message id"
+        },
+        {
+          "name": "$$rt-by-act",
+          "schema": "{Long {UUID UUID}}, inner map subindexed",
+          "key": "user id, then latest activity id"
+        },
+        {
+          "name": "$$rt-idx",
+          "schema": "{Long {UUID UUID}}, inner map subindexed",
+          "key": "user id, then root message id"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "core",
+          "type": "stream",
+          "does": "claims handles and room names, writes profiles and stores accepted messages and replies"
+        },
+        {
+          "name": "derived",
+          "type": "microbatch",
+          "does": "maintains membership, read cursors, unread sequences, reply counts, mentions and recent threads"
+        },
+        {
+          "name": "heartbeat",
+          "type": "query",
+          "does": "records a heartbeat in in-memory presence on the user's task"
+        },
+        {
+          "name": "presence",
+          "type": "query",
+          "does": "reports whether a user's last heartbeat is recent"
+        },
+        {
+          "name": "online-filter",
+          "type": "query",
+          "does": "keeps the online users from a chunk of member ids"
+        },
+        {
+          "name": "room-page",
+          "type": "query",
+          "does": "reads 20 room messages with reply counts and current names"
+        },
+        {
+          "name": "thread-page",
+          "type": "query",
+          "does": "reads 20 thread replies with current names"
+        },
+        {
+          "name": "recent-threads",
+          "type": "query",
+          "does": "reads 20 recent threads by activity with their metadata"
+        },
+        {
+          "name": "unread-counts",
+          "type": "query",
+          "does": "subtracts each room cursor from the room sequence for every room the user is in"
+        },
+        {
+          "name": "mentions-page",
+          "type": "query",
+          "does": "reads 20 mentions with the sender's current name"
+        }
+      ],
+      "ownership": "Handles and room names are claimed on their own hashed task, so exactly one concurrent claim wins. All other writes arrive on the acting user's task, then hop to the room, root message or mentioned user that owns each view. Presence is an in-memory task global on the user's task and writes nothing durable."
+    },
+    "nfr": {
+      "verdict": "ADEQUATE",
+      "stated": [
+        "Workload: 10M users, rooms up to 50,000 members, 2,000 messages and 100,000 heartbeats per second",
+        "Registration, profiles, room creation and posts visible within 5 ms",
+        "Exactly one winner among concurrent claims of a handle or room name",
+        "Fixed read work for paginated reads; unread counts cost O(1) per room; reads take about 50 ms",
+        "Online means a heartbeat within the last 120 seconds; presence need not be fully reliable",
+        "Only the 200 most recently active threads are visible"
+      ],
+      "tested": [
+        {
+          "nfr": "Write volume",
+          "mechanism": "100 heartbeats write fewer than 10 records; a post to a 300-member room writes fewer than 40; mark-room-read! writes fewer than 15 and reads fewer than 60"
+        },
+        {
+          "nfr": "Read cost",
+          "mechanism": "Absolute read bounds on room page, unread counts, recent threads, mentions and online members over deep history"
+        },
+        {
+          "nfr": "Visible on return",
+          "mechanism": "Reads right after register!, create-room! and post-message!, with no processing barrier"
+        },
+        {
+          "nfr": "Concurrent claims and posts",
+          "mechanism": "8 concurrent registrations and 8 concurrent room creations for one name have one winner; 30 concurrent posts each land and count once"
+        },
+        {
+          "nfr": "Durability and the thread cap",
+          "mechanism": "Every durable view is exact after update-module! and presence resets; 205 threads leave exactly the 200 most recent"
+        }
+      ],
+      "gaps": [
+        {
+          "gap": "No retry injection for derived counters",
+          "wrongDesign": "A stream topology increments a per-room message counter for unread counts; a stream retry counts the message twice"
+        },
+        {
+          "gap": "Visibility is checked on return, not by time or topology type",
+          "wrongDesign": "post-message! appends to a microbatch and blocks until the batch commits; reads without a barrier pass"
+        },
+        {
+          "gap": "The 120-second presence window is not tested, and the reference uses 30 seconds",
+          "wrongDesign": "Any presence window passes; a user who heartbeat 60 seconds ago shows offline in the reference"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "tested",
+      "topology_type": "stated",
+      "exactly_once": "implied",
+      "task_balance": "implied",
+      "races": "tested",
+      "bounded_work": "tested",
+      "retention": "tested"
+    }
+  },
+  {
+    "slug": "fanout",
+    "contract": "The solver builds a module that stores profiles and posts and delivers each post to the timeline of every follower, reading a bundled social graph module with very unbalanced follower counts. Fanout must not write durably per follower, so timelines live in memory and must be rebuilt after a restart. Fanout must be balanced across tasks and fair between large and small accounts, and timeline reads do fixed work over the 800 newest entries.",
+    "study": {
+      "number": "8.6",
+      "title": "Social Media Feed",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/social-media-feed/",
+      "then": [
+        {
+          "number": "8.45",
+          "title": null,
+          "url": null
+        }
+      ],
+      "reason": "The feed case study's fanout-on-write problem maps directly: deliver each post to follower timelines, keep celebrity fanout from stalling other posts, and bound what a timeline stores. Case study 8.45 is the follow-on; its title and link are not yet confirmed.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*profile-depot",
+          "partition": "hash by account id"
+        },
+        {
+          "name": "*post-depot",
+          "partition": "hash by account id"
+        },
+        {
+          "name": "*process-tick",
+          "partition": "global tick every 1 s in production; appendable in test mode"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$profiles",
+          "schema": "{Long {:name String :location String}}",
+          "key": "account id"
+        },
+        {
+          "name": "$$user-posts",
+          "schema": "{Long {UUID String}}, inner map subindexed",
+          "key": "account id, then post id"
+        },
+        {
+          "name": "$$pending-fanouts",
+          "schema": "{List Long}",
+          "key": "[poster id, post id, social graph task] to the last follower delivered"
+        },
+        {
+          "name": "$$mirror-control",
+          "schema": "mirror of the social graph's $$partitioned-followers-control",
+          "key": "target account id"
+        },
+        {
+          "name": "$$mirror-followers",
+          "schema": "mirror of the social graph's $$partitioned-followers",
+          "key": "target account id, on each task that holds a slice"
+        },
+        {
+          "name": "$$mirror-followees",
+          "schema": "mirror of the social graph's $$user-followees",
+          "key": "follower account id"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "writes",
+          "type": "stream",
+          "does": "stores profiles and each post in the poster's log"
+        },
+        {
+          "name": "fanout",
+          "type": "microbatch",
+          "does": "reads up to 1,000 followers per task per batch, saves a cursor for the rest, and appends deliveries to in-memory timelines once per batch"
+        },
+        {
+          "name": "get-user-timeline",
+          "type": "query",
+          "does": "returns an account's own posts in order"
+        },
+        {
+          "name": "compute-timeline-init",
+          "type": "query",
+          "does": "collects recent posts from followees to rebuild a timeline"
+        },
+        {
+          "name": "reconstruct-timeline",
+          "type": "query",
+          "does": "fills a user's in-memory timeline after a restart"
+        },
+        {
+          "name": "get-timeline",
+          "type": "query",
+          "does": "reads 20 entries from the in-memory timeline and adds current names and content"
+        }
+      ],
+      "ownership": "The poster owns profile and post log. Fanout reads each follower slice on the social graph task that holds it and delivers by follower id to an in-memory timeline on the follower's task. Timeline reads hop by |hash to the reader, then to each poster for name and content."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "No PState or depot write per follower during fanout; in-memory state must be recoverable",
+        "Fanout is balanced across tasks",
+        "Fanout is fair: one post's delay on another does not grow with follower count",
+        "No permanent backlog; a user posts at most once every 5 seconds",
+        "Profiles and own timeline visible within 5 ms; timeline reads do fixed work; 800 entries visible"
+      ],
+      "tested": [
+        {
+          "nfr": "No per-follower durable writes",
+          "mechanism": "A post to 500 followers writes fewer than 20 RocksDB records, and all 500 followers see it"
+        },
+        {
+          "nfr": "Recovery after restart",
+          "mechanism": "After update-module!, a reader's timeline of 30 posts is rebuilt exactly and in strict order, and new fanout still works"
+        },
+        {
+          "nfr": "800-entry cap",
+          "mechanism": "After 850 posts, paging returns exactly the newest 800"
+        }
+      ],
+      "gaps": [
+        {
+          "gap": "Balance is untested; the test's 500 followers sit on one social graph task",
+          "wrongDesign": "Gather all followers with the get-followers query and deliver from the poster's task"
+        },
+        {
+          "gap": "Fairness is untested, and the reference's chunking path never runs",
+          "wrongDesign": "Deliver a post's whole follower list in one event, or chunk and drop the remainder"
+        },
+        {
+          "gap": "Recovery depth is sized to the reference's limit of 10 posts per followee",
+          "wrongDesign": "Rebuild only the last 10 posts of each followee; the test posts exactly 10 per followee, and the reference does the same"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "stated",
+      "topology_type": "stated",
+      "exactly_once": "implied",
+      "task_balance": "stated",
+      "races": "na",
+      "bounded_work": "stated",
+      "retention": "tested"
+    }
+  },
+  {
+    "slug": "social-graph-and-fanout",
+    "contract": "The solver builds one module that keeps each account's followers and followees and delivers posts to follower timelines. Disk work must be near-optimal and CPU even across tasks for any follower distribution, from mostly tiny accounts to many accounts with 10,000 to 100,000 followers. The fanout constraints match the fanout challenge: no durable write per follower, balanced and fair fanout, and recovery after restart.",
+    "study": {
+      "number": "8.6",
+      "title": "Social Media Feed",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/social-media-feed/",
+      "then": [],
+      "reason": "The feed case study covers both halves: storing a skewed follow graph and fanning posts out to timelines without letting celebrity accounts overload one server.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*follow-depot",
+          "partition": "hash by follower account id"
+        },
+        {
+          "name": "*profile-depot",
+          "partition": "hash by account id"
+        },
+        {
+          "name": "*post-depot",
+          "partition": "hash by account id"
+        },
+        {
+          "name": "*process-tick",
+          "partition": "global tick every 1 s in production; appendable in test mode"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$partitioned-followers-control",
+          "schema": "{Long List}",
+          "key": "target account id; lists the tasks that hold its followers"
+        },
+        {
+          "name": "$$partitioned-follower-tasks",
+          "schema": "{Long {Long Long}}, inner map subindexed",
+          "key": "target account id, then follower id to task"
+        },
+        {
+          "name": "$$partitioned-followers",
+          "schema": "{Long #{Long}}, inner set subindexed",
+          "key": "target account id, on each task that holds a slice"
+        },
+        {
+          "name": "$$user-followees",
+          "schema": "{Long #{Long}}, inner set subindexed",
+          "key": "follower account id"
+        },
+        {
+          "name": "$$profiles",
+          "schema": "{Long {:name String :location String}}",
+          "key": "account id"
+        },
+        {
+          "name": "$$user-posts",
+          "schema": "{Long {UUID String}}, inner map subindexed",
+          "key": "account id, then post id"
+        },
+        {
+          "name": "$$pending-fanouts",
+          "schema": "{List Long}",
+          "key": "[poster id, post id, follower task] to the last follower delivered"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "social-graph",
+          "type": "stream",
+          "does": "updates followees and places each follower on a task for the target, adding a task every 1,000 followers"
+        },
+        {
+          "name": "writes",
+          "type": "stream",
+          "does": "stores profiles and each post in the poster's log"
+        },
+        {
+          "name": "fanout",
+          "type": "microbatch",
+          "does": "reads up to 1,000 followers per task per batch, saves a cursor for the rest, and appends deliveries to in-memory timelines once per batch"
+        },
+        {
+          "name": "get-followers",
+          "type": "query",
+          "does": "reads the target's task list and gathers each follower slice with yielding reads"
+        },
+        {
+          "name": "get-user-timeline",
+          "type": "query",
+          "does": "returns an account's own posts in order"
+        },
+        {
+          "name": "compute-timeline-init",
+          "type": "query",
+          "does": "collects recent posts from followees to rebuild a timeline"
+        },
+        {
+          "name": "reconstruct-timeline",
+          "type": "query",
+          "does": "fills a user's in-memory timeline after a restart"
+        },
+        {
+          "name": "get-timeline",
+          "type": "query",
+          "does": "reads 20 entries from the in-memory timeline and adds current names and content"
+        }
+      ],
+      "ownership": "The follower owns its followee set. The target's home task owns the task list and follower-to-task index; a target keeps followers on one task until 1,000, then spreads new ones to other tasks by direct routing. Fanout reads each slice on the task that holds it and delivers by follower id to in-memory timelines."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "Even CPU across tasks and near-optimal total disk work for every follower distribution",
+        "Load: at most 5,000 followees, about 7,000 posts and 100 follows per second",
+        "No PState or depot write per follower during fanout; balanced, fair fanout with no backlog",
+        "Follow and unfollow are idempotent",
+        "Profiles and own timeline visible within 5 ms; timeline reads do fixed work; 800 entries visible"
+      ],
+      "tested": [
+        {
+          "nfr": "No per-follower durable writes",
+          "mechanism": "A post to 500 followers writes fewer than 20 RocksDB records, and all 500 followers see it"
+        },
+        {
+          "nfr": "Recovery after restart",
+          "mechanism": "After update-module!, a reader's timeline of 30 posts is rebuilt exactly and in strict order, and new fanout still works"
+        },
+        {
+          "nfr": "Graph correctness",
+          "mechanism": "Both directions, idempotent follow and unfollow on graphs of at most 5 followers; the suite assumes no partitioning strategy"
+        }
+      ],
+      "gaps": [
+        {
+          "gap": "Balance and near-optimal work are untested",
+          "wrongDesign": "A plain follower set hashed by target puts a celebrity's followers and fanout on one task"
+        },
+        {
+          "gap": "Small-account locality is untested",
+          "wrongDesign": "Scatter every account's followers across all tasks; balanced, but each small-account post touches every task"
+        },
+        {
+          "gap": "Follow and get-followers costs are not measured",
+          "wrongDesign": "A non-subindexed follower set is read and rewritten whole on each follow"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "stated",
+      "topology_type": "stated",
+      "exactly_once": "stated",
+      "task_balance": "stated",
+      "races": "na",
+      "bounded_work": "stated",
+      "retention": "tested"
+    }
+  }
+]

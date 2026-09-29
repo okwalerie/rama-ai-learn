@@ -1,0 +1,273 @@
+[
+  {
+    "slug": "hld-payment-system",
+    "contract": "The solver builds the ledger core of a payment platform, with one closed double-entry ledger per tenant. Funding, charges and partial refunds each append one balanced, immutable journal transaction with a contiguous seq, and only the clearing account may go negative. Every command has a tenant-scoped request id and one durable outcome; replays have no effect and conflicting payloads only increase a counter. The journal is read in pages by cursor.",
+    "study": {
+      "number": "8.19",
+      "title": "Payment System",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/payment-system/",
+      "then": [],
+      "reason": "The case study's balanced double-entry journal, immutable entries with refunds as new transactions, and idempotency keys with cached responses map directly onto the fund, charge and refund commands.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [{"name": "*commands", "partition": "hash by :tenant-id"}],
+      "pstates": [
+        {"name": "$$tenants", "schema": "{String fixed-keys{currency, ingress-seq, next-seq, accounts: subindexed, charges: subindexed, journal: subindexed seq -> transaction, requests: subindexed request id -> payload and outcome}}", "key": "tenant id; then account, charge, seq or request id"}
+      ],
+      "topologies": [
+        {"name": "core", "type": "microbatch", "does": "orders each tenant's commands, checks replays, moves balances and appends journal transactions"}
+      ],
+      "ownership": "Tenant id is the depot hash key and the PState key, so accounts, charges, journal and requests for a tenant sit on one task. Each batch is regrouped by tenant and applied in ingress order, so a charge's two balance updates and its journal row are local. Reads are direct point selects and a bounded journal range; there is no query topology."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "fund!, charge! and refund! do a constant number of storage reads and writes",
+        "Point queries do constant reads; balances are never recomputed from the journal",
+        "get-journal is proportional to limit, not to after-seq or journal length",
+        "No per-tenant collection is read or rewritten as one value; bounds hold on 2 and 4 tasks",
+        "Exactly one durable outcome per command; a replayed accepted charge never charges twice"
+      ],
+      "tested": [
+        {"nfr": "Command and query cost under own and other-tenant growth", "mechanism": "Event hook sums reads, iterators, iterator reads and write batch counts as the tenant grows from 200 to 1,000 accounts and charges; bound is 60 + 1.25 x small"},
+        {"nfr": "Deep journal page cost", "mechanism": "get-journal at a fixed cursor of 150 with limit 7 under the same bound"},
+        {"nfr": "Client replays and conflicts", "mechanism": "Replays and cross-command request-id reuse leave the ledger and outcome unchanged apart from the conflict counter"},
+        {"nfr": "Durability", "mechanism": "Re-reads state after update-module"},
+        {"nfr": "Multi-task deployment", "mechanism": "Runs on 2 and 4 tasks"}
+      ],
+      "gaps": [
+        {"gap": "No engine-retry injection", "wrongDesign": "A stream topology appends journal rows through an internal depot before recording the request; a retry duplicates a row and breaks seq contiguity"},
+        {"gap": "Blob storage passes", "wrongDesign": "A tenant kept as one value with a plain sorted-map journal; every read and write stays at about one operation"},
+        {"gap": "Task balance is not stated or tested", "wrongDesign": "The command depot hashes every tenant to one constant key, so all tenants serialise on one task"}
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "tested",
+      "topology_type": "implied",
+      "exactly_once": "stated",
+      "task_balance": "implied",
+      "races": "stated",
+      "bounded_work": "tested",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "hld-stock-exchange",
+    "contract": "The solver builds a matching engine with one order book per symbol and strict price-time priority. GTC and IOC limit orders trade at the resting order's price, partial fills keep their priority, and only the submitting account can cancel. Every command has a symbol-scoped request id and one durable outcome. Reads return orders, aggregated depth by price level and a paged, immutable trade tape.",
+    "study": {
+      "number": "8.20",
+      "title": "Stock Exchange",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/stock-exchange/",
+      "then": [],
+      "reason": "The case study's per-symbol FIFO price-time matching, deterministic sequencing and sequenced trade feed map directly onto submit, cancel, depth and the trade tape.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [{"name": "*commands", "partition": "hash by :symbol"}],
+      "pstates": [
+        {"name": "$$symbols", "schema": "{String fixed-keys{ingress-seq, next-order-seq, next-trade-seq, orders: subindexed, bid-levels and ask-levels: subindexed price -> {qty order-count}, bid-queue and ask-queue: subindexed price -> subindexed order seq -> order id, trades: subindexed seq -> trade, requests: subindexed}}", "key": "symbol; bid prices are inverted so the best level sorts first"}
+      ],
+      "topologies": [
+        {"name": "core", "type": "microbatch", "does": "orders each symbol's commands and matches, rests or cancels against the level and queue indexes"}
+      ],
+      "ownership": "Symbol is the depot hash key and the PState key, so each book has one writer on one task. Matching reads only the best level and the head of its queue per trade, and yields between steps. Reads are direct selects: point reads for orders and outcomes, bounded ranges for depth and trades."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "Submit is proportional to the trades it produces, not to resting orders, levels or past trades",
+        "Cancel, get-order and get-outcome are constant work",
+        "get-depth is proportional to levels; a level with ten thousand orders costs the same as one",
+        "get-trades is proportional to limit; the book must not be held as one value",
+        "One command at a time per symbol, applied atomically; a replay never creates a second order"
+      ],
+      "tested": [
+        {"nfr": "Query, cancel and submit cost under book growth", "mechanism": "Counts reads, iterator seeks, iterator reads and writes as the book grows from 320 to 1,280 orders, spread over levels and on one level; bound is 2 x small + 12"},
+        {"nfr": "Match cost", "mechanism": "A fixed 3-trade match under the same bound"},
+        {"nfr": "Deep trade page", "mechanism": "A 5-row page after 320 vs 960 trades from one sweep"},
+        {"nfr": "Ordering past the batch cap", "mechanism": "Sends 1,040 commands without a barrier, then checks processing order"},
+        {"nfr": "Multi-task deployment", "mechanism": "Runs on 2 and 4 tasks"}
+      ],
+      "gaps": [
+        {"gap": "The whole-book rule is untested", "wrongDesign": "Bids and asks kept as one non-subindexed sorted map per symbol; depth costs one read and no iterator reads at both sizes"},
+        {"gap": "No engine-retry injection", "wrongDesign": "A stream topology takes the trade seq from a counter on another partition; a retry duplicates trades or leaves a seq gap"},
+        {"gap": "Latency class and yielding are unchecked", "wrongDesign": "Microbatch with a large batch cap, or a long sweep that never yields; both pass"}
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "tested",
+      "topology_type": "implied",
+      "exactly_once": "stated",
+      "task_balance": "implied",
+      "races": "tested",
+      "bounded_work": "tested",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "hld-ticketing-system",
+    "contract": "The solver builds the seat inventory for ticketed events. A hold takes up to 8 seats all or nothing, and its deadline is checked against a per-event logical clock, not a timer. Only the hold's owner can confirm or release it, and neither can touch seats another hold has since taken. A paid confirmation that arrives too late is rejected and logged as a compensation record, which is read in pages by cursor.",
+    "study": {
+      "number": "8.18",
+      "title": "Ticketing System",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/ticketing-system/",
+      "then": [],
+      "reason": "The case study's available, held and sold seat states, all-or-nothing holds and the race between hold expiry and late payment map directly onto hold, confirm, release and compensation records.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [{"name": "*commands", "partition": "hash by :event-id"}],
+      "pstates": [
+        {"name": "$$events", "schema": "{String fixed-keys{clock, ingress-seq, next-comp-seq, seats: subindexed seat id -> {hold-id user-id deadline confirmed?}, holds: subindexed, compensations: subindexed seq -> record, requests: subindexed}}", "key": "event id; then seat, hold, seq or request id"}
+      ],
+      "topologies": [
+        {"name": "core", "type": "microbatch", "does": "orders each event's commands, decides holds, confirms and releases, and appends compensation records"},
+        {"name": "seats", "type": "query", "does": "reads the requested seats and derives each state from the event clock"},
+        {"name": "hold", "type": "query", "does": "reads one hold and derives its state from the event clock"}
+      ],
+      "ownership": "Event id is the depot hash key, the PState key and the query |hash key, so seats, holds and the clock for an event sit on one task. Each seat stores its last hold's deadline, so expiry is decided when a seat is touched, with no background work. Multi-seat holds are atomic because every seat of the event is local."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "Hold, confirm and release are proportional to the seats in the hold (at most 8)",
+        "add-seats! is proportional to seats added; get-seats to seat ids requested",
+        "get-hold, get-clock and get-outcome are constant reads; get-compensations is proportional to limit",
+        "Expiry needs no per-hold background work",
+        "Holds are all seats or none; exactly one compensation record per qualifying rejection"
+      ],
+      "tested": [
+        {"nfr": "Query cost under own-history growth", "mechanism": "Event hook counts reads and writes as seats, holds, requests and compensation records grow from 256 to 1,280; bound is 24 + 2 x small"},
+        {"nfr": "Expiry without background work", "mechanism": "advance-clock! cost over 1,280 newly expired holds under the same bound"},
+        {"nfr": "Deep compensation page", "mechanism": "get-compensations at a deep cursor with limit 1"},
+        {"nfr": "Multi-task deployment", "mechanism": "Runs on 2 and 4 tasks with 2 threads"}
+      ],
+      "gaps": [
+        {"gap": "Mutating seat commands are never measured", "wrongDesign": "Availability decided by scanning the event's holds, or by a seat record that keeps a growing vector of every hold that covered it"},
+        {"gap": "No concurrent race", "wrongDesign": "Hash by seat with check-then-act per seat plus compensation; two clients racing on overlapping seats can both be accepted"},
+        {"gap": "No engine-retry injection", "wrongDesign": "A stream topology appends the compensation record through an internal depot before recording the request; a retry writes two records"}
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "tested",
+      "topology_type": "implied",
+      "exactly_once": "stated",
+      "task_balance": "implied",
+      "races": "stated",
+      "bounded_work": "tested",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "hld-hotel-reservation",
+    "contract": "The solver builds room inventory for hotel properties, with per-night capacity and rate for each room type. A stay of up to 30 nights is reserved atomically across every night, overbooking is forbidden and the total is locked at booking time. Cancellation restores the booked rooms exactly once. Each reserve or cancel appends to a per-property event journal read by cursor.",
+    "study": {
+      "number": "8.28",
+      "title": "Hotel Reservation System",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/hotel-reservation/",
+      "then": [],
+      "reason": "The case study's room-type inventory pools and all-or-nothing date-range booking map directly onto reserve and cancel. This challenge forbids the overbooking the source allows.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [{"name": "*commands", "partition": "hash by :property-id"}],
+      "pstates": [
+        {"name": "$$properties", "schema": "{String fixed-keys{next-seq, ingress-seq, room-types: subindexed room type -> {exists?, nights: subindexed night -> {capacity rate available}}, bookings: subindexed, events: subindexed seq -> event, requests: subindexed}}", "key": "property id; then room type and night, booking id, seq or request id"}
+      ],
+      "topologies": [
+        {"name": "core", "type": "microbatch", "does": "orders each property's commands, checks and adjusts every night of a stay, and records bookings and journal events"},
+        {"name": "availability", "type": "query", "does": "range-reads the requested nights of one room type"}
+      ],
+      "ownership": "Property id is the depot hash key, the PState key and the query |hash key, so every night of a stay is local and the multi-night reserve is atomic. Each night stores its own available count, so reads never scan bookings. Point reads and journal pages are direct selects."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "reserve! and cancel-booking! are proportional to stay nights (at most 30)",
+        "get-night, get-booking and get-outcome are constant reads; availability is never recomputed from bookings",
+        "get-availability is proportional to nights requested; get-booking-events to limit",
+        "No overbooking; a stay is reserved atomically across its nights",
+        "Cancellation restores exactly once; a replayed reservation never reserves twice"
+      ],
+      "tested": [
+        {"nfr": "Query and one-night reserve cost under growth", "mechanism": "Hook counts reads, iterator reads and writes as nights, bookings, events and requests grow from 240 to 1,200 in one property, plus 20 other properties; bound is 2 x before + 24"},
+        {"nfr": "Journal page cost", "mechanism": "First and deep get-booking-events pages under the same bound"},
+        {"nfr": "Multi-task deployment", "mechanism": "Runs on 2 and 4 tasks"}
+      ],
+      "gaps": [
+        {"gap": "cancel-booking! cost is never measured", "wrongDesign": "Cancel recomputes each night's availability by summing the property's confirmed bookings"},
+        {"gap": "Stay-length proportionality has no data point", "wrongDesign": "A room type's nights kept as one value; a 30-night reserve costs one read and passes"},
+        {"gap": "No concurrent last-room race", "wrongDesign": "Partition by night with per-night check-then-decrement; two clients on overlapping stays can both be accepted"}
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "tested",
+      "topology_type": "implied",
+      "exactly_once": "stated",
+      "task_balance": "implied",
+      "races": "stated",
+      "bounded_work": "tested",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "hld-file-sync",
+    "contract": "The solver builds the metadata service of a file sync system. Each namespace keeps a content-addressed block index, versioned files with stable ids, and a change journal read by cursor. A commit may only reference registered blocks. A commit against a stale parent creates a conflict copy instead of overwriting the file.",
+    "study": {
+      "number": "8.14",
+      "title": "File Sync Service",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/file-sync/",
+      "then": [],
+      "reason": "The case study's block index, need-blocks negotiation, versioned journal and conflict copies map directly onto register, commit and get-changes.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [{"name": "*commands", "partition": "hash by :ns-id"}],
+      "pstates": [
+        {"name": "$$namespaces", "schema": "{String fixed-keys{next-seq, ingress-seq, blocks: subindexed hash -> size, files: subindexed file id -> {head, conflict-of, versions: subindexed version -> record}, journal: subindexed seq -> entry, requests: subindexed}}", "key": "namespace id; then hash, file id and version, seq or request id"}
+      ],
+      "topologies": [
+        {"name": "core", "type": "microbatch", "does": "orders each namespace's commands, registers blocks, writes a head version or conflict copy and appends the journal"},
+        {"name": "file-head", "type": "query", "does": "reads a file's head number, then that version's record"}
+      ],
+      "ownership": "Namespace id is the depot hash key, the PState key and the query |hash key, so blocks, files and the journal for a namespace sit on one task. Block sizes are point-read once per distinct hash, and a conflict copy is written on the same task. Other point reads and journal pages are direct selects."
+    },
+    "nfr": {
+      "verdict": "ADEQUATE",
+      "stated": [
+        "commit-file! and register-blocks! are proportional to the submitted list",
+        "Point queries are constant reads, independent of versions, files or blocks",
+        "get-changes is proportional to limit, not to journal length or after-seq",
+        "No per-namespace collection, including a file's version history, is held as one value",
+        "A replay creates no second version or conflict copy; bounds hold on 2 and 4 tasks"
+      ],
+      "tested": [
+        {"nfr": "Command cost at 150x growth", "mechanism": "Register, head, conflict-copy, rejected and replay commits have absolute read and write ceilings; register and head commits also have growth bounds against a 1,500-block, 1,200-version namespace"},
+        {"nfr": "Point read cost", "mechanism": "get-file, get-file-version at version 600, get-outcome and get-block-size each stay under 25 reads and 10 iterator reads"},
+        {"nfr": "Page cost", "mechanism": "get-changes shallow vs deep, 500-row pages and empty tails at limits 50 and 500"},
+        {"nfr": "Input-proportional work", "mechanism": "A 1,024-entry register and commit bounded by 100 + 3 x 1,024 reads and 100 + 2 x 1,024 writes"},
+        {"nfr": "Multi-worker deployment", "mechanism": "Runs at 2 tasks, and at 4 tasks on 2 workers"}
+      ],
+      "gaps": [
+        {"gap": "Blob storage of version history passes", "wrongDesign": "A file's versions kept as a plain vector; get-file-version costs one read and a commit one write"},
+        {"gap": "No engine-retry injection", "wrongDesign": "A stream topology allocates the seq and version, then creates the conflict copy through a second depot; a retry makes two copies or skips a seq"},
+        {"gap": "Task balance is printed, not asserted", "wrongDesign": "Every namespace routed to one partition; the depot-read diagnostic shows the skew but nothing fails"}
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "tested",
+      "topology_type": "implied",
+      "exactly_once": "stated",
+      "task_balance": "implied",
+      "races": "stated",
+      "bounded_work": "tested",
+      "retention": "na"
+    }
+  }
+]
