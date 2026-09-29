@@ -204,6 +204,16 @@
            (mapv deref))
       (finally (.shutdown pool)))))
 
+(defn killed-by-label
+  "Short human label for what killed a mutant: test name plus testing context."
+  [{:keys [killed-by]}]
+  (let [label (->> killed-by
+                   (map (fn [{:keys [test context]}]
+                          (if context (str test " > " context) test)))
+                   distinct
+                   (str/join "; "))]
+    (if (> (count label) 140) (str (subs label 0 137) "...") label)))
+
 (defn run-challenge [root challenge {:keys [mutant jobs skip-reference timeout-s]}]
   (let [mutants (cond->> (find-mutants root challenge)
                   mutant (filterv #(= mutant (:id %))))
@@ -220,7 +230,7 @@
                           (let [r (mutant-result m (run-grader root challenge (:src-rel m) timeout-s))]
                             (println (format "   %-34s %-8s %4ds %s" (:id r) (name (:status r))
                                              (:duration-s r)
-                                             (str/join "; " (map :test (:killed-by r)))))
+                                             (killed-by-label r)))
                             r))
                         valid)]
     {:challenge challenge
@@ -271,6 +281,19 @@
                    (let [{:keys [mutants killed]} (kill-rate rs)]
                      (format "%s: %d/%d" (name split) killed mutants))))]))))
 
+(defn format-mutant-table [challenge-results]
+  (str/join
+   "\n"
+   (concat
+    ["| Challenge | Mutant | Split | Status | Killed by | Wrong design |"
+     "|---|---|---|---|---|---|"]
+    (for [{:keys [challenge mutants]} challenge-results
+          m mutants]
+      (format "| %s | %s | %s | %s | %s | %s |" challenge (:id m) (name (:split m))
+              (if (:killed? m) "killed" (if (broken? m) "BROKEN" "SURVIVED"))
+              (let [l (killed-by-label m)] (if (str/blank? l) "-" (str/replace l "|" "/")))
+              (str/replace (str (:wrong-design m)) "|" "/"))))))
+
 (def cli-spec
   {:challenge {:desc "Challenge to evaluate (repeatable; default: all with mutants)"
                :alias :c :coerce []}
@@ -300,6 +323,8 @@
       (spit json-path (json/generate-string report {:pretty true}))
       (println)
       (println (format-table results))
+      (println)
+      (println (format-mutant-table results))
       (println)
       (println "JSON:" json-path)
       (doseq [{:keys [challenge invalid]} results :when (seq invalid)]
