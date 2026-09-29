@@ -1,0 +1,7 @@
+{:id "unsubindexed-history"
+ :challenge "bank-transfer-module"
+ :targets-nfr "unbounded transfer history must be subindexed (iterator reads)"
+ :wrong-design "Incoming/outgoing transfer histories are plain nested maps (no :subindex?), so each history read loads the whole unbounded collection as one value."
+ :expected :killed
+ :functional-preserved? true
+ :notes "KILLED: performance-challenge-test (performance_test_support.clj:91,96) history reads show {:rocks-read 1} and no iterator reads; functional tests pass."}
