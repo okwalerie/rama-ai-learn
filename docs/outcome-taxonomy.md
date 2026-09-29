@@ -25,12 +25,18 @@ said it was finished.
 |---|---|---|
 | `:pass` | The private suite ran at least one test, exited 0, and reported no failures or errors. | `PASS` |
 | `:fail` | The private suite ran at least one test and reported at least one failure or error. | `FAIL` |
-| `:unavailable` | A private suite exists but produced no verdict: `Ran 0 tests`, no `Ran N tests` line (compile or load error, missing implementation namespace), a grader timeout, or a non-zero exit with no failing assertions. | `UNAVAIL` |
+| `:unavailable` | A private suite exists but produced no verdict (not evaluated): `Ran 0 tests`, no `Ran N tests` line (compile or load error, missing implementation namespace), the `0/1` sentinel, a grader timeout, or a non-zero exit with no failing assertions. | `UNAVAIL` |
 | `:not-run` | A private suite exists but was not started (the solver timed out, or the runner errored). | `not-run` |
 | `:none` | The challenge has no `test-private/` directory. | `-` |
 
 A sentinel (zero tests, no summary line, grader timeout) is **never**
-reported as `FAIL`. The runner parses `Ran N tests containing M assertions.`
+reported as `FAIL`.
+
+The `Private FAIL 0/1` sentinel is `Ran 1 tests`, `0 failures`, and every
+counted assertion is an error (`Ran 1 tests containing 1 assertions. 0
+failures, 1 errors.`). The suite errored before any check ran, so the tests
+never ran: it is `:unavailable`, not `:fail`. A single test with a real
+assertion failure (`1 failures`) stays `:fail`. The runner parses `Ran N tests containing M assertions.`
 and `F failures, E errors.` rather than trusting the exit code alone.
 
 ## Headline outcome
@@ -71,7 +77,7 @@ count:
 
 ## Run manifest
 
-Each run writes `<report>.manifest.json` next to the markdown report. The file
+Each run writes `<report>.manifest.json` (JSON) next to the markdown report. The file
 is created once and never overwritten. It holds:
 
 - run id, start and end timestamps, command-line arguments
@@ -88,7 +94,7 @@ is created once and never overwritten. It holds:
 
 ## Grader time limit
 
-Private tests run under `--grader-timeout` seconds (default 1800). The grader
+Private tests run under `bb run-challenges --grader-timeout <seconds>` (default 1800). The grader
 runs in its own process session through `setsid` where available. On timeout,
 or after a normal exit, the runner kills the whole process group, so leftover
 JVMs or cluster workers cannot hold the output pipes open. A timeout records
