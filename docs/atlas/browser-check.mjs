@@ -82,8 +82,9 @@ export async function run() {
   }
   // Coverage matrix: one row per study guide, glyphs carry text, page never scrolls sideways.
   location.hash = 'coverage';
-  await wait(() => document.querySelector('.matrix'));
-  const rows = document.querySelectorAll('.matrix tbody tr:not(.matrix-group)');
+  // A study guide's single-row .matrix is still in the DOM until the route renders, so wait for the full matrix.
+  await wait(() => document.querySelector('.matrix:not(.matrix-single)'));
+  const rows = document.querySelectorAll('.matrix:not(.matrix-single) tbody tr:not(.matrix-group)');
   check(rows.length === guided.size, `coverage: ${rows.length} rows for ${guided.size} study guides`);
   check([...document.querySelectorAll('.matrix td.m')].every(td => td.querySelector('.vh')?.textContent.trim()), 'coverage: glyph without text');
   check(document.querySelectorAll('.matrix thead abbr[title]').length === 8, 'coverage: abbreviated headers');

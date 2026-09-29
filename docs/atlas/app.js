@@ -62,12 +62,13 @@ const matrixHead = first => `<thead><tr><th scope="col">${first}</th>${nfrCatego
 const matrixRow = (label, o) => `<tr><th scope="row">${label}</th>${nfrCategories.map(([key]) => mark(o.matrix?.[key])).join('')}<td class="matrix-verdict">${esc(o.nfr?.verdict)}</td></tr>`;
 const legend = `<p class="matrix-legend"><span><span aria-hidden="true">●</span> tested</span><span><span aria-hidden="true">○</span> stated, untested</span><span><span aria-hidden="true">◌</span> implied, untested</span><span>blank: not applicable</span></p>`;
 const abbreviations = `<p class="matrix-key">${nfrCategories.map(([, short, full]) => `<span><b>${esc(short)}</b> ${esc(full.toLowerCase())}</span>`).join('')}</p>`;
-const studyLink = s => s?.url && String(s.url).startsWith(handbook) ? `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${s.number ? `${esc(s.number)} ` : ''}${esc(s.title)} ↗</a>` : esc(s?.title || '');
+const studyName = s => `${s?.number ? `${esc(s.number)} ` : ''}${s?.title ? esc(s.title) : '(title not confirmed)'}`;
+const studyLink = s => s?.url && String(s.url).startsWith(handbook) ? `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${studyName(s)} ↗</a>` : studyName(s);
 const table = (heads, rows) => rows?.length ? `<div class="table-wrap"><table class="design-table"><thead><tr>${heads.map(h => `<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>` : '<p class="empty">None.</p>';
 function studyGuide(item) {
   const o = item.onepager, s = o.study || {}, d = o.design || {}, n = o.nfr || {};
   const section = (label, body) => `<section class="prose-section"><h4>${label}</h4><div>${body}</div></section>`;
-  const study = s.fit === 'none' || !s.url
+  const study = s.fit === 'none'
     ? `<p>No handbook case study fits. ${esc(s.reason)}</p>`
     : `<p class="study-main">${studyLink(s)} <span class="fit">${esc(s.fit)} fit</span></p><p>${esc(s.reason)}</p>${s.then?.length ? `<p class="study-then">Then: ${s.then.map(studyLink).join(', ')}</p>` : ''}`;
   const design = `<h5>Depots</h5>${table(['Depot', 'Partitioning'], (d.depots || []).map(x => `<tr><td>${code(x.name)}</td><td>${esc(x.partition)}</td></tr>`))}

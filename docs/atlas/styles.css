@@ -110,11 +110,12 @@ main { min-width: 0; padding: 0 clamp(18px, 3vw, 44px) 48px; max-width: 1800px; 
 /* Study guide and NFR coverage matrix */
 .toplinks { display: flex; gap: 16px; flex: 0 0 auto; }
 .vh { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.study-guide .prose-section > div { min-width: 0; }
 .study-guide .prose-section > div > :first-child { margin-top: 0; }
 .study-guide p { margin: 0 0 8px; max-width: 75ch; }
 .study-guide h5 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 14px 0 4px; }
 .study-guide h5:first-child { margin-top: 0; }
-.study-guide code, .matrix code { font: 13px/1.4 var(--mono); overflow-wrap: anywhere; }
+.study-guide code, .matrix code { font: 13px/1.4 var(--mono); overflow-wrap: break-word; }
 .fit, .verdict { font-size: 12px; letter-spacing: .04em; color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; white-space: nowrap; }
 .verdict { font-weight: 600; color: var(--ink); border-color: #a6afad; }
 .verdict-absent { color: var(--accent); border-color: var(--accent); }
@@ -123,14 +124,14 @@ main { min-width: 0; padding: 0 clamp(18px, 3vw, 44px) 48px; max-width: 1800px; 
 .table-wrap { overflow-x: auto; max-width: 100%; }
 .design-table { border-collapse: collapse; font-size: 14px; width: 100%; }
 .design-table th { text-align: left; font-weight: 400; font-size: 12px; color: var(--muted); padding: 2px 16px 3px 0; border-bottom: 1px solid var(--line); }
-.design-table td { vertical-align: top; padding: 4px 16px 4px 0; overflow-wrap: anywhere; }
+.design-table td { vertical-align: top; padding: 4px 16px 4px 0; overflow-wrap: break-word; }
 .pairs { display: grid; grid-template-columns: minmax(8em, 1fr) 2fr; gap: 6px 16px; margin: 0; font-size: 14px; }
 .pairs dt { font-weight: 600; }
 .pairs dd { margin: 0; color: var(--ink); }
 .gap { padding: 6px 0 6px 10px; border-left: 2px solid var(--line); margin-bottom: 8px; font-size: 14px; }
 .gap p { margin: 0 0 3px !important; }
 .gap-key { display: block; font-size: 12px; color: var(--muted); }
-.matrix-wrap { overflow-x: auto; max-width: 100%; overscroll-behavior-x: contain; }
+.matrix-wrap { position: relative; overflow-x: auto; max-width: 100%; overscroll-behavior-x: contain; }
 .matrix { border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
 .matrix th, .matrix td { padding: 3px 7px; text-align: center; font-weight: 400; }
 .matrix thead th { font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--ink); vertical-align: bottom; }
