@@ -53,7 +53,7 @@
 ### 7. Client reads are direct single-partition `foreign-select-one` / bounded `foreign-select` — idiomatic, keep
 
 - `get-claim`, `get-url`, and `get-host` each make one `foreign-select-one` call on a host-leading path (`module.clj:213-227`). `list-pending` makes one bounded `foreign-select` (`:228-233`). Writes each make one `foreign-append!` (`:198-212`). `discover!` canonicalizes, deduplicates, and groups by host client-side (`:203-205`), which the README permits (`README.md:164-165`). As a result, each host gets one ordered `Discover` record, which preserves within-host element order (`README.md:185-187`).
-- Both peer references use direct foreign selects for single-key reads: auction at `challenges/auction-module/test-resources/auction_module/module.clj:184-204`, and chat at `challenges/chat-app/test-resources/chat_app/module.clj:546-553`. Chat moves to query topologies only for composite or paged views and online filtering (`chat_app/module.clj:417-494`, invoked at `:575-590`). Every read in this protocol targets one host partition, so a query topology would add an invocation hop without saving a round trip.
+- Both peer references use direct foreign selects for single-key reads: auction at `challenges/auction-module/test-resources/auction_module/module.clj:184-204`, and chat at `challenges/chat-app/test-resources/chat_app/module.clj:546-553`. Chat moves to query topologies for composite or paged views and online filtering (`chat_app/module.clj:408-494`, invoked at `:575-590`), and for presence (`:393-406`, invoked at `:555`), which lives in a task global rather than a PState and so cannot be foreign-selected. Every PState read in this protocol targets one host partition, so a query topology would add an invocation hop without saving a round trip.
 
 ## Idiom comparison
 
@@ -72,5 +72,5 @@
 ## Verification / limits
 
 - Branch `orb/idiom-hld-web-crawler` starts at baseline `43abd3fccff8777d8995f8a29658f3c4c97df01a`. The only changed file relative to the baseline is this document.
-- Every `file:line` citation above was checked against the files at the baseline.
+- Every `file:line` citation above was checked against the files at the baseline (re-checked in a later independent pass, which corrected the chat query-topology citation in finding 7).
 - The reference was not rewritten, so the private suite was not run for this review, as instructed for a doc-only outcome. This document is not a new test verdict. The reference's own recorded validation is in `challenges/hld-web-crawler/test-resources/BUILD_VALIDATION.md:5-6` (author-reported: 10 tests, 2,892 assertions, 0 failures).
