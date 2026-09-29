@@ -20,6 +20,23 @@ every `bb` and `clojure` invocation, so:
 Every killed/survived figure below is therefore **TBD**. Do not quote a kill
 rate from this file until the "Results" section is filled from a real run.
 
+## Partial run, 2026-09-29 (commit 78b293a; scripts unchanged since except for reference output-tail capture)
+
+Four `bb mutant-kill-rate` processes ran concurrently on a 4-CPU/7 GB host
+with `--timeout-s 360`. The session was killed before any process finished,
+so no JSON report was written. From the logs:
+
+| Run | Outcome | Valid? |
+|---|---|---|
+| collaborative-document-editor reference | **pass** (96s) | Yes. Confirms the `test-resources/upstream` classpath fix; the run before the fix crashed in 36s. |
+| top-users-module reference | **fail** (60s), twice (runs at 06:47 and 06:53) | Yes, but cause unknown. Output tail not captured (the process was killed before the JSON was written). **Investigate before trusting any top-users result.** |
+| chat-app reference | timeout (518s) | No: CPU contention (4 concurrent JVMs) |
+| hld-stock-exchange reference | timeout (536s) | No: CPU contention |
+| collaborative-document-editor/non-subindexed-history | timeout (518s) | No: contention. Would count as killed; do not trust. |
+| top-users-module/global-user-totals | timeout (505s) | No: contention, and the reference fails anyway |
+
+Rerun with at most 1–2 concurrent processes and `--timeout-s 900`.
+
 ## How to run (and rerun after `wip/nfr-tests` merges)
 
 ```bash
@@ -69,7 +86,15 @@ Mutants live only under `challenges/<name>/test-private/mutants/<id>/`.
 
 ## Inventory (31 mutant directories in WIP commit 935c229)
 
-### Placeholders: byte-identical to the reference (7). Invalid, not counted.
+### Placeholders: byte-identical to the reference in 935c229 (7). Invalid, not counted.
+
+Update (78b293a): real mutations were written for three of them:
+`time-series-module-hard/stream-ingest` (positive control; the audit documents a
+`#{:microbatch}` check), `time-series-module-hard/no-thirty-day-rollup`
+(`:expected :survives`, an audit-predicted grader gap), and
+`chat-app/per-member-post-writes` (positive control; gold-standard grader asserts
+fewer than 40 writes per post to a 300-member room). None has been run yet.
+The remaining four are still placeholders.
 
 These were committed as mutants but contain no mutation. The task now rejects
 them with `no mutation: source identical to reference`. Each one still needs

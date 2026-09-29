@@ -256,7 +256,9 @@
                             r))
                         valid)]
     {:challenge challenge
-     :reference (some-> reference (select-keys [:status :duration-s :killed-by]))
+     :reference (some-> reference
+                        (select-keys (cond-> [:status :duration-s :killed-by]
+                                       (not= :pass (:status reference)) (conj :output-tail))))
      :reference-ok? (if reference (= :pass (:status reference)) :skipped)
      :invalid (mapv #(select-keys % [:id :problems]) invalid)
      :mutants results}))
