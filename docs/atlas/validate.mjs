@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { flows, diagramCard } from './diagrams.mjs';
-import { mermaidSource } from './graph.mjs';
+import { mermaidSource, orderedColumns } from './graph.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const entries = ['hld-a', 'hld-b', 'modules', 'other', 'references-a', 'references-b', 'references-c'].flatMap(name => JSON.parse(readFileSync(new URL(`data/${name}.json`, import.meta.url))));
@@ -45,6 +45,21 @@ for (const g of all.filter(g => g.columns)) {
   assert.deepEqual(g.columns.map(c => c.title), ['Depot', 'ETL', 'PState', 'Query']);
   assert(!g.nodes.some(n => ['decision', 'route'].includes(n.kind)), `${g.id}: LR must remain a component overview`);
 }
+// Asymmetric destinations distinguish a true crossing from a harmless fan-in.
+const crossing = {
+  columns: [{ title: 'Depot', nodes: ['a', 'b'] }, { title: 'ETL', nodes: ['x', 'y'] }],
+  edges: [{ from: 'a', to: 'y', label: 'one' }, { from: 'b', to: 'x', label: 'two' }]
+};
+assert.deepEqual(orderedColumns(crossing).map(c => c.nodes), [['b', 'a'], ['x', 'y']]);
+assert.deepEqual(crossing.columns.map(c => c.nodes), [['a', 'b'], ['x', 'y']], 'layout must not mutate authored graph');
+assert.deepEqual(orderedColumns({ ...crossing, edges: [{ from: 'a', to: 'x' }, { from: 'b', to: 'x' }] })
+  .map(c => c.nodes), [['a', 'b'], ['x', 'y']], 'ties retain authored order');
+const auction = flows['auction-module'][0];
+assert.deepEqual(orderedColumns(auction)[0].nodes, ['bids', 'listing', 'tick']);
+const reserve = flows['hld-hotel-reservation'].find(g => g.id === 'hld-hotel-reserve-td');
+assert.deepEqual(reserve.edges.filter(e => e.from === 'short').map(e => e.to), ['total', 'reject']);
+assert.deepEqual(mermaidSource(reserve).split('\n').filter(s => s.startsWith('n_short -->'))
+  .map(s => s.match(/n_(\w+)$/)[1]), ['reject', 'total']);
 const adversarial = { ...all[0], columns: undefined, nodes: [{ id: 'safe', kind: 'event', label: '"><script>alert(1)</script>' }], edges: [{ from: 'safe', to: 'safe', label: '" & < >' }] };
 assert(!mermaidSource(adversarial).includes('<script>'));
 assert(!diagramCard(adversarial).includes('<script>'));

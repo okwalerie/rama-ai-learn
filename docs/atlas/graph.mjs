@@ -16,6 +16,42 @@ export function graph(id, title, view, summary, sources, nodes, edges, notes = [
   return { id, title, view, summary, sources, nodes: rows(nodes).map(([id, kind, ...label]) => ({ id, kind, label: label.join(' | ') })), edges: rows(edges).map(([from, to, ...label]) => ({ from, to, label: label.join(' | ') })), notes };
 }
 
+// Minimize inversions between adjacent component columns. An inversion is a
+// crossing forced by the relative order of two independent source/target pairs.
+// Only accept strict improvements, so ties retain the authored order.
+export function orderedColumns(g) {
+  const columns = g.columns.map(c => ({ ...c, nodes: [...c.nodes] }));
+  const position = new Map(columns.flatMap((c, i) => c.nodes.map((id, j) => [id, [i, j]])));
+  const links = g.edges.map(e => [e.from, e.to]).filter(([a, b]) =>
+    position.has(a) && position.has(b) && position.get(b)[0] === position.get(a)[0] + 1);
+  const crossings = () => {
+    let count = 0;
+    for (let i = 0; i < links.length; i++) for (let j = 0; j < i; j++) {
+      const [a, b] = links[i].map(id => position.get(id));
+      const [c, d] = links[j].map(id => position.get(id));
+      if (a[0] === c[0] && a[1] !== c[1] && b[1] !== d[1] && (a[1] - c[1]) * (b[1] - d[1]) < 0) count++;
+    }
+    return count;
+  };
+  let best = crossings();
+  let improved;
+  do {
+    improved = false;
+    for (const [i, column] of columns.entries()) for (let j = 1; j < column.nodes.length; j++) {
+      const a = column.nodes[j - 1], b = column.nodes[j];
+      [column.nodes[j - 1], column.nodes[j]] = [b, a];
+      position.get(a)[1] = j; position.get(b)[1] = j - 1;
+      const next = crossings();
+      if (next < best) { best = next; improved = true; }
+      else {
+        [column.nodes[j - 1], column.nodes[j]] = [a, b];
+        position.get(a)[1] = j - 1; position.get(b)[1] = j;
+      }
+    }
+  } while (improved);
+  return columns;
+}
+
 export function mermaidSource(g) {
   const kinds = ['event', 'depot', 'etl', 'state', 'query', 'decision', 'route', 'memory', 'external', 'end'];
   const ids = new Set();
@@ -41,7 +77,7 @@ export function mermaidSource(g) {
   }
   if (g.columns) {
     const placed = new Set();
-    g.columns.forEach((column, i) => {
+    orderedColumns(g).forEach((column, i) => {
       lines.push(`subgraph column${i}["${quote(column.title)}"]`, 'direction TB');
       for (const id of column.nodes) {
         if (!nodeLines.has(id) || placed.has(id)) throw new Error(`Invalid column member: ${id}`);
@@ -53,7 +89,25 @@ export function mermaidSource(g) {
   } else {
     lines.push(...nodeLines.values());
   }
-  for (const e of g.edges) {
+  // At a decision whose late branch joins a shared state, emit that branch
+  // first if the shared state was declared before the continuing transform.
+  // This keeps the return lane outside the continuing lane in TD layouts.
+  // Keep the transition list itself in source order; only layout input changes.
+  const nodeIndex = new Map(g.nodes.map((n, i) => [n.id, i]));
+  const nodes = new Map(g.nodes.map(n => [n.id, n]));
+  const edges = [...g.edges];
+  for (const n of g.nodes.filter(n => n.kind === 'decision')) {
+    const indexes = edges.map((e, i) => e.from === n.id ? i : -1).filter(i => i >= 0);
+    if (indexes.length !== 2) continue;
+    const [first, second] = indexes.map(i => edges[i]);
+    if (nodes.get(first.to)?.kind === 'etl' && nodes.get(second.to)?.kind === 'state'
+      && nodeIndex.get(second.to) < nodeIndex.get(first.to)
+      && g.edges.filter(e => e.to === second.to).length > 1
+      && g.edges.filter(e => e.to === first.to).length === 1) {
+      [edges[indexes[0]], edges[indexes[1]]] = [second, first];
+    }
+  }
+  for (const e of edges) {
     if (!ids.has(e.from) || !ids.has(e.to)) throw new Error(`Unknown edge endpoint: ${e.from} → ${e.to}`);
     lines.push(`n_${e.from} -->|"${quote(e.label || 'then')}"| n_${e.to}`);
   }
