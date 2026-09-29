@@ -6,7 +6,10 @@
 
 (defn test-mode? [] false)
 
-(defrecord ScheduledPost [id time-millis post])
+(defn- add-schedule-id [schedule-id delivered-ids]
+  (conj (or delivered-ids #{}) schedule-id))
+
+(defrecord ScheduledPost [id time-millis post schedule-id])
 
 (defmodule TimedNotificationsModule
   [setup topologies]
@@ -20,6 +23,10 @@
       topology
       $$feeds
       {String (vector-schema String {:subindex? true})})
+    (declare-pstate
+      topology
+      $$delivered
+      {String (set-schema String {:subindex? true})})
     (.declarePStates scheduler topology)
    (<<sources topology
      (source> *scheduled-post-depot :> {:keys [*time-millis] :as *scheduled-post})
@@ -32,7 +39,10 @@
         "*scheduled-post"
         "*current-time-millis"
         (java-block<-
-          (identity *scheduled-post :> {:keys [*id *post]})
-          (local-transform> [(keypath *id) AFTER-ELEM (termval *post)] $$feeds)
+          (identity *scheduled-post :> {:keys [*id *post *schedule-id]})
+          (local-select> [(keypath *id)] $$delivered :> *delivered-ids)
+          (<<if (not (contains? *delivered-ids *schedule-id))
+            (local-transform> [(keypath *id) (nil->val #{}) (term (partial add-schedule-id *schedule-id))] $$delivered)
+            (local-transform> [(keypath *id) AFTER-ELEM (termval *post)] $$feeds))
           )))
      )))

@@ -7,6 +7,16 @@
             )
   (:import [com.rpl.rama.helpers TopologyUtils]))
 
+(defn- failed-streaming [f]
+  (let [failed? (atom false)
+        ret (rtest/with-event-hook
+              (fn [event-type _data]
+                (when (and (= event-type :streaming-complete)
+                           (compare-and-set! failed? false true))
+                  :fail))
+              (f))]
+    ret))
+
 (defn- run-case [tasks]
   (with-redefs [shared/REPLACE-TICK-DEPOTS true]
     (let [{:keys [module wrap-client]} ((requiring-resolve 'timed-notifications.module/create-module))]
@@ -53,3 +63,16 @@
 
 (deftest notifications-at-two-and-four-tasks
   (doseq [tasks [2 4]] (run-case tasks)))
+
+(deftest retried-schedule-delivers-once
+  (with-redefs [shared/REPLACE-TICK-DEPOTS true]
+    (with-open [ipc (rtest/create-ipc)
+                sim-time (TopologyUtils/startSimTime)]
+      (let [{:keys [module wrap-client]} ((requiring-resolve 'timed-notifications.module/create-module))]
+        (rtest/launch-module! ipc module {:tasks 2 :threads 2})
+        (let [client (wrap-client ipc)]
+          (failed-streaming #(p/schedule-post! client "alice" 0 "once"))
+          (p/tick! client)
+          (harness/wait-for-processing! client)
+          (testing "a forced stream retry of schedule-post! does not duplicate delivery"
+            (is (= ["once"] (p/feed client "alice")))))))))

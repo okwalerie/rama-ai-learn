@@ -2,6 +2,7 @@
   (:require [rama-challenges.harness :as harness]
             [timed-notifications.protocol :as protocol]
             [nlb.timed-notifications :as source])
+  (:import [java.util UUID])
   (:use [com.rpl.rama]
         [com.rpl.rama.path]))
 
@@ -12,7 +13,10 @@
         feeds (foreign-pstate ipc name "$$feeds")]
     (reify protocol/TimedNotifications
       (schedule-post! [_ account-id time-millis post]
-        (foreign-append! scheduled (source/->ScheduledPost account-id time-millis post)) nil)
+        (foreign-append!
+         scheduled
+         (source/->ScheduledPost account-id time-millis post (str (UUID/randomUUID))))
+        nil)
       (tick! [_] (foreign-append! tick nil))
       (feed [_ account-id] (or (foreign-select [(keypath account-id) ALL] feeds) []))
       harness/Synchronizable
