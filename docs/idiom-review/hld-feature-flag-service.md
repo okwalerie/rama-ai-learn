@@ -1,0 +1,41 @@
+# Idiom review: HLD feature-flag service
+
+## Scope and baseline
+
+This review is against the checkout's requested baseline, `43abd3fccff8777d8995f8a29658f3c4c97df01a`, and the challenge's checked-in reference implementation. The requested topology motifs do **not** occur in this challenge at this baseline: the reference has one depot and one microbatch topology, but no record-type multiplexing, `:ingress-seq`, `+group-by`, `+vec-agg`, sort, `loop<-`, explicit repartition, or query topology. There is no solver implementation under `implementations/hld-feature-flag-service/` in this checkout to audit instead. Findings below distinguish verified code from proposed alternatives rather than attributing absent code to the reference.
+
+## Findings
+
+### 1. Depot and topology: simple and aligned; no ordering machinery needed
+
+- `challenges/hld-feature-flag-service/test-resources/hld_feature_flag_service/module.clj:30-32` declares one `*flag-writes` depot partitioned by the complete `FlagId` and one `"flags"` microbatch topology.
+- Lines 43-51 process each record directly, validate it, read that flag's prior revision, and replace the whole config only when the incoming revision is greater. There is no type dispatch because the depot carries only `PutFlagConfig` records (lines 13-14, 45).
+- The depot's `hash-by :flag-id` and PState's `FlagId` key align (lines 31, 33-35). Same-flag appends therefore share a partition and preserve local append order; the microbatch source emits each task's local records in depot order (`.agents/skills/rama/references/depot-design.md:108-118`, `microbatch.md:9-14`). This is the direct idiom for the README's same-flag ordering requirement (`README.md:168-180`).
+- **Alternative if multiple ordered command types are added:** retain one entity-keyed depot and use `<<subsource` to dispatch those types, as chat-app does for `*user-actions-depot` (`challenges/chat-app/test-resources/chat_app/module.clj:196-203, 279-286`). Split into distinct depots only when the event types do not need shared ordering, consistent with `depot-design.md:13-18`. There is no reason to add a multiplexing layer to this one-event API.
+
+### 2. `:ingress-seq` / grouping / sorting / loop / repartition: absent and unnecessary here
+
+- The reference's only source is a microbatch source followed by direct per-record logic (`module.clj:43-51`); it does not stamp a sequence, group records, collect or sort them, loop over a per-key vector, or route them through a second partitioner.
+- For this contract, per-flag sequential processing is already provided by the key-partitioned depot. Adding durable `:ingress-seq` plus `+group-by`/`+vec-agg`/sort/`loop<-` would reconstruct order the source partition already supplies, while adding a state read/write per incoming update, batch memory for grouped vectors, a repartition hop, sorting, and loop work. It adds no correctness value for the reference's one operation per event.
+- **Alternative if a future operation truly needs cross-event batch coordination:** justify the aggregation and barrier from that requirement, and preserve stable ordering explicitly rather than assuming `+vec-agg` order. `+group-by` automatically partitions by group key (`aggregators.md:78-83`); it is useful for real aggregation, not as a default substitute for a depot's local order. Keep a `loop<-` only when applying multiple grouped operations sequentially is semantically necessary. Otherwise use the existing direct `%mb` processing pattern (`microbatch.md:68-78`).
+
+### 3. PState shape: no growing per-flag collection in the reference
+
+- `module.clj:33-42` declares `$$flags` as a partitioned map from `FlagId` to one fixed-schema configuration. The only nested collection is the input configuration's `:rules` vector, stored as part of that single value (lines 37-42); it is replaced as a whole at line 51.
+- The reference does not retain per-revision history, a growing tenant/env/flag collection beneath one key, or any append-only per-flag state. A tenant with many flags adds independent top-level keys, not an ever-growing value navigated for a selected flag. `get-flag-config` and `evaluate` read only the selected `FlagId` (`module.clj:98-104`), matching the efficiency contract (`README.md:147-157`).
+- **Alternative if history or independently addressable rules are later required:** model those as keyed/subindexed data only when the API needs range/point access into them. For the current whole-config replacement API, retain one config value per flag; subindexing or splitting its rules would add write/read work and can break the one-value retrieval shape without helping the specified access pattern.
+
+### 4. Client reads: point reads, not client-side distributed queries
+
+- The client performs one `foreign-select-one` for `get-flag-config` and one for `evaluate`, each using the complete composite flag key (`module.clj:98-104`). `compute-bucket` is pure local SHA-256 work (lines 53-63, 100-101); it does not access stored state. This is a bounded single-partition read, not a client loop over distributed keys.
+- These reads match the documented requirement that each call touches one flag only (`README.md:152-157`). A query topology is a better fit when a read must fan out, perform variable distributed reads, or aggregate results; chat-app uses query topologies for paged joins and multi-partition reads (`chat-app/module.clj:417-494`).
+- **Alternative if evaluation must stay server-side:** add a query topology keyed by `FlagId` and invoke it once. That can keep the evaluation computation beside PState, but it does not reduce the current one selected-config read below one distributed request; choose it for a server-side execution/privacy boundary, not because the existing client code is doing a distributed scan. Preserve the simple `foreign-select-one` for config retrieval, whose protocol returns the full accepted config (`protocol.clj:30-32`).
+
+## Idioms observed in comparison references
+
+- Auction module uses separate depots for listings and bids, each partitioned by the key its processing needs, and subindexed maps for unbounded listings/bidders (`challenges/auction-module/test-resources/auction_module/module.clj:69-93`). Its stream path handles low-latency listing/bid work while a microbatch handles scheduled expiration (`:115-128`). Those are workload-specific reasons; copying its multiple-topology shape into the revisioned flag store would not improve the point-update/read contract.
+- Chat-app intentionally multiplexes action records on a user-partitioned depot and dispatches with `<<subsource` (`chat-app/module.clj:196-203`), while separate keyed depots handle unique registration claims (`:158-160, 181-194`). Its many-growing collections are subindexed (`:172-179, 255-277`) and its distributed page/join operations are query topologies (`:417-494`). These are good alternatives when their relevant constraints exist, not evidence that every service needs a multiplexed depot, multi-topology split, or query facade.
+
+## Decision
+
+Review only; do not rewrite the reference. The checked-in implementation is already the smaller idiomatic solution for the published contract and private efficiency probes, and the named potential costs are not present to remove. No challenge README, protocol, private test, or skill file was changed.
