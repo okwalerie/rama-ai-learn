@@ -13,3 +13,9 @@
   (testing "RateLimiter bounded-work tests, 4 tasks"
     (support/test-module-performance
      (requiring-resolve 'hld-rate-limiter.module/create-module) 4)))
+
+(deftest stream-retry-exactly-once-test
+  (testing "check! debits exactly once under a forced stream retry"
+    (doseq [tasks [2 4]]
+      (support/test-stream-retry
+       (requiring-resolve 'hld-rate-limiter.module/create-module) tasks))))
