@@ -6,9 +6,6 @@
 
 (defn test-mode? [] false)
 
-(defn- add-schedule-id [schedule-id delivered-ids]
-  (conj (or delivered-ids #{}) schedule-id))
-
 (defrecord ScheduledPost [id time-millis post schedule-id])
 
 (defmodule TimedNotificationsModule
@@ -40,9 +37,9 @@
         "*current-time-millis"
         (java-block<-
           (identity *scheduled-post :> {:keys [*id *post *schedule-id]})
-          (local-select> [(keypath *id)] $$delivered :> *delivered-ids)
-          (<<if (not (contains? *delivered-ids *schedule-id))
-            (local-transform> [(keypath *id) (nil->val #{}) (term (partial add-schedule-id *schedule-id))] $$delivered)
+          (local-select> [(keypath *id) (view contains? *schedule-id)] $$delivered :> *delivered?)
+          (<<if (not *delivered?)
+            (local-transform> [(keypath *id) NONE-ELEM (termval *schedule-id)] $$delivered)
             (local-transform> [(keypath *id) AFTER-ELEM (termval *post)] $$feeds))
           )))
      )))
