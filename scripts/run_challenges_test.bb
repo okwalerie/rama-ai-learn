@@ -1,6 +1,6 @@
 #!/usr/bin/env bb
 
-(require '[clojure.test :refer [deftest testing is run-tests]])
+(require '[clojure.test :refer [are deftest testing is run-tests]])
 
 ;; Load the runner script to get access to its functions
 (load-file "scripts/run_challenges.bb")
@@ -1219,6 +1219,38 @@
     (is (= :fail (:private-status (classify-private-result
                                    true {:exit 1 :out "Ran 1 tests containing 2 assertions.\n1 failures, 0 errors.\n"}))))))
 
+(deftest outcome-enum-test
+  (testing "every required outcome value exists"
+    (is (every? (set outcome-order)
+                [:private-pass :private-fail :private-unavailable :solver-no-implementation
+                 :infra-error :quota-or-provider-limit :user-stopped :timeout])))
+  (testing "completion comes from the failing phase, not the runner status alone"
+    (is (= :completed (classify-completion {:status :pass})))
+    (is (= :quota-or-provider-limit
+           (classify-completion {:status :fail :phase-results [{:provider-limit? true}]})))
+    (is (= :user-stopped (classify-completion {:status :fail :phase-results [{:user-stopped? true}]})))
+    (is (= :timeout (classify-completion {:status :timeout :phase-results [{:timed-out? true}]})))
+    (is (= :solver-fail (classify-completion {:status :fail :phase-results [{:verdict :fail}]}))))
+  (testing "headline outcome for each path; the private verdict dominates"
+    (are [expected in] (= expected (classify-outcome in))
+      :infra-error              {:infra-error? true :private-status :pass}
+      :private-pass             {:completion :solver-fail :private-status :pass}
+      :private-fail             {:completion :completed :private-status :fail}
+      :timeout                  {:completion :timeout :private-status :not-run}
+      :quota-or-provider-limit  {:completion :quota-or-provider-limit :private-status :not-run}
+      :user-stopped             {:completion :user-stopped :private-status :unavailable}
+      :solver-no-implementation {:completion :solver-fail :private-status :unavailable
+                                 :has-implementation? false}
+      :private-unavailable      {:completion :completed :private-status :unavailable
+                                 :has-implementation? true}
+      :public-pass              {:completion :completed :private-status :none}
+      :solver-fail              {:completion :solver-fail :private-status :none}))
+  (testing "only correctness outcomes are scored; infrastructure outcomes are not"
+    (is (= [100 0 0 0 nil nil nil nil]
+           (mapv #(compute-challenge-score % 0)
+                 [:private-pass :private-fail :solver-no-implementation :timeout
+                  :private-unavailable :infra-error :quota-or-provider-limit :user-stopped])))))
+
 (deftest auction-runner-pass-private-fail-test
   (testing "runner PASS + private FAIL headlines PRIVATE-FAIL with score 0"
     (let [r (scored-result auction-runner-pass true private-real-fail)
@@ -1264,6 +1296,13 @@
                (phase 3 "fanout" :major-fail) (phase :build "timeline" :pass)]]
       (is (= 1 (count-semantic-retries prs)))
       (is (= 50 (compute-challenge-score :private-pass 1)))))
+  (testing "plan-validation MINOR_FAIL then build is normal progression, not a retry"
+    (is (= 0 (count-semantic-retries [(phase 1 "follows" nil) (phase 2 "follows" :minor-fail)
+                                      (phase :build "follows" :pass)]))))
+  (testing "plan-validation MAJOR_FAIL sends the subsystem back to planning: one retry"
+    (is (= 1 (count-semantic-retries [(phase 1 "fanout" nil) (phase 2 "fanout" :major-fail)
+                                      (phase 1 "fanout" nil) (phase 2 "fanout" :pass)
+                                      (phase :build "fanout" :pass)]))))
   (testing "retries never rescue a private failure"
     (is (= 0 (compute-challenge-score :private-fail 0)))))
 
@@ -1291,6 +1330,26 @@
       (is (nil? (write-run-manifest! report {:run-id "other"})) "never overwrites")
       (is (= "run-1" (get (json/parse-string (slurp (manifest-path report))) "run-id")))
       (fs/delete-tree dir))))
+
+(deftest alignment-rubric-test
+  (testing "the scorer gets only the alignment section, with the original anchors"
+    (let [section (alignment-rubric (slurp "SCORING_RUBRIC.md"))]
+      (is (re-find #"^## 4\. Structural alignment \(informational only\)" section))
+      (is (re-find #"\| 4 \| Minor structural difference" section))
+      (is (re-find #"\| 0 \| Reference implementation is not available" section))
+      (is (not (re-find #"## 1\. Headline|## 3\. Quality|private-pass" section)))))
+  (testing "falls back to the whole text without the section"
+    (is (= "# Rubric\nbody" (alignment-rubric "# Rubric\nbody"))))
+  (testing "build-alignment-prompt embeds the section, not the headline rubric"
+    (let [root (fs/create-temp-dir)]
+      (fs/copy "SCORING_RUBRIC.md" (fs/path root "SCORING_RUBRIC.md"))
+      (fs/create-dirs (fs/path root "implementations" "x" "src"))
+      (spit (str (fs/path root "implementations" "x" "src" "m.clj")) "(ns m)")
+      (let [prompt (build-alignment-prompt (str root) "x")]
+        (is (re-find #"ALIGNMENT_SCORE:<score>" prompt))
+        (is (re-find #"\| 5 \| Approach is structurally equivalent" prompt))
+        (is (not (re-find #"private-pass|Judge vector|judge vector" prompt))))
+      (fs/delete-tree root))))
 
 (deftest tree-sha256-test
   (let [dir (fs/create-temp-dir)]

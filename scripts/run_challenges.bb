@@ -1163,10 +1163,19 @@
     (when (fs/exists? ref-dir)
       (vec (filter #(str/ends-with? (str %) ".clj") (fs/glob ref-dir "**"))))))
 
+(defn alignment-rubric
+  "The structural-alignment section of SCORING_RUBRIC.md, up to the next `## `
+  heading. The scorer needs only its anchors, not the headline or judge
+  sections. Falls back to the whole text when no such section exists."
+  [rubric]
+  (or (some #(when (re-find #"^## [^\n]*[Ss]tructural alignment" %) %)
+            (str/split rubric #"(?m)^(?=## )"))
+      rubric))
+
 (defn build-alignment-prompt
   "Build the prompt for alignment scoring."
   [project-root challenge-name]
-  (let [rubric    (slurp (str (fs/path project-root "SCORING_RUBRIC.md")))
+  (let [rubric    (alignment-rubric (slurp (str (fs/path project-root "SCORING_RUBRIC.md"))))
         impl-files (find-impl-files project-root challenge-name)
         ref-files  (find-ref-files project-root challenge-name)]
     (when (seq impl-files)
