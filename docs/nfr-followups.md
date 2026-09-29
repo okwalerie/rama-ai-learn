@@ -1,14 +1,99 @@
 # NFR follow-ups that need a README or reference change
 
 The NFR test pass added only tests that the current README already states
-and the current reference already passes. Each item below needs a README
-decision, a reference fix, or both, before its test can land. Each item gives
+and the current reference already passes; they are listed under "What
+landed". Each item after that section needs a README decision, a reference
+fix, or both, before its test can land. Each item gives
 the gap, the proposed README sentence, the reference fix and the test to add
 afterwards.
 
 Test helpers for all of these are in `lib/harness/src/rama_challenges/nfr.clj`
 (`with-forced-stream-retry`, `capture-rocks-ops`, `capture-iterator-reads`,
 `capture-per-task-ops`, `task-spread`, `topology-types-used`).
+
+## What landed without README or reference changes
+
+Each challenge below gained a private test namespace (`nfr_test.clj`, or
+`balance_test.clj` for unbalanced-social-graph; rate-limiter extends its
+performance support). All pass the current reference under
+`clojure -X:test-private-harness`, on 2 and 4 tasks.
+
+- **Forced stream retry, all 15 HLD challenges.** Each wraps every write in
+  `failed-streaming` and asserts exactly-once effects. Every HLD reference is
+  a single microbatch topology, so no reference sees a forced failure and none
+  needed a follow-up. The test only bites on stream designs, and only on
+  effects not guarded by an idempotency check that runs first in the same
+  event, for example an unguarded counter in a second topology fed by an
+  internal depot.
+- **Pages read about one stored entry per returned row**
+  (`limit <= reads + iterator-reads <= 2*limit + c`): payment journal,
+  ticketing compensations, hotel booking events, file-sync changes,
+  stock-exchange trades and depth, web-crawler `list-pending`. A lower bound
+  on entries read catches a collection stored and read as one value, without
+  prescribing subindexing over point keys.
+- **Measured command paths**, growth-paired against the entity's own
+  history: ticketing hold/confirm/release/add-seats; hotel 1- and 30-night
+  reserve and cancel, init-night, set-rate; job-scheduler granting claim,
+  expiring clock advance, effective completion; web-crawler discover,
+  complete, get-host, get-url, get-claim; enterprise-rag put, replace,
+  delete, put-user-groups, get-document, get-user-groups.
+- **Concurrent multi-client races**: ticketing and hotel (overlapping holds
+  and stays, last seat or room), profile-module (20 UUIDs per username).
+- **unbalanced-social-graph**: a celebrity's follower reads spread over every
+  task (max at most 1.5 x mean); a 30-follower account reads from at most 2
+  of 4 tasks; follow cost does not grow with the target's followers.
+- **hld-ad-click-aggregation**: window reads and click writes do not grow
+  from 11 to 1,001 clicks counted into one window.
+- **hld-search-autocomplete**: suggest is correct and flat when score order
+  is the reverse of lexical order (300 to 3,000 phrases) and with the 500 best
+  phrases blocked.
+- **time-series-module-hard**: a three-year range with one point per day
+  reads fewer than n/4 entries.
+- **family-tree**: `ancestors` on a 14-generation collapsed pedigree takes at
+  most 10x + 250 ms of a same-size plain lineage. This uses wall clock, not
+  event counts: with `rtest/with-event-hook` installed, the reference's
+  `ancestors` query returned 12 of 24 ancestors (it always returned 24 without
+  the hook), so hook counts do not reflect that traversal.
+- **music-catalog-migration**: 500 albums read migrated immediately after
+  `update-module!`, with no processing barrier.
+
+### Mutation evidence (scratch copies under /tmp, never committed)
+
+Each mutant also ran an existing functional suite as a control. Every
+control passed, so each failure below comes from the NFR test.
+
+| Mutant | Test | Result |
+|---|---|---|
+| time-series: no 30-day level | multi-year range | killed: 410 entries read vs reference 65 (bound 100) |
+| family-tree: no visited-set filter | collapsed pedigree | killed: 1.3-1.6 s vs lineage 6-9 ms |
+| file-sync: journal as one non-subindexed value | change pages | killed: 1 read per page |
+| unbalanced-social-graph: followers hashed by target | celebrity balance | killed: `[4430 0 0 0]` |
+| url-shortener: stream plus internal depot to an unguarded counter | forced retry | killed: retried click counted twice |
+| hotel: cancel scans the property's bookings | measured cancel | killed: 244 to 1,206 iterator reads |
+| profile-module: client-side check, then register | concurrent registrations | killed: up to 20 winners per username |
+| web-crawler: discover re-counts the host's pending set | measured discover | killed: 620 to 1,500 iterator reads |
+| job-scheduler: clock advance scans every claim decision | measured expiring advance | killed: 385 to 1,539 iterator reads |
+
+Not mutation-tested in this pass: the ad-click window test, autocomplete
+ranking, the music migration test, the hotel and ticketing races, the
+ticketing and enterprise-rag measured paths, and the stock-exchange pages.
+Only url-shortener has a retry mutant. The shared helper's own test shows
+a forced retry double-applying a non-idempotent stream counter.
+
+### Scope limitations
+
+- **Notification pages**: `get-recent-submissions` and `get-dead-letters` take
+  no limit and return at most 100 entries. A capped 100-entry list stored as
+  one value is legitimate, so an entries-read bound would over-prescribe. A
+  growing history blob is still undetected.
+- **Stock-exchange depth**: the entries-read bound would reject a design that
+  caches a bounded top-of-book summary as one value. The README's
+  whole-book rule makes such a cache unlikely, but if one is wanted, drop the
+  depth half of `trade-pages-and-depth-read-each-returned-entry`.
+- **Enterprise-rag postings stored as one value per token** remain invisible
+  to operation counts (one read and one write per token at any size).
+- **unbalanced-social-graph** balance is measured through `get-followers`
+  read work, as a proxy for the fanout consumer, which reads PStates directly.
 
 ## Exactly-once under stream retry: the reference double-applies
 
@@ -154,9 +239,13 @@ Test helpers for all of these are in `lib/harness/src/rama_challenges/nfr.clj`
     stock `:106-111`, ticketing `:201-207`, hotel `:98`, file-sync
     `:290-295`). Rewrite the references to process per-entity in depot order
     without regrouping before adding that test.
-- **family-tree, music-catalog-migration, content-moderation,
-  collaborative-document-editor**: the NLB-port READMEs disclaim cost. Any
-  cost assertion needs the disclaimer softened first.
+- **family-tree** (descendants), **music-catalog-migration** (read or
+  update cost), **content-moderation**, **collaborative-document-editor**:
+  the NLB-port READMEs disclaim cost. Any cost assertion on those operations
+  needs the disclaimer softened first. The family-tree *ancestors* bound
+  that landed rests on the protocol's "visited IDs are deduplicated", not on
+  a cost statement; the music test checks only that reads are migrated right
+  after the update, not their cost.
 - **rest-api-integration-module**: add "HTTP I/O must not block module
   processing" to justify a tasks-1/threads-1 responsiveness test (the
   reference passes at about 52 ms). Do not add "a slow URL must not delay
