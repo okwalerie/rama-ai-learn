@@ -1,6 +1,6 @@
 (ns hld-payment-system.nfr-test
   "NFR tests: exactly-once money movement under an engine (stream) retry, and
-   journal pages that walk a subindexed structure."
+   journal pages that read each returned row rather than one stored value."
   (:require [clojure.test :refer [deftest is testing]]
             [com.rpl.rama.test :as rtest]
             [hld-payment-system.protocol :as p]
@@ -65,15 +65,14 @@
           (p/fund! c (str "f" i) "T" "alice" 1))
         (harness/wait-for-processing! c)
         (doseq [limit [5 20]]
-          (let [[page iter-reads]
-                (let [[ret ops] (nfr/capture-rocks-ops-with-result
-                                 #(p/get-journal c "T" 40 limit))]
-                  [ret (:iterator-reads ops)])]
+          (let [[page ops] (nfr/capture-rocks-ops-with-result
+                            #(p/get-journal c "T" 40 limit))
+                touched (+ (:reads ops) (:iterator-reads ops))]
             (is (= (vec (range 41 (+ 41 limit))) (mapv :seq page)))
-            (is (< 0 iter-reads (+ limit 4))
+            (is (<= limit touched (+ (* 2 limit) 8))
                 (str tasks " tasks limit " limit
-                     ": get-journal must walk a subindexed journal, reading about limit rows; saw "
-                     iter-reads " iterator reads"))))))))
+                     ": a journal page must read about one stored entry per returned row, "
+                     "not the journal as one value; " ops))))))))
 
-(deftest journal-page-walks-subindexed-journal
+(deftest journal-page-reads-each-returned-row
   (doseq [tasks [2 4]] (run-journal-iterators tasks)))

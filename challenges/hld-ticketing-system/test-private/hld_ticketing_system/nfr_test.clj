@@ -188,7 +188,7 @@
             (is (<= (get-in large [op metric]) (+ 24 (* 2 (get-in small [op metric]))))
                 (str op " " metric " grew with own history: " (small op) " -> " (large op)))))))))
 
-(deftest compensation-pages-walk-subindexed-records
+(deftest compensation-pages-read-each-returned-record
   (doseq [tasks [2 4]]
     (with-clients [[a b] 2 tasks]
       (p/create-event! a "create" "e")
@@ -197,7 +197,10 @@
       (p/advance-clock! a "tick" "e" 1)
       (doseq [i (range 300)] (p/confirm-hold! a (str "late-" i) "e" "h" "u" (str "p" i)))
       (harness/wait-for-processing! b)
-      (let [[page ops] (nfr/capture-rocks-ops-with-result #(p/get-compensations b "e" 200 5))]
-        (is (= [201 202 203 204 205] (mapv :seq page)))
-        (is (<= 1 (:iterator-reads ops) 16)
-            (str "a compensation page must range-read a subindexed log: " ops))))))
+      (doseq [limit [5 20 100]]
+        (let [[page ops] (nfr/capture-rocks-ops-with-result #(p/get-compensations b "e" 150 limit))
+              touched (+ (:reads ops) (:iterator-reads ops))]
+          (is (= (vec (range 151 (+ 151 limit))) (mapv :seq page)))
+          (is (<= limit touched (+ (* 2 limit) 8))
+              (str "limit " limit ": a compensation page must read about one stored entry per "
+                   "returned record, not the log as one value; " ops)))))))
