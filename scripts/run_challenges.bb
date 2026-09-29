@@ -13,7 +13,9 @@
 (load-file (str (fs/parent (fs/absolutize *file*)) "/encrypt_challenges.bb"))
 
 (def cli-spec
-  {:filter     {:desc "Glob pattern to match challenge names (e.g. \"basic-*\")"
+  {:grader-timeout {:desc "Seconds before a private-test (grader) run is killed with its process tree (default 1800)"
+                    :coerce :long}
+   :filter     {:desc "Glob pattern to match challenge names (e.g. \"basic-*\")"
                 :alias :f}
    :batch      {:desc "Batch number from CHALLENGE_ORDER.md (5 requires a cluster)"
                 :alias :b
@@ -880,6 +882,13 @@
        :failures   (reduce + (map #(parse-long (nth % 1)) fe))
        :errors     (reduce + (map #(parse-long (nth % 2)) fe))})))
 
+(defn sentinel-0-of-1?
+  "True for the `Private FAIL 0/1` sentinel: `Ran 1 tests`, 0 failures, and
+  every counted assertion is an error. The tests never ran; it is not an
+  implementation failure."
+  [{:keys [tests assertions failures errors]}]
+  (and (= 1 tests) (zero? failures) (pos? errors) (= assertions errors)))
+
 (defn classify-private-result
   "Turn a private-test invocation into a verdict. `has-suite?` is whether the
   challenge has test-private/; `private-result` is nil when the suite was not
@@ -910,6 +919,13 @@
         (zero? (:tests counts))
         {:private-status :unavailable :private-counts counts
          :private-reason "Ran 0 tests: suite did not load"}
+
+        ;; `FAIL 0/1`: one test whose only report is an uncaught error, with no
+        ;; assertion passing or failing. The suite errored before any check ran
+        ;; (load or launch failure), so no correctness evidence exists.
+        (sentinel-0-of-1? counts)
+        {:private-status :unavailable :private-counts counts
+         :private-reason "sentinel 0/1: suite errored before any assertion ran"}
 
         (pos? bad)
         {:private-status :fail :private-counts counts}
@@ -1024,6 +1040,112 @@
       (format "Average score: %.1f (n=%d scored, %d unscored)"
               (/ (reduce + 0.0 scored) (count scored)) (count scored) unscored)
       (format "Average score: - (n=0 scored, %d unscored)" unscored))))
+
+(defn result-outcome
+  "Headline outcome of a result map; derived for records that predate :outcome."
+  [{:keys [outcome status private-status]}]
+  (or outcome
+      (classify-outcome {:completion (case status :pass :completed :timeout :timeout :solver-fail)
+                         :private-status (if (#{:pass :fail :unavailable :not-run} private-status)
+                                           private-status
+                                           :none)})))
+
+(defn private-verdict-line
+  "Private verdict counts. Unavailable means not evaluated, never FAIL."
+  [results]
+  (let [by (frequencies (map :private-status results))]
+    (when (some by [:pass :fail :unavailable :not-run])
+      (format "Private verdicts: PASS %d | FAIL %d | UNAVAILABLE (not evaluated) %d | not-run %d"
+              (get by :pass 0) (get by :fail 0) (get by :unavailable 0) (get by :not-run 0)))))
+
+;;; Integrity hashes and run manifest
+
+(defn sha256-hex [^bytes bs]
+  (let [md (java.security.MessageDigest/getInstance "SHA-256")]
+    (apply str (map #(format "%02x" (bit-and % 0xff)) (.digest md bs)))))
+
+(defn file-sha256 [path]
+  (when (and path (fs/regular-file? path))
+    (sha256-hex (fs/read-all-bytes path))))
+
+(defn tree-sha256
+  "SHA-256 over sorted relative paths and contents of every file under dir;
+  nil when dir is missing."
+  [dir]
+  (when (and dir (fs/directory? dir))
+    (let [files (sort-by str (filter fs/regular-file? (fs/glob dir "**")))
+          entries (map #(str (fs/relativize dir %) "\u0000" (file-sha256 %)) files)]
+      (sha256-hex (.getBytes (str/join "\n" entries) "UTF-8")))))
+
+(defn git-out
+  "Trimmed stdout of a git command in dir, or nil on failure."
+  [dir & args]
+  (try
+    (let [{:keys [exit out]} (apply p/shell {:dir (str dir) :out :string :err :string :continue true}
+                                    "git" args)]
+      (when (zero? exit) (str/trim out)))
+    (catch Exception _ nil)))
+
+(defn phase-manifest [r]
+  {:phase-id (let [id (:phase-id r)] (if (keyword? id) (name id) id))
+   :attempt (:attempt r)
+   :subsystem (:subsystem r)
+   :exit (:exit r)
+   :verdict (some-> (:verdict r) name)
+   :timed-out (boolean (:timed-out? r))
+   :provider-limit (boolean (:provider-limit? r))
+   :user-stopped (boolean (:user-stopped? r))
+   :transient-retries (:retries r)
+   :duration-s (:duration-s r)
+   :transcript-path (:transcript-path r)
+   :transcript-sha256 (file-sha256 (:transcript-path r))
+   :cost-reported (:cost-reported r)
+   :cost-estimated (:cost-estimated r)})
+
+(defn challenge-manifest [r]
+  {:name (:name r)
+   :outcome (name (result-outcome r))
+   :completion (some-> (:completion r) name)
+   :runner-status (some-> (:status r) name)
+   :private-suite-available (boolean (:has-private-suite? r))
+   :private-status (some-> (:private-status r) name)
+   :private-counts (:private-counts r)
+   :private-reason (:private-reason r)
+   :score (:challenge-score r)
+   :scored (some? (:challenge-score r))
+   :builds (:builds r)
+   :retries (:retries r)
+   :implementation-sha256 (:implementation-sha256 r)
+   :challenge-tree-sha (:challenge-tree-sha r)
+   :cost-reported (:cost-reported r)
+   :cost-estimated (:cost-estimated r)
+   :phases (mapv phase-manifest (:phase-results r))})
+
+(defn build-run-manifest
+  "Pure: run metadata map plus results -> JSON-ready manifest map."
+  [{:keys [run-id started-at finished-at args repo-sha repo-dirty? agent requested
+           grader-timeout-s]} results]
+  {:schema-version 1
+   :run-id run-id
+   :started-at started-at
+   :finished-at finished-at
+   :args args
+   :repo {:head-sha repo-sha :dirty repo-dirty?}
+   :requested (merge {:agent agent} requested)
+   :grader-timeout-s grader-timeout-s
+   :challenges (mapv challenge-manifest results)})
+
+(defn manifest-path [report-path]
+  (str (str/replace (str report-path) #"\.md$" "") ".manifest.json"))
+
+(defn write-run-manifest!
+  "Write the manifest next to the report. Never overwrites an existing file.
+  Returns the path written, or nil when one already existed."
+  [report-path manifest]
+  (let [path (manifest-path report-path)]
+    (when-not (fs/exists? path)
+      (spit path (json/generate-string manifest {:pretty true}))
+      path)))
 
 ;;; Alignment scoring
 
@@ -1273,7 +1395,7 @@
       (try (p/shell {:out :string :err :string :continue true}
                     "kill" "-KILL" "--" (str "-" (.pid proc)))
            (catch Exception _ nil)))
-    (doseq [^ProcessHandle k kids] (try (.destroyForcibly k) (catch Exception _ nil)))
+    (doseq [^java.lang.ProcessHandle k kids] (try (.destroyForcibly k) (catch Exception _ nil)))
     (try (.destroyForcibly proc) (catch Exception _ nil))
     (count kids)))
 
@@ -2039,6 +2161,8 @@
                                    :private-reason (:private-reason private-verdict)
                                    :has-private-suite? has-suite?
                                    :has-implementation? has-implementation?
+                                   :implementation-sha256 (tree-sha256 (fs/path project-root "implementations" challenge-name))
+                                   :challenge-tree-sha (git-out project-root "rev-parse" (str "HEAD:challenges/" challenge-name))
                                    :challenge-score score
                                    :builds builds
                                    :retries retries
@@ -2194,27 +2318,29 @@
     (let [max-name   (max 9 (apply max (map #(count (:name %)) results)))
           max-skills (max 6 (apply max (map #(count (str/join ", " (:skills-used % []))) results)))
           max-refs   (max 10 (apply max (map #(count (str/join ", " (:skill-refs-used % []))) results)))]
-      {:header (format (str "| %-" max-name "s | %-7s | %-7s | %-5s | %-10s | %-8s | %-9s | %-10s | %-12s | %-10s | %-9s | %-10s | %-" max-skills "s | %-" max-refs "s | %-5s | %-9s |")
-                       "Challenge" "Status" "Private" "Score" "Iterations" "Duration"
+      {:header (format (str "| %-" max-name "s | %-24s | %-7s | %-7s | %-5s | %-6s | %-7s | %-8s | %-9s | %-10s | %-12s | %-10s | %-9s | %-10s | %-" max-skills "s | %-" max-refs "s | %-5s | %-9s |")
+                       "Challenge" "Outcome" "Private" "Runner" "Score" "Builds" "Retries" "Duration"
                        "In Tokens" "Out Tokens" "Cache Create" "Cache Read" "Tool Uses" "Cost" "Skills" "Skill Refs"
                        "Align" "TestAlign")
        :separator (str "|" (str/join (repeat (+ max-name 2) "-"))
-                       "|---------|---------|-------|------------|----------|-----------|------------|--------------|------------|-----------|------------|"
+                       "|--------------------------|---------|---------|-------|--------|---------|----------|-----------|------------|--------------|------------|-----------|------------|"
                        (str/join (repeat (+ max-skills 2) "-"))
                        "|"
                        (str/join (repeat (+ max-refs 2) "-"))
                        "|-------|-----------|")
-       :rows (mapv (fn [{:keys [name status private-status challenge-score iterations duration-s
+       :rows (mapv (fn [{:keys [name status private-status challenge-score iterations builds retries duration-s
                                 input-tokens output-tokens
                                 cache-creation-tokens cache-read-tokens tool-uses cost
-                                skills-used skill-refs-used scoring]}]
+                                skills-used skill-refs-used scoring] :as r}]
                      (let [scores (:scores scoring)]
-                       (format (str "| %-" max-name "s | %-7s | %-7s | %-5d | %-10d | %-7ds | %-9d | %-10d | %-12d | %-10d | %-9d | %-10s | %-" max-skills "s | %-" max-refs "s | %-5s | %-9s |")
+                       (format (str "| %-" max-name "s | %-24s | %-7s | %-7s | %-5s | %-6d | %-7d | %-7ds | %-9d | %-10d | %-12d | %-10d | %-9d | %-10s | %-" max-skills "s | %-" max-refs "s | %-5s | %-9s |")
                                name
-                               (case status :pass "PASS" :timeout "TIMEOUT" "FAIL")
-                               (case private-status :pass "PASS" :fail "FAIL" :skip "-" "-")
-                               (or challenge-score 0)
-                               iterations
+                               (outcome-label (result-outcome r))
+                               (private-label private-status)
+                               (runner-label status)
+                               (if (some? challenge-score) (str challenge-score) "-")
+                               (or builds iterations 0)
+                               (or retries 0)
                                duration-s
                                input-tokens
                                output-tokens
@@ -2235,13 +2361,7 @@
   ([results] (print-summary-table results nil))
   ([results total-elapsed-s]
    (when-let [{:keys [header separator rows]} (result-table-rows results)]
-     (let [passed   (count (filterv #(= :pass (:status %)) results))
-           timed-out (count (filterv #(= :timeout (:status %)) results))
-           failed   (count (filterv #(= :fail (:status %)) results))
-           priv-passed (count (filterv #(= :pass (:private-status %)) results))
-           priv-failed (count (filterv #(= :fail (:private-status %)) results))
-           priv-total  (+ priv-passed priv-failed)
-           {:keys [input-tokens output-tokens
+     (let [{:keys [input-tokens output-tokens
                    cache-creation-tokens cache-read-tokens]} (token-totals results)]
        (println)
        (println header)
@@ -2251,23 +2371,21 @@
        (println)
        (let [total-cost      (when (some :cost results) (reduce + 0 (keep :cost results)))
              total-tool-uses (reduce + 0 (map #(or (:tool-uses %) 0) results))
-             avg-score       (/ (reduce + 0.0 (map #(or (:challenge-score %) 0) results))
-                                (count results))
              align-vals      (keep #(get-in % [:scoring :scores :alignment]) results)
              avg-align       (when (seq align-vals)
                                (/ (reduce + 0.0 align-vals) (count align-vals)))
              test-align-vals (keep #(get-in % [:scoring :scores :test-alignment]) results)
              avg-test-align  (when (seq test-align-vals)
-                               (/ (reduce + 0.0 test-align-vals) (count test-align-vals)))]
-         (println (format "Challenges: %d | Passed: %d | Failed: %d | Timed out: %d"
-                          (count results) passed failed timed-out))
-         (when (pos? priv-total)
-           (println (format "Private tests: %d/%d passed" priv-passed priv-total)))
-         (println (format "Average score: %.1f" avg-score))
+                               (/ (reduce + 0.0 test-align-vals) (count test-align-vals)))
+             results'        (mapv #(assoc % :outcome (result-outcome %)) results)]
+         (println (outcome-counts-line results'))
+         (when-let [line (private-verdict-line results)]
+           (println line))
+         (println (average-score-line results))
          (when avg-align
-           (println (format "Average alignment: %.1f/5 (n=%d)" avg-align (count align-vals))))
+           (println (format "Average alignment: %.1f/5 (n=%d, informational)" avg-align (count align-vals))))
          (when avg-test-align
-           (println (format "Average test alignment: %.1f/5 (n=%d)" avg-test-align (count test-align-vals))))
+           (println (format "Average test alignment: %.1f/5 (n=%d, informational)" avg-test-align (count test-align-vals))))
          (println (format "Tokens: In: %d | Out: %d | Cache Create: %d | Cache Read: %d | Tool Uses: %d | Cost: %s"
                           input-tokens output-tokens cache-creation-tokens cache-read-tokens
                           total-tool-uses (format-cost total-cost))))
@@ -2295,9 +2413,7 @@
                     model                 (format "%s-%s-%s-%s.md" date-str time-str agent-name (str/replace model #"[/\\\\]" "_"))
                     :else                 (format "%s-%s-%s.md" date-str time-str agent-name))
          report-path (fs/path reports-dir filename)
-         passed    (count (filterv #(= :pass (:status %)) results))
-         timed-out (count (filterv #(= :timeout (:status %)) results))
-         failed    (count (filterv #(= :fail (:status %)) results))
+         results' (mapv #(assoc % :outcome (result-outcome %)) results)
          sb (StringBuilder.)]
      (fs/create-dirs reports-dir)
      (.append sb (format "# Challenge Run Report - %s\n" timestamp))
@@ -2306,21 +2422,25 @@
        (.append sb (format "Model: %s\n" model)))
      (when reasoning
        (.append sb (format "Reasoning: %s\n" reasoning)))
-     (.append sb (format "Challenges: %d | Passed: %d | Failed: %d | Timed out: %d\n\n"
-                         (count results) passed failed timed-out))
-     (.append sb "| Challenge | Status | Private | Score | Iterations | Duration | In Tokens | Out Tokens | Cache Create | Cache Read | Tool Uses | Cost | Skills | Skill Refs | Align | TestAlign |\n")
-     (.append sb "|-----------|--------|---------|-------|------------|----------|-----------|------------|--------------|------------|-----------|------|--------|------------|-------|----------|\n")
-     (doseq [{:keys [name status private-status challenge-score iterations duration-s
+     (.append sb (str (outcome-counts-line results') "\n"))
+     (when-let [line (private-verdict-line results)]
+       (.append sb (str line "\n")))
+     (.append sb "\n")
+     (.append sb "| Challenge | Outcome | Private | Runner | Score | Builds | Retries | Duration | In Tokens | Out Tokens | Cache Create | Cache Read | Tool Uses | Cost | Skills | Skill Refs | Align | TestAlign |\n")
+     (.append sb "|-----------|---------|---------|--------|-------|--------|---------|----------|-----------|------------|--------------|------------|-----------|------|--------|------------|-------|----------|\n")
+     (doseq [{:keys [name status challenge-score iterations builds retries duration-s
                      input-tokens output-tokens
                      cache-creation-tokens cache-read-tokens tool-uses cost
-                     skills-used skill-refs-used scoring]} results]
+                     skills-used skill-refs-used scoring] :as r} results']
        (let [scores (:scores scoring)]
-         (.append sb (format "| %s | %s | %s | %d | %d | %ds | %d | %d | %d | %d | %d | %s | %s | %s | %s | %s |\n"
+         (.append sb (format "| %s | %s | %s | %s | %s | %d | %d | %ds | %d | %d | %d | %d | %d | %s | %s | %s | %s | %s |\n"
                              name
-                             (case status :pass "PASS" :timeout "TIMEOUT" "FAIL")
-                             (case private-status :pass "PASS" :fail "FAIL" :skip "-" "-")
-                             (or challenge-score 0)
-                             iterations
+                             (outcome-label (:outcome r))
+                             (private-detail r)
+                             (runner-label status)
+                             (if (some? challenge-score) (str challenge-score) "-")
+                             (or builds iterations 0)
+                             (or retries 0)
                              duration-s
                              input-tokens
                              output-tokens
@@ -2336,19 +2456,17 @@
                    cache-creation-tokens cache-read-tokens]} (token-totals results)
            total-cost      (when (some :cost results) (reduce + 0 (keep :cost results)))
            total-tool-uses (reduce + 0 (map #(or (:tool-uses %) 0) results))
-           avg-score       (/ (reduce + 0.0 (map #(or (:challenge-score %) 0) results))
-                              (count results))
            align-vals      (keep #(get-in % [:scoring :scores :alignment]) results)
            avg-align       (when (seq align-vals)
                              (/ (reduce + 0.0 align-vals) (count align-vals)))
            test-align-vals (keep #(get-in % [:scoring :scores :test-alignment]) results)
            avg-test-align  (when (seq test-align-vals)
                              (/ (reduce + 0.0 test-align-vals) (count test-align-vals)))]
-       (.append sb (format "\n**Average score:** %.1f\n" avg-score))
+       (.append sb (str "\n**" (str/replace-first (average-score-line results) ":" ":**") "\n"))
        (when avg-align
-         (.append sb (format "**Average alignment:** %.1f/5 (n=%d)\n" avg-align (count align-vals))))
+         (.append sb (format "**Average alignment (informational):** %.1f/5 (n=%d)\n" avg-align (count align-vals))))
        (when avg-test-align
-         (.append sb (format "**Average test alignment:** %.1f/5 (n=%d)\n" avg-test-align (count test-align-vals))))
+         (.append sb (format "**Average test alignment (informational):** %.1f/5 (n=%d)\n" avg-test-align (count test-align-vals))))
        (.append sb (format "**Tokens:** In: %d | Out: %d | Cache Create: %d | Cache Read: %d | Tool Uses: %d | Cost: %s\n"
                            input-tokens output-tokens cache-creation-tokens cache-read-tokens
                            total-tool-uses (format-cost total-cost))))
@@ -2458,6 +2576,7 @@
 
         (let [enc-key       (challenge-encryption-key)
               start-ms      (System/currentTimeMillis)
+              started-at    (str (java.time.Instant/now))
               results       (binding [*verbose* (or (:verbose opts) (:pretty opts))
                                       *pretty* (boolean (:pretty opts))
                                       *isolate* (boolean (or (:isolate opts) (:isolate-network opts)))
@@ -2465,7 +2584,8 @@
                                       *fast-model* fast-model
                                       *fast-reasoning* fast-effort
                                       *slow-model* slow-model
-                                      *slow-reasoning* slow-effort]
+                                      *slow-reasoning* slow-effort
+                                      *grader-timeout-s* (or (:grader-timeout opts) *grader-timeout-s*)]
                               (run-challenges valid agent-key agent-name project-root model reasoning enc-key))
               total-elapsed-s (/ (- (System/currentTimeMillis) start-ms) 1000.0)]
           (print-summary-table results total-elapsed-s)
@@ -2474,7 +2594,23 @@
                                               :model model
                                               :reasoning reasoning})]
             (println)
-            (println (str "Report saved: " report-path)))
+            (println (str "Report saved: " report-path))
+            (when-let [mpath (write-run-manifest!
+                              report-path
+                              (build-run-manifest
+                               {:run-id (str (fs/strip-ext (fs/file-name report-path)) "-" (subs (str (random-uuid)) 0 8))
+                                :started-at started-at
+                                :finished-at (str (java.time.Instant/now))
+                                :args (vec args)
+                                :repo-sha (git-out project-root "rev-parse" "HEAD")
+                                :repo-dirty? (boolean (seq (git-out project-root "status" "--porcelain")))
+                                :agent agent-name
+                                :requested {:model model :effort reasoning
+                                            :fast-model fast-model :fast-effort fast-effort
+                                            :slow-model slow-model :slow-effort slow-effort}
+                                :grader-timeout-s (or (:grader-timeout opts) *grader-timeout-s*)}
+                               results))]
+              (println (str "Manifest saved: " mpath))))
 
           ;; Append to results database
           (let [db-path (str (fs/path project-root ".." "reports" "results.edn"))
@@ -2482,15 +2618,22 @@
                 records (mapv (fn [{:keys [name status private-status challenge-score iterations duration-s
                                            input-tokens output-tokens
                                            cache-creation-tokens cache-read-tokens
-                                           tool-uses cost scoring]}]
+                                           tool-uses cost scoring
+                                           completion private-counts private-reason builds retries] :as r}]
                                 {:timestamp            timestamp
                                  :agent                agent-name
                                  :model                model
                                  :reasoning            reasoning
                                  :challenge             name
                                  :status               status
+                                 :outcome              (result-outcome r)
+                                 :completion           completion
                                  :private-status       private-status
-                                 :challenge-score      (or challenge-score 0)
+                                 :private-counts       private-counts
+                                 :private-reason       private-reason
+                                 :challenge-score      challenge-score
+                                 :builds               builds
+                                 :retries              retries
                                  :iterations           iterations
                                  :duration-s           duration-s
                                  :input-tokens         (or input-tokens 0)

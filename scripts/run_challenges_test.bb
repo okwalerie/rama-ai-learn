@@ -359,7 +359,7 @@
           (let [path (generate-report sample-results "test" project-dir)
                 content (slurp path)]
             (is (re-find #"\*\*Average score:\*\*" content))
-            (is (re-find #"\*\*Average alignment:\*\* 5\.0/5" content))))
+            (is (re-find #"\*\*Average alignment \(informational\):\*\* 5\.0/5" content))))
         (testing "when model is specified"
           (let [path (generate-report sample-results "claude" project-dir {:total-elapsed-s 100 :model "sonnet"})
                 content (slurp path)]
@@ -1170,6 +1170,152 @@
                     agent-tests-use-harness? (constantly false)]
         (is (= 4 (:alignment (run-alignment-scoring! "." "demo" "provider/model" adapter))))
         (is (= 3 (:test-alignment (run-test-alignment-scoring! "." "demo" "provider/model" adapter))))))))
+
+;;; Outcome taxonomy regressions (docs/outcome-taxonomy.md)
+
+(def private-real-fail {:exit 1 :out "Ran 12 tests containing 40 assertions.\n3 failures, 0 errors.\n"})
+(def private-sentinel-0-of-1 {:exit 1 :out "Ran 1 tests containing 1 assertions.\n0 failures, 1 errors.\n"})
+(def private-real-pass {:exit 0 :out "Ran 12 tests containing 40 assertions.\n0 failures, 0 errors.\n"})
+
+(defn phase [phase-id subsystem verdict]
+  {:phase-id phase-id :subsystem subsystem :verdict verdict :exit 0})
+
+(defn scored-result
+  "Mirror run-challenge's outcome/score derivation for fixture data."
+  [phase-result has-suite? private-result]
+  (let [pv (classify-private-result has-suite? private-result)
+        completion (classify-completion phase-result)
+        outcome (classify-outcome {:completion completion
+                                   :private-status (:private-status pv)
+                                   :has-implementation? true})
+        prs (:phase-results phase-result)
+        retries (count-semantic-retries prs)]
+    (merge pv {:name "fixture" :status (:status phase-result) :outcome outcome
+               :completion completion :has-private-suite? has-suite?
+               :builds (count (filter #(= :build (:phase-id %)) prs))
+               :retries retries :iterations (:iterations phase-result)
+               :challenge-score (compute-challenge-score outcome retries)
+               :duration-s 1 :input-tokens 0 :output-tokens 0
+               :cache-creation-tokens 0 :cache-read-tokens 0 :phase-results prs})))
+
+(def auction-runner-pass
+  {:status :pass :iterations 1
+   :phase-results [(phase 1 nil :pass) (phase 2 nil :pass) (phase :build nil :pass)
+                   (phase :full-spec-review nil :pass)]})
+
+(deftest private-verdict-sentinels-test
+  (testing "real failures are FAIL; sentinels are UNAVAILABLE, never FAIL"
+    (is (= :fail (:private-status (classify-private-result true private-real-fail))))
+    (is (= :pass (:private-status (classify-private-result true private-real-pass))))
+    (doseq [r [private-sentinel-0-of-1
+               {:exit 0 :out "Ran 0 tests containing 0 assertions.\n0 failures, 0 errors.\n"}
+               {:exit 1 :out "" :err "Syntax error compiling at (module.clj:1:1)"}
+               {:exit 124 :out "" :timed-out? true :timeout-s 5}
+               {:exit 1 :out "Ran 3 tests containing 3 assertions.\n0 failures, 0 errors.\n"}]]
+      (is (= :unavailable (:private-status (classify-private-result true r))) (pr-str r))))
+  (testing "0/1 sentinel is named in the reason"
+    (is (re-find #"sentinel 0/1" (:private-reason (classify-private-result true private-sentinel-0-of-1)))))
+  (testing "a genuine single-test assertion failure stays FAIL"
+    (is (= :fail (:private-status (classify-private-result
+                                   true {:exit 1 :out "Ran 1 tests containing 2 assertions.\n1 failures, 0 errors.\n"}))))))
+
+(deftest auction-runner-pass-private-fail-test
+  (testing "runner PASS + private FAIL headlines PRIVATE-FAIL with score 0"
+    (let [r (scored-result auction-runner-pass true private-real-fail)
+          out (with-out-str (print-summary-table [r]))]
+      (is (= :completed (:completion r)))
+      (is (= :private-fail (:outcome r)))
+      (is (= 0 (:challenge-score r)))
+      (is (re-find #"^PRIVATE-FAIL \| Private: FAIL \(3 failures" (challenge-headline r)))
+      (is (re-find #"Runner: PASS" (challenge-headline r)) "runner status is labelled, not the headline")
+      (is (re-find #"\| PRIVATE-FAIL +\| FAIL +\| PASS " out))
+      (is (re-find #"PRIVATE-PASS: 0 \| PRIVATE-FAIL: 1" out))
+      (is (not (re-find #"Private tests: \d+/\d+ passed" out)))))
+  (testing "runner PASS + `Private FAIL 0/1` sentinel is PRIVATE-UNAVAILABLE, unscored, not FAIL"
+    (let [r (scored-result auction-runner-pass true private-sentinel-0-of-1)
+          out (with-out-str (print-summary-table [r]))]
+      (is (= :private-unavailable (:outcome r)))
+      (is (= :unavailable (:private-status r)))
+      (is (nil? (:challenge-score r)))
+      (is (re-find #"^PRIVATE-UNAVAILABLE \| Private: UNAVAIL \(sentinel 0/1" (challenge-headline r)))
+      (is (re-find #"Private verdicts: PASS 0 \| FAIL 0 \| UNAVAILABLE \(not evaluated\) 1" out))
+      (is (re-find #"Average score: - \(n=0 scored, 1 unscored\)" out))))
+  (testing "headline never leads with PASS unless the private suite passed"
+    (doseq [pr [private-real-fail private-sentinel-0-of-1 nil]]
+      (let [r (scored-result auction-runner-pass true pr)]
+        (is (not (re-find #"^(PASS|PRIVATE-PASS|PUBLIC-PASS)" (challenge-headline r))) (pr-str pr)))))
+  (testing "private PASS is the only correctness PASS"
+    (is (= :private-pass (:outcome (scored-result auction-runner-pass true private-real-pass))))))
+
+(def social-three-subsystems
+  {:status :pass :iterations 3
+   :phase-results (vec (for [s ["follows" "fanout" "timeline"]
+                             p [(phase 1 s :pass) (phase :build s :pass) (phase 3 s :pass)]]
+                         p))})
+
+(deftest social-three-subsystem-builds-not-penalized-test
+  (testing "three independent subsystem builds are 3 builds and 0 retries"
+    (let [r (scored-result social-three-subsystems true private-real-pass)]
+      (is (= 3 (:builds r)))
+      (is (= 0 (:retries r)))
+      (is (= 100 (:challenge-score r)) "old formula scored 100/2^(3-1) = 25")))
+  (testing "only a phase that follows a failed verdict in the same subsystem is a retry"
+    (let [prs [(phase :build "follows" :fail) (phase :build "follows" :pass)
+               (phase 3 "fanout" :major-fail) (phase :build "timeline" :pass)]]
+      (is (= 1 (count-semantic-retries prs)))
+      (is (= 50 (compute-challenge-score :private-pass 1)))))
+  (testing "retries never rescue a private failure"
+    (is (= 0 (compute-challenge-score :private-fail 0)))))
+
+(deftest run-manifest-test
+  (let [r (assoc (scored-result auction-runner-pass true private-sentinel-0-of-1)
+                 :implementation-sha256 "abc" :cost-reported 1.5 :cost-estimated 1.2)
+        m (build-run-manifest {:run-id "run-1" :started-at "t0" :finished-at "t1"
+                               :repo-sha "deadbeef" :repo-dirty? false :agent "claude"
+                               :requested {:model "m" :effort "high"} :grader-timeout-s 1800}
+                              [r])
+        c (first (:challenges m))]
+    (is (= "run-1" (:run-id m)))
+    (is (= {:head-sha "deadbeef" :dirty false} (:repo m)))
+    (is (= "claude" (get-in m [:requested :agent])))
+    (is (= "private-unavailable" (:outcome c)))
+    (is (true? (:private-suite-available c)))
+    (is (false? (:scored c)))
+    (is (= [1.5 1.2] [(:cost-reported c) (:cost-estimated c)]))
+    (is (= 4 (count (:phases c))))
+    (is (= [1 "build"] [(:phase-id (first (:phases c))) (:phase-id (nth (:phases c) 2))]))
+    (is (string? (json/generate-string m)))
+    (let [dir (fs/create-temp-dir)
+          report (str (fs/path dir "r.md"))]
+      (is (= (str (fs/path dir "r.manifest.json")) (write-run-manifest! report m)))
+      (is (nil? (write-run-manifest! report {:run-id "other"})) "never overwrites")
+      (is (= "run-1" (get (json/parse-string (slurp (manifest-path report))) "run-id")))
+      (fs/delete-tree dir))))
+
+(deftest tree-sha256-test
+  (let [dir (fs/create-temp-dir)]
+    (spit (str (fs/path dir "a.clj")) "(ns a)")
+    (let [h1 (tree-sha256 dir)]
+      (is (= 64 (count h1)))
+      (spit (str (fs/path dir "a.clj")) "(ns a) ;; changed")
+      (is (not= h1 (tree-sha256 dir))))
+    (is (nil? (tree-sha256 (fs/path dir "missing"))))
+    (fs/delete-tree dir)))
+
+(deftest grader-timeout-kills-process-tree-test
+  (let [root (fs/create-temp-dir)
+        marker (str "sleep " (+ 7000 (rand-int 999)))]
+    (fs/create-dirs (fs/path root "challenges" "x"))
+    (let [r (binding [*grader-timeout-s* 1
+                      *private-test-cmd* ["bash" "-c" (str marker " & " marker " & wait")]]
+              (run-private-tests! (str root) "x"))]
+      (is (:timed-out? r))
+      (is (= 124 (:exit r)))
+      (is (= :unavailable (:private-status (classify-private-result true r))))
+      (Thread/sleep 300)
+      (is (not= 0 (:exit (p/shell {:out :string :err :string :continue true} "pgrep" "-f" marker)))
+          "no grandchild survives the grader"))
+    (fs/delete-tree root)))
 
 (let [{:keys [fail error]} (run-tests)]
   (System/exit (if (zero? (+ fail error)) 0 1)))
