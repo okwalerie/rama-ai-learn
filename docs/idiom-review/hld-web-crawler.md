@@ -42,7 +42,7 @@
   - The discover loop tests `(nil? *existing)` twice (`module.clj:87-94`): once to write and once to choose the `continue>`. A single `<<if` with both transforms followed by `(continue> (rest *remaining) (inc *n))`, and `(continue> (rest *remaining) *n)` in the `else>`, expresses the same logic once.
   - The `:info` map is read, `assoc`-ed, and written back with `termval` at `:95-96`, `:100-101`, `:169`, and `:185-187`. This is safe because the host is processed by one sequential loop and `:info` is a small fixed-keys record. Field-level paths (`(keypath *host :info :delay)` etc.) would make the "policy never touches the clock, fence, lease, or last-claim-at" guarantee (`protocol.clj:65-70`) visible in the code rather than dependent on `assoc` discipline. This is optional.
   - Pure helpers for the claim decision would make the rules easier to audit, for example `(claim-decision info tick) -> {:outcome ... :free-info ...}` mirroring protocol steps 3-5 (`protocol.clj:72-89`). The PState reads and writes would stay in dataflow.
-- Before any loop rewrite, rely on the private suite's boundary coverage: expiry equality (`frontier_test.clj:64-75`), rejected-completion clock immutability, non-retroactive policy (`:130-164`), claim-id replay (`:101-103`, `:324-329`), stale requeue order (`:226-238`), and unchanged-module update durability (`:303-338`).
+- Before any loop rewrite, rely on the private suite's boundary coverage: expiry equality and rejected-completion clock immutability (`frontier_test.clj:64-75`: the completion rejected at 70 must leave the clock unchanged for the one at 69 to succeed), non-retroactive policy (`:130-164`), claim-id replay (`:101-103`, `:324-329`), stale requeue order (`:226-238`), and unchanged-module update durability (`:303-338`).
 
 ### 6. Durable history is correctly subindexed; unbounded growth is a contract consequence
 
@@ -72,5 +72,5 @@
 ## Verification / limits
 
 - Branch `orb/idiom-hld-web-crawler` starts at baseline `43abd3fccff8777d8995f8a29658f3c4c97df01a`. The only changed file relative to the baseline is this document.
-- Every `file:line` citation above was checked against the files at the baseline (re-checked in a later independent pass, which corrected the chat query-topology citation in finding 7).
+- Every `file:line` citation above was checked against the files at the baseline (re-checked in later independent passes, which corrected the chat query-topology citation in finding 7 and attached the clock-immutability test citation in finding 5).
 - The reference was not rewritten, so the private suite was not run for this review, as instructed for a doc-only outcome. This document is not a new test verdict. The reference's own recorded validation is in `challenges/hld-web-crawler/test-resources/BUILD_VALIDATION.md:5-6` (author-reported: 10 tests, 2,892 assertions, 0 failures).
