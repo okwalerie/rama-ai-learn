@@ -1583,3 +1583,114 @@ None. It uses one PState keyed by `FlagId` with a revision guard (`module.clj:31
 | hld-web-crawler | PARTIAL | `discover!`, `complete!`, `get-host` (`:queued` "not by scanning") and writes (`:rocks-commit`) are never measured; a non-subindexed pending-set blob passes |
 | hld-feature-flag-service | ADEQUATE (borderline) | Unrelated flags sit in other envs, so a per-env scan or bundle blob passes; concentrate the population in the probed env |
 | hld-enterprise-rag | PARTIAL | `put-user-groups!`, put and delete costs are explicitly bounded in the README but unmeasured (a per-user materialized-eligibility design passes); no retry test for posting maintenance |
+
+---
+
+# NFR test coverage audit: benchmark modules
+
+These five are the gold-standard benchmark challenges. Each has a private `performance_test_support.clj` alongside functional tests. Each test launches on 2 or 4 tasks, chosen at random.
+
+## 1. auction-module
+
+**Stated NFRs**
+- None beyond "use simulated time" for expiry checks. The README states no cost, latency or fault-tolerance rule.
+
+**Tested NFRs (all private)**
+- Topology type: a `:topology-event` hook requires `:stream` for `list-item!` and `bid!` (the test message cites "millisecond visibility").
+- Exactly-once under retry: `failed-streaming` fails the first `:streaming-complete` of `list-item!` and of two `process-expirations!` calls. Seller, winner and loser must each get exactly one notification.
+- Bounded expiry work: a `:local-select` hook must see `:allow-yield?` true during expiry processing.
+- Subindexing: `get-listings`, `get-bids` and `get-notifications` must each record a non-zero `:rocks-iterator-read` count.
+- Unique listing IDs across two clients.
+
+**Gaps (with a wrong design that passes)**
+- Every tested NFR is unstated. A solver must infer stream topology, retry safety and subindexing from the domain. This is a README gap, not a test gap.
+- Read cost is checked only as "iterator used", never bounded. Wrong design: `get-bids` pages the whole subindexed bid map then sorts on the client. It passes with 3 bids.
+- No concurrent-bid race. Wrong design: `get-highest-bid` read on the bidder partition and compared after a hop. It passes because bids arrive from one thread.
+- No growth pair on expiry. Wrong design: expiry scans every listing with `:allow-yield? true`. It passes the flag check.
+
+**Verdict: PARTIAL.** The retry and topology tests are strong and reusable. The README states none of what they enforce, and read cost is proven only by "iterator used".
+
+## 2. bank-transfer-module
+
+**Stated NFRs**
+- Fault tolerant: "never double process or fail to process" deposits or transfers.
+- Transfer IDs are unique, so no client dedupe is needed.
+
+**Tested NFRs (all private)**
+- Exactly-once proxy: every topology event during deposits and 49 transfers must be `#{:microbatch}`.
+- Write and read cost: a deposit is exactly `{:rocks-read 1 :rocks-writes 1}`. A transfer is at most 8 reads and 6 writes.
+- Subindexed history: `get-incoming-transfers` and `get-outgoing-transfers` over 50 transfers are exactly 1 read, 1 iterator and 50 iterator reads.
+- Balance: deposits to keys from `gen-hashing-index-keys` must give equal `:depot-read` counts per task, with no `:partitioner` events.
+
+**Gaps (with a wrong design that passes)**
+- No retry injection. Microbatch type is a proxy. Wrong design: a microbatch that appends the credit leg to a second internal depot, consumed by another microbatch. A retry duplicates the append; every test passes.
+- No concurrent-transfer race. Transfers come from one client in sequence, so an overdraft race is never exercised. Microbatch makes this safe, but the test would not catch a stream fallback that also passed the type check.
+- Exact op counts are brittle: an equally good design with one extra read fails.
+
+**Verdict: ADEQUATE.** The stated NFR (exactly once) is enforced by topology type, and cost, subindexing and balance are pinned tightly.
+
+## 3. chat-app
+
+**Stated NFRs**
+- Workload: 10M users, 2,000 messages per second, rooms up to 50,000 members, 100,000 heartbeats per second.
+- Visibility within 5 milliseconds for register, profile, room creation and posts.
+- Fixed read work for `get-room-page`, `get-recent-threads` and `get-mentions-page`. `get-unread-counts` costs O(1) per room.
+- Presence is online if a heartbeat arrived in the last 120 seconds.
+
+**Tested NFRs (all private)**
+- Write volume: heartbeats write fewer than 10 records. A post to a 300-member room writes fewer than 40. `mark-room-read!` writes fewer than 15 and reads fewer than 60.
+- Read cost: page reads over a 250-message room stay under 250 reads. Unread counts over 10 rooms stay under 120. Recent threads with 10 replies each stay under 200. Mentions stay under 250. Online members stay under 400.
+- Fault tolerance: `update-module!` keeps every durable view exact, resets presence to offline, and keeps processing writes.
+
+**Gaps (with a wrong design that passes)**
+- The 5 ms visibility bound is untested. Wrong design: every write goes through a microbatch topology. It passes all tests.
+- No retry injection. Wrong design: a stream topology that bumps unread counters and appends derived records through an internal depot. A retry double-counts unread; no test fails.
+- Mention and thread-participant fanout cost is not measured. Wrong design: a reply that rewrites every participant's recent-threads list as one value. It passes with 10 replies.
+
+**Verdict: PARTIAL.** Write and read cost bounds are the best in the repo. The stated latency bound and retry safety of derived counters are not tested.
+
+## 4. fanout
+
+**Stated NFRs**
+- No durable write per follower during fanout; per-follower state is in memory only, and must survive restart by another route.
+- Fanout is balanced across tasks and fair: one post's delay on another must not scale with follower count.
+- No permanent backlog. `post!` is visible on the user timeline within 5 ms; fanout completes within about a second.
+
+**Tested NFRs (all private)**
+- Write amplification: a post to 500 followers must write fewer than 20 RocksDB records, and all 500 must see it.
+- Fault tolerance: after `update-module!`, a reader's timeline over 30 round-robin posts is rebuilt exactly, in strict order, with profiles attached, and new fanout still works.
+
+**Gaps (with a wrong design that passes)**
+- Balance is untested. Wrong design: fan out every follower on the poster's task. With one poster of 500 followers it passes.
+- Fairness is untested. Wrong design: one microbatch processes a whole post's follower list before the next post. No test mixes a large and a small poster.
+- Latency and backlog are untested. Wrong design: fanout in a slow tick with no chunk bound. It passes because tests wait for processing.
+
+**Verdict: PARTIAL.** The per-follower write ban and restart recovery are tested well. Balance and fairness, two of the four numbered constraints, are not tested.
+
+## 5. social-graph-and-fanout
+
+**Stated NFRs**
+- Near-optimal disk work and even CPU across tasks for any follower distribution (three example distributions given).
+- The same five fanout constraints as fanout: no per-follower durable writes, balance, fairness, no backlog, one post per 5 seconds.
+- Workload: 7,000 posts per second, 100 follows per second, at most 5,000 followees.
+
+**Tested NFRs (all private)**
+- Write amplification: a post to 500 followers writes fewer than 20 RocksDB records, and all 500 see it.
+- Fault tolerance: the same restart-and-rebuild test as fanout.
+
+**Gaps (with a wrong design that passes)**
+- The headline property is untested. Wrong design: followers stored as one subindexed set per account on one task. A celebrity's fanout runs on one task; it passes.
+- No growth or distribution test. Wrong design: tuned to a heavy tail, with a per-post full follower scan. No test compares distributions.
+- `follow!`, `unfollow!` and `get-followers` cost is not measured. Wrong design: a follower list stored as one value. It passes with 500 followers.
+
+**Verdict: PARTIAL.** Only the per-follower write ban and restart are tested. The distribution-independent balance and near-optimal work claims that define the challenge have no test.
+
+## Summary table
+
+| Challenge | Verdict | Top gap |
+|---|---|---|
+| auction-module | PARTIAL | Tests enforce stream topology, retry safety and subindexing that the README never states; read cost is checked only as "iterator used" |
+| bank-transfer-module | ADEQUATE | No retry injection: a microbatch that appends a transfer leg to a second internal depot duplicates it on retry and passes |
+| chat-app | PARTIAL | The 5 ms visibility bound is untested (all-microbatch passes); no retry test for derived unread counters |
+| fanout | PARTIAL | Stated balance and fairness are untested: fanning out all followers on the poster's task passes |
+| social-graph-and-fanout | PARTIAL | The distribution-independent balance and near-optimal work property is untested: one task per celebrity passes |

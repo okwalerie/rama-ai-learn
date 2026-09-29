@@ -1,0 +1,512 @@
+[
+  {
+    "slug": "collaborative-document-editor",
+    "contract": "The solver builds a backend that applies versioned text insertions and removals to documents keyed by Long ID. An edit made against an older version is transformed against the edits it missed before it is applied. A query returns the current text and the count of accepted operations.",
+    "study": {
+      "number": "8.15",
+      "title": "Collaborative Editing",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/collaborative-editing/",
+      "then": [],
+      "reason": "The case study's server-side operational transform over a per-document edit log maps directly to transforming stale edits against missed history.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*edit-depot",
+          "partition": "hash by document id"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$docs",
+          "schema": "{Long String}",
+          "key": "document id"
+        },
+        {
+          "name": "$$edits",
+          "schema": "{Long [Edit]}, vector subindexed",
+          "key": "document id"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "core",
+          "type": "stream",
+          "does": "transforms a stale edit against missed edits, then stores text and edit log"
+        },
+        {
+          "name": "doc+version",
+          "type": "query",
+          "does": "returns current text and edit count"
+        }
+      ],
+      "ownership": "Document ID owns the depot partition and both PStates, so each edit is transformed on one task with no cross-partition hop. The query hashes the same ID."
+    },
+    "nfr": {
+      "verdict": "ABSENT",
+      "stated": [
+        "README disclaims latency, document size and history compaction guarantees",
+        "Edits on distinct IDs are independent (weak partitioning hint)",
+        "Writes are visible after the processing barrier"
+      ],
+      "tested": [],
+      "gaps": [
+        {
+          "gap": "Transform cost is not bounded by staleness",
+          "wrongDesign": "A plain, non-subindexed edit vector read and rewritten on every edit passes; tests use at most 5 edits per document"
+        },
+        {
+          "gap": "Read cost is not bounded",
+          "wrongDesign": "Replaying every stored edit on each doc+version query passes"
+        },
+        {
+          "gap": "No retry or exactly-once check",
+          "wrongDesign": "Any design passes, including the reference, which duplicates text when a stream retry re-applies an edit"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "implied",
+      "read_cost": "implied",
+      "topology_type": "implied",
+      "exactly_once": "implied",
+      "task_balance": "implied",
+      "races": "implied",
+      "bounded_work": "implied",
+      "retention": "implied"
+    }
+  },
+  {
+    "slug": "content-moderation",
+    "contract": "The solver builds recipient feeds where posts are appended and each reader can mute or unmute authors. Paging reads a reader's feed from an offset into the unfiltered feed and skips muted authors until the limit is filled. Mutes and unmutes apply to old and new posts, so filtering happens at read time.",
+    "study": {
+      "number": "8.6",
+      "title": "Social Media Feed",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/social-media-feed/",
+      "then": [],
+      "reason": "The challenge is per-reader feed storage with read-time mute filtering, which matches the feed case study; 8.35 Content Moderation at Scale matches in name only because it covers classification and review, not read-time mute filtering.",
+      "fit": "partial"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*post-depot",
+          "partition": "hash by recipient user id"
+        },
+        {
+          "name": "*mute-depot",
+          "partition": "hash by reader user id"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$posts",
+          "schema": "{Long [Post]}, vector subindexed",
+          "key": "recipient user id"
+        },
+        {
+          "name": "$$mutes",
+          "schema": "{Long #{Long}}, set subindexed",
+          "key": "reader user id"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "core",
+          "type": "stream",
+          "does": "appends posts to recipient feeds and updates mute sets"
+        },
+        {
+          "name": "get-posts",
+          "type": "query",
+          "does": "pages the feed, skipping muted authors"
+        },
+        {
+          "name": "get-posts-helper",
+          "type": "query",
+          "does": "reads a feed range on the reader's task"
+        }
+      ],
+      "ownership": "Recipient and reader share one user ID key, so the feed and mute set are colocated. The query does one |hash to the reader and reads both PStates locally."
+    },
+    "nfr": {
+      "verdict": "ABSENT",
+      "stated": [
+        "README disclaims a fixed-cost page guarantee",
+        "Mute and unmute apply to old and new posts",
+        "Reads never wait"
+      ],
+      "tested": [],
+      "gaps": [
+        {
+          "gap": "Mute write cost is not bounded",
+          "wrongDesign": "Rebuilding a per-reader visible feed on every mute or unmute passes; tests use about 20 posts"
+        },
+        {
+          "gap": "Page read cost is not bounded",
+          "wrongDesign": "A non-subindexed feed or mute set, or client-side filtering of the whole feed, passes"
+        },
+        {
+          "gap": "No retry check",
+          "wrongDesign": "At-least-once appends that duplicate a post on stream retry pass, as the reference does"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "implied",
+      "read_cost": "implied",
+      "topology_type": "na",
+      "exactly_once": "implied",
+      "task_balance": "implied",
+      "races": "na",
+      "bounded_work": "implied",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "family-tree",
+    "contract": "The solver stores people identified by UUID with a name and up to two parents, and registers child links on each parent. One query returns the set of ancestors reachable within a generation bound. Another returns descendant path counts by depth.",
+    "study": {
+      "number": "8.46",
+      "title": "Fraud Detection",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/fraud-detection/",
+      "then": [],
+      "reason": "Only the fraud-ring graph section of the case study covers multi-hop traversal over a partitioned graph; the handbook has no graph-database study.",
+      "fit": "weak"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*people-depot",
+          "partition": "hash by person id"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$family-tree",
+          "schema": "{UUID {:parent1 UUID :parent2 UUID :name String :children #{UUID}}}",
+          "key": "person id"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "core",
+          "type": "stream",
+          "does": "stores the person and adds the child link to each parent"
+        },
+        {
+          "name": "ancestors",
+          "type": "query",
+          "does": "walks parent edges with a visited set"
+        },
+        {
+          "name": "descendants-count",
+          "type": "query",
+          "does": "expands child paths and sums counts by depth"
+        }
+      ],
+      "ownership": "Person ID owns each record. Writes |hash to each parent to add child links, and queries |hash on every traversed ID, so traversal runs in the cluster across partitions."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "README disclaims latency and unbounded-depth guarantees; descendant work can grow exponentially",
+        "Repeated reachability is deduplicated in ancestor results"
+      ],
+      "tested": [
+        {
+          "nfr": "Durability across module update",
+          "mechanism": "Calls update-module!, then a fresh client reads the retained tree and writes succeed"
+        },
+        {
+          "nfr": "Multi-partition correctness",
+          "mechanism": "Runs with 2 and 4 tasks on a 5-person graph spread across tasks"
+        }
+      ],
+      "gaps": [
+        {
+          "gap": "Ancestor work is not bounded by distinct nodes",
+          "wrongDesign": "Exploring every path and deduplicating only at the end passes; the diamond test graph has 2 paths"
+        },
+        {
+          "gap": "Server-side traversal is not required",
+          "wrongDesign": "Repeated foreign-select hops from the client pass"
+        },
+        {
+          "gap": "No retry idempotency check",
+          "wrongDesign": "Children stored as a vector or a counter double-count on stream retry and pass"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "implied",
+      "read_cost": "implied",
+      "topology_type": "implied",
+      "exactly_once": "implied",
+      "task_balance": "implied",
+      "races": "na",
+      "bounded_work": "implied",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "music-catalog-migration",
+    "contract": "The solver builds an album catalog keyed by artist and album name, then supplies an update hook that changes songs from strings to records with a name and featured artists. Old albums must read in the new shape after the update, and new albums are parsed on write. The client protocol works across both generations, and repeated updates preserve data.",
+    "study": {
+      "number": null,
+      "title": null,
+      "url": null,
+      "then": [],
+      "reason": "The challenge is about online schema evolution of stored state across a module update, and no handbook case study covers schema migration.",
+      "fit": "none"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*albums-depot",
+          "partition": "hash by artist"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$albums",
+          "schema": "{String {String {:name String :songs [Song]}}}, inner map subindexed, value wrapped in migrated",
+          "key": "artist, then album name"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "albums",
+          "type": "microbatch",
+          "does": "writes albums; the new generation parses song strings"
+        }
+      ],
+      "ownership": "Artist owns the album subtree and album name is a subindexed child key. There are no cross-partition hops; the migration applies to stored values in place."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "Use one module lifecycle with an update hook",
+        "Keep the client usable before and after the update",
+        "State must survive the update, including repeated updates",
+        "The processing barrier works for both generations"
+      ],
+      "tested": [
+        {
+          "nfr": "State survives the update",
+          "mechanism": "Reads old albums through a client after update-module!"
+        },
+        {
+          "nfr": "Old albums read migrated immediately",
+          "mechanism": "Reads 2 albums right after update-module! with no processing barrier"
+        },
+        {
+          "nfr": "Repeated update preserves data",
+          "mechanism": "Updates to the same generation again and rereads"
+        }
+      ],
+      "gaps": [
+        {
+          "gap": "Online, non-replay migration is checked on only 2 albums",
+          "wrongDesign": "A new topology that replays the whole depot and re-parses every album passes because it catches up before the first read"
+        },
+        {
+          "gap": "Stored schema is never checked",
+          "wrongDesign": "Keeping strings at rest and parsing on read passes"
+        },
+        {
+          "gap": "Writes are not interleaved with the update",
+          "wrongDesign": "A design that loses writes made during the update passes"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "na",
+      "read_cost": "implied",
+      "topology_type": "na",
+      "exactly_once": "implied",
+      "task_balance": "na",
+      "races": "na",
+      "bounded_work": "implied",
+      "retention": "implied"
+    }
+  },
+  {
+    "slug": "profile-module",
+    "contract": "The solver registers usernames with a UUID and password hash, assigns Long user IDs and stores editable profile fields. The first UUID to claim a username wins, and a different UUID gets nil. Registering again with the same UUID generates a new ID each time. Profile edits change only the requested fields.",
+    "study": {
+      "number": "8.27",
+      "title": "Unique ID Generator",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/unique-id-generator/",
+      "then": [
+        {
+          "number": "8.18",
+          "title": "Ticketing System",
+          "url": "https://hld.handbook.academy/curriculum/case-studies/ticketing-system/"
+        }
+      ],
+      "reason": "ID assignment maps to the unique ID generator study; claiming a username maps to the ticketing study's seat claim, where one owner must win a contested resource.",
+      "fit": "partial"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*registration-depot",
+          "partition": "hash by username"
+        },
+        {
+          "name": "*profile-edits-depot",
+          "partition": "hash by user id"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$username->registration",
+          "schema": "{String {:user-id Long :uuid String}}",
+          "key": "username"
+        },
+        {
+          "name": "$$profiles",
+          "schema": "{Long {:username String :pwd-hash String :display-name String :height-inches Long}}",
+          "key": "user id"
+        },
+        {
+          "name": "$$id",
+          "schema": "ModuleUniqueIdPState counter",
+          "key": "task"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "profiles",
+          "type": "stream",
+          "does": "claims usernames, generates IDs, writes profiles and applies field edits"
+        }
+      ],
+      "ownership": "Username owns the claim, so the check-and-claim runs on one task. An accepted registration does |hash to the generated user ID to write the profile. IDs come from a per-task generator, not a global counter."
+    },
+    "nfr": {
+      "verdict": "ABSENT",
+      "stated": [
+        "First UUID for a username wins; a different UUID gets nil",
+        "Same-UUID retry generates a new ID, so retry is not idempotent",
+        "Keep profile and registration state in the module"
+      ],
+      "tested": [
+        {
+          "nfr": "Username uniqueness",
+          "mechanism": "Checks sequential registrations only; no concurrency"
+        },
+        {
+          "nfr": "Non-idempotent retry",
+          "mechanism": "Asserts a same-UUID retry returns a different ID, which rewards the less fault-tolerant design"
+        }
+      ],
+      "gaps": [
+        {
+          "gap": "Concurrent uniqueness is never tested",
+          "wrongDesign": "A client-side check-then-append, or a depot partitioned by UUID, lets two concurrent registrations both win"
+        },
+        {
+          "gap": "ID generation hot spot is untested",
+          "wrongDesign": "A single global counter on one task passes"
+        },
+        {
+          "gap": "Synchronous ID return is not checked",
+          "wrongDesign": "Microbatch plus client polling for the ID passes"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "na",
+      "read_cost": "na",
+      "topology_type": "implied",
+      "exactly_once": "implied",
+      "task_balance": "implied",
+      "races": "stated",
+      "bounded_work": "na",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "rest-api-integration-module",
+    "contract": "The solver builds a module whose fetch call sends an HTTP GET for a URL and returns nil without waiting for the response. The module stores the latest response body for each URL, including bodies from non-2xx responses. Transport exceptions fail processing and cause a retry, and HTTP resources close when their client or module lifecycle ends.",
+    "study": {
+      "number": "8.8",
+      "title": "Web Crawler",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/web-crawler/",
+      "then": [
+        {
+          "number": "8.49",
+          "title": "Price Tracking",
+          "url": "https://hld.handbook.academy/curriculum/case-studies/price-tracking/"
+        }
+      ],
+      "reason": "The crawler's fetcher stage maps to non-blocking HTTP fetches stored by URL; price tracking repeats the same fetch-and-store loop for external pages.",
+      "fit": "partial"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*get-depot",
+          "partition": "hash by URL"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$responses",
+          "schema": "{String String}",
+          "key": "URL"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "get-http",
+          "type": "stream",
+          "does": "awaits an async GET without blocking the task and stores the body"
+        }
+      ],
+      "ownership": "URL owns the depot partition and the response record, so the latest completed body for a URL lands on one task. A task-global HTTP client is created per task and closed with the task."
+    },
+    "nfr": {
+      "verdict": "ABSENT",
+      "stated": [
+        "fetch! returns nil without waiting for the response",
+        "Close HTTP resources when their client or module lifecycle ends",
+        "Transport exceptions fail processing and cause a retry",
+        "No timeout, retry limit, size or concurrency bound"
+      ],
+      "tested": [
+        {
+          "nfr": "Non-blocking fetch",
+          "mechanism": "Asserts fetch! on a 5 s endpoint returns in under 3000 ms, but the adapter's client-side future satisfies it"
+        }
+      ],
+      "gaps": [
+        {
+          "gap": "Task-thread blocking is untested",
+          "wrongDesign": "Blocking HTTP I/O inside the topology passes because the adapter's future hides it"
+        },
+        {
+          "gap": "Resource lifecycle is untested",
+          "wrongDesign": "A per-event HTTP client, or a JVM-global client that is never closed, passes"
+        },
+        {
+          "gap": "Transport failure retry is untested",
+          "wrongDesign": "Swallowing transport errors and storing nil or error text passes"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "na",
+      "read_cost": "na",
+      "topology_type": "na",
+      "exactly_once": "stated",
+      "task_balance": "na",
+      "races": "implied",
+      "bounded_work": "implied",
+      "retention": "stated"
+    }
+  }
+]

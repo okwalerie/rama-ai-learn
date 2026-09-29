@@ -1,0 +1,275 @@
+[
+  {
+    "slug": "hld-job-scheduler",
+    "contract": "The solver builds a scheduler for immutable DAGs of at most 32 nodes. Workers claim ready nodes under 10-unit leases with increasing fencing tokens, and each execution has its own logical clock. Claim IDs are idempotent, expired leases can be reclaimed, and only the current unexpired lease holder can complete a node.",
+    "study": {
+      "number": null,
+      "title": "Distributed Job Scheduler",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/job-scheduler/",
+      "then": [],
+      "reason": "The case study's dependency handling, claim and lease lifecycle, and stale-worker fencing map directly onto the claim, advance and complete operations.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [{"name": "*execution-events", "partition": "hash by :execution-id"}],
+      "pstates": [
+        {"name": "$$executions", "schema": "{String {:state ExecutionState, :claims {String ClaimDecision} subindexed}}", "key": "execution id; claims keyed by claim id"}
+      ],
+      "topologies": [
+        {"name": "lifecycle", "type": "microbatch", "does": "validates DAGs, advances the clock, decides claims and records completions"}
+      ],
+      "ownership": "Every event and all state for one execution live on the execution id's partition, so claim and completion decisions are local and need no hops. Reads are direct point selects on $$executions; there is no query topology."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "Work may scale with the one DAG, not with other executions, claims or workers",
+        "Reads of one execution must not touch another execution's state",
+        "State is durable and the module runs on 2 and 4 tasks",
+        "Writes to one execution apply in invocation order",
+        "Claim IDs are idempotent; external effects need not be exactly once"
+      ],
+      "tested": [
+        {"nfr": "Cost independent of other executions and same-execution denials", "mechanism": "Event hook sums reads, iterators, iterator reads and commit batches for 8 probes at 256 and 1024; bound is max(12, 8 + 3 x before)"},
+        {"nfr": "Durability", "mechanism": "Re-reads state after update-module"},
+        {"nfr": "Multi-task deployment", "mechanism": "Runs on 2 and 4 tasks with two clients"},
+        {"nfr": "Claim-ID replay idempotency", "mechanism": "Replays a claim ID with different arguments and checks the first decision stands"}
+      ],
+      "gaps": [
+        {"gap": "Growth probes cover only no-op and denial paths", "wrongDesign": "An effective clock advance, grant or completion scans the execution's whole claim history to find expired leases or recount attempts"},
+        {"gap": "No stream-retry injection", "wrongDesign": "A stream topology writes the node lease, then the claim decision; a retry between them re-decides as lease-held and strands token N"},
+        {"gap": "Blob storage is invisible to operation counts", "wrongDesign": "Claims kept as one non-subindexed map per execution; each claim rewrites the whole map in one write"}
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "tested",
+      "topology_type": "implied",
+      "exactly_once": "stated",
+      "task_balance": "implied",
+      "races": "stated",
+      "bounded_work": "tested",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "hld-notification-system",
+    "contract": "The solver builds the durable core of a push notification platform. It keeps a per-recipient device registry with token generations and per-category preferences. Idempotent submissions fan out to devices, delivery attempts are guarded with bounded retries, permanent failures go to a dead-letter record, and client receipts only move forward.",
+    "study": {
+      "number": null,
+      "title": "Notification System",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/notification-system/",
+      "then": [],
+      "reason": "The case study's device token handling, user preferences and retry-with-dead-letter delivery pipeline map directly onto the submit, attempt and receipt operations.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [{"name": "*events", "partition": "hash by :owner"}],
+      "pstates": [
+        {"name": "$$users", "schema": "{String {:profile {devices, prefs, submit-seq}, :recent {Long String} subindexed, :dead-letters {Long record} subindexed}}", "key": "user id"},
+        {"name": "$$submissions", "schema": "{String {record fields, :deliveries {String delivery-state}}}", "key": "submission id"},
+        {"name": "$$task-pos", "schema": "{Long Long}", "key": "task id"}
+      ],
+      "topologies": [
+        {"name": "core", "type": "microbatch", "does": "arbitrates first-wins submissions, tracks deliveries, retries and dead letters"}
+      ],
+      "ownership": "Events hash by owner. Submissions are arbitrated per submission id within the batch using per-task position ranks, then stored by submission id. Delivery effects use |hash back to the user's partition to update recent history, dead letters and device state."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "Submit is fixed work, bounded by 8 devices and independent of history",
+        "Attempts, receipts and point reads are fixed; pages are bounded by 100 entries",
+        "Work and storage are balanced across tasks",
+        "Workload of up to 100,000 submissions and dead letters per recipient",
+        "Latency figures are explicitly not thresholds"
+      ],
+      "tested": [
+        {"nfr": "Point, page, submit, attempt and receipt cost independent of history", "mechanism": "Event hook counts reads, iterators and commit batches at 240 and 1040 history on one 8-device user; bound is small + 150 per metric"},
+        {"nfr": "Instrumentation sanity", "mechanism": "Asserts the measured totals are positive"},
+        {"nfr": "Durability of pending-retry state", "mechanism": "Re-reads next-attempt time and attempt count after update-module"},
+        {"nfr": "Multi-task deployment", "mechanism": "Each test runs on 2 and 4 tasks with a second client"},
+        {"nfr": "First-wins and guarded reports", "mechanism": "Replays submissions and sends stale reports, then checks state is unchanged"}
+      ],
+      "gaps": [
+        {"gap": "Stated task balance is untested", "wrongDesign": "Every submit routes through |global to a single seen-submissions set before hashing by user"},
+        {"gap": "Blob storage of per-user history passes", "wrongDesign": "Recent submissions kept as a plain growing vector; each submit rewrites it in one write"},
+        {"gap": "No retry injection for dead letters", "wrongDesign": "A stream topology marks the delivery failed, then appends the dead letter on the user partition; a retry drops or duplicates the entry"}
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "tested",
+      "topology_type": "implied",
+      "exactly_once": "stated",
+      "task_balance": "stated",
+      "races": "stated",
+      "bounded_work": "tested",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "hld-web-crawler",
+    "contract": "The solver builds the durable core of a crawl frontier. It deduplicates URLs exactly under a restricted HTTPS canonicalization and keeps per-host queues in lexicographic order. It applies caller-configured robots rules and a per-host politeness delay, and grants single leases with fencing tokens so stale workers cannot release newer or expired leases.",
+    "study": {
+      "number": null,
+      "title": "Web Crawler",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/web-crawler/",
+      "then": [],
+      "reason": "The case study's URL frontier, host politeness and deduplication sections map directly onto the discover, claim and complete operations.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [{"name": "*events", "partition": "hash by :host"}],
+      "pstates": [
+        {"name": "$$hosts", "schema": "{String {:info {delay, rules, lease, queued counter}, :urls {String status} subindexed, :pending #{String} subindexed, :claims {String decision} subindexed}}", "key": "host"}
+      ],
+      "topologies": [
+        {"name": "core", "type": "microbatch", "does": "orders each host's commands and updates URLs, the pending queue, leases and claims"}
+      ],
+      "ownership": "All state for a host lives on the host's partition, so dedup, politeness and fencing are local decisions. A very hot host concentrates on one task. Reads are direct selects on $$hosts; there is no query topology."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "Discover is fixed work per URL, independent of queue size",
+        "Claim is fixed plus amortized per blocked URL and must not scan the queue",
+        "Complete and point reads are fixed; the queued count must not come from scanning",
+        "List-pending is bounded by its limit; work is balanced across tasks",
+        "Workload of up to 1 million pending URLs per host"
+      ],
+      "tested": [
+        {"nfr": "Claim cost independent of retired URLs, claim history and queue size", "mechanism": "Sums reads, iterators, iterator reads and topology select and transform counts at small and large populations; bound is small + 100"},
+        {"nfr": "List-pending cost independent of population", "mechanism": "Same counter at limits 1, 20 and 100"},
+        {"nfr": "Blocked-head skipping up to 1,000 URLs", "mechanism": "Checks correctness; cost is only checked to be positive"},
+        {"nfr": "Durability", "mechanism": "Re-reads state after update-module"},
+        {"nfr": "Multi-task deployment", "mechanism": "Runs on 2 and 4 tasks with a second client"}
+      ],
+      "gaps": [
+        {"gap": "Discover, complete and get-host costs are never measured", "wrongDesign": "Each discover or get-host counts the whole pending set to compute the queued number"},
+        {"gap": "Writes are never counted", "wrongDesign": "Each claim rewrites every blocked URL's status record or re-persists the pending set"},
+        {"gap": "Blob storage passes", "wrongDesign": "Pending URLs kept as one non-subindexed sorted set per host; each discover rewrites up to 1 million entries"}
+      ]
+    },
+    "matrix": {
+      "write_amp": "stated",
+      "read_cost": "tested",
+      "topology_type": "implied",
+      "exactly_once": "stated",
+      "task_balance": "stated",
+      "races": "stated",
+      "bounded_work": "tested",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "hld-feature-flag-service",
+    "contract": "The solver builds a multi-tenant feature flag store. Each flag holds one whole configuration, and a write replaces it only when its revision is strictly newer. Evaluation applies a kill switch, ordered equality rules, a SHA-256 percentage rollout and then the default, and bucketing is deterministic and reads no stored state.",
+    "study": {
+      "number": null,
+      "title": "Feature Flag Service",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/feature-flag-service/",
+      "then": [],
+      "reason": "The case study's deterministic targeting, configuration versioning and kill switch map directly onto the put, evaluate and compute-bucket operations.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [{"name": "*flag-writes", "partition": "hash by :flag-id ([tenant env flag-key])"}],
+      "pstates": [
+        {"name": "$$flags", "schema": "{FlagId {revision, kill switch, off and default values, ordered rules, optional rollout}}", "key": "FlagId [tenant env flag-key]"}
+      ],
+      "topologies": [
+        {"name": "flags", "type": "microbatch", "does": "replaces a flag's configuration when the revision is newer"}
+      ],
+      "ownership": "Each flag is owned by the partition of its FlagId, so revision checks are local and there are no hops. Evaluation is a direct point read of one flag followed by client-side logic; bucketing is a pure client computation."
+    },
+    "nfr": {
+      "verdict": "ADEQUATE",
+      "stated": [
+        "Evaluate and get read only the one flag's configuration",
+        "Work must not grow with the number of flags, environments or tenants",
+        "Put is proportional to its supplied configuration",
+        "Compute-bucket must not read stored state",
+        "Writes to one flag keep order; state is durable on 2 and 4 tasks"
+      ],
+      "tested": [
+        {"nfr": "Get, evaluate and put cost independent of unrelated flags", "mechanism": "Event hook counts reads and writes at 240 and 1,240 flags across 17 tenants and 11 environments; bound is 12 + 3 x small"},
+        {"nfr": "Bucketing reads no state", "mechanism": "Asserts zero reads and zero writes while computing a bucket"},
+        {"nfr": "Durability", "mechanism": "Re-reads configuration after update-module"},
+        {"nfr": "Ordering within one flag", "mechanism": "Sends equal revisions in one unsynchronized group and checks the first wins"}
+      ],
+      "gaps": [
+        {"gap": "Unrelated flags sit in other environments", "wrongDesign": "Evaluate scans a per-environment map of flags and filters by key; each environment holds only about 7 flags, so growth stays under the bound"},
+        {"gap": "Blob storage passes", "wrongDesign": "One configuration bundle per [tenant env], read and rewritten whole on every get and put"},
+        {"gap": "Task balance is not stated or tested", "wrongDesign": "Every flag write hashes to one constant key or goes through |global"}
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "tested",
+      "topology_type": "na",
+      "exactly_once": "implied",
+      "task_balance": "implied",
+      "races": "tested",
+      "bounded_work": "tested",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "hld-enterprise-rag",
+    "contract": "The solver builds the retrieval and authorization core of a multi-tenant RAG platform. Document content has monotonic revisions and tombstones, while document ACLs and user group memberships have their own independent revisions. A keyword query scores chunks by distinct token overlap and authorizes every candidate before ranking and truncating to top k.",
+    "study": {
+      "number": null,
+      "title": "Enterprise RAG System",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/enterprise-rag/",
+      "then": [],
+      "reason": "The case study's tenant and ACL-aware retrieval and document freshness concerns map directly onto revisioned documents, ACLs, memberships and the authorized query.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [{"name": "*writes", "partition": "hash by :key (DocKey [tenant doc-id] or UserKey [tenant user-id])"}],
+      "pstates": [
+        {"name": "$$docs", "schema": "{DocKey {content revision, ACL revision, groups, metadata}}", "key": "DocKey [tenant doc-id]"},
+        {"name": "$$chunks", "schema": "{DocKey {String {:text, :tokens}}}", "key": "DocKey then chunk id"},
+        {"name": "$$users", "schema": "{UserKey {:membership-revision Long, :groups #{String}}}", "key": "UserKey [tenant user-id]"},
+        {"name": "$$postings", "schema": "{TokenKey {ChunkRef chunk} subindexed}", "key": "TokenKey [tenant token] then ChunkRef [doc-id chunk-id]"}
+      ],
+      "topologies": [
+        {"name": "entities", "type": "microbatch", "does": "applies revisioned content, ACL and membership writes and diffs token postings"}
+      ],
+      "ownership": "Document and user writes land on their key's partition. Content changes diff old and new chunks and use |hash by token key to update postings. Queries run in the client: one select per query token, then one per candidate document, with authorization before top k."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "Query must not scan chunks without a query token or read another tenant's data",
+        "Put and delete are proportional to one document's chunks",
+        "ACL and membership writes must not do document- or chunk-proportional work",
+        "Gets read one entity",
+        "Authorization happens before top-k truncation"
+      ],
+      "tested": [
+        {"nfr": "Query cost independent of unrelated documents", "mechanism": "Counts RocksDB reads at 256 and 2,048 documents, half in another tenant containing the query token; bound is small + 16"},
+        {"nfr": "Query cost independent of non-matching chunks", "mechanism": "Adds 31 non-matching chunks to the matching document under the same bound"},
+        {"nfr": "ACL write cost independent of corpus and chunk count", "mechanism": "Counts reads and writes for an ACL change at both corpus sizes"},
+        {"nfr": "Durability", "mechanism": "Re-reads state after update-module"},
+        {"nfr": "Tenant isolation", "mechanism": "Uses the same IDs in two tenants and checks results stay separate"}
+      ],
+      "gaps": [
+        {"gap": "Membership write cost is never measured", "wrongDesign": "A per-user eligible-chunk index rebuilt by scanning the tenant's documents on each group change"},
+        {"gap": "Put and delete costs are never measured", "wrongDesign": "Each token's posting list is a non-subindexed set, read and rewritten whole on every put"},
+        {"gap": "No retry injection for posting maintenance", "wrongDesign": "A stream topology stores the content revision first; on retry the revision guard skips, so postings are never written or removed"}
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "tested",
+      "topology_type": "implied",
+      "exactly_once": "implied",
+      "task_balance": "implied",
+      "races": "stated",
+      "bounded_work": "tested",
+      "retention": "na"
+    }
+  }
+]

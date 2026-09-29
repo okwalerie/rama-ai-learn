@@ -1,0 +1,292 @@
+[
+  {
+    "slug": "hld-ad-click-aggregation",
+    "contract": "The solver builds a per-campaign click accounting module. Each click is recorded once with a frozen disposition (late, fraud, invalid or billed), counted into 60-unit tumbling windows with a joint geo and device breakdown, and billed only when valid and not fraudulent. An explicit per-campaign watermark closes windows 120 units after they end. Reads return one request's audit record, one window, or the populated windows in a range.",
+    "study": {
+      "number": null,
+      "title": "Ad-Click Aggregation",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/ad-click-aggregation/",
+      "then": [],
+      "reason": "The case study's deduplicated event-time accounting with late events maps directly to campaign-scoped request idempotence, watermark-driven window closure and pre-aggregated window counters.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [
+        {"name": "*campaign-events", "partition": "hash by campaign id"}
+      ],
+      "pstates": [
+        {"name": "$$campaigns", "schema": "{String fixed-keys{watermark, requests: subindexed map of audit records, windows: subindexed map of window start to totals plus subindexed geo/device breakdown}}", "key": "campaign id"}
+      ],
+      "topologies": [
+        {"name": "click-accounting", "type": "microbatch", "does": "advances watermarks, assigns dispositions, writes audit records and bumps window counters"},
+        {"name": "windows-in-range", "type": "query", "does": "pages sorted windows in a range and reads each returned breakdown"}
+      ],
+      "ownership": "Campaign id is the depot hash key and the query |hash key, so all request and window state for a campaign sits on one task. The replay check, disposition, audit write and counter update happen together with no cross-partition hop."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "Every click is recorded exactly once; replays have no effect",
+        "Bounded work per click, independent of clicks, windows or campaigns",
+        "get-windows work is proportional to windows and breakdown entries returned",
+        "Reads of one campaign do not read other campaigns' state",
+        "Durable Rama state; runs with 2 and 4 tasks; per-campaign ordering"
+      ],
+      "tested": [
+        {"nfr": "Point read and click cost under growth", "mechanism": "Event hook counts RocksDB reads and iterator reads for get-request, get-window and counted, late and replayed clicks, before and after adding 150 windows, 100 late audits and 12 other campaigns; bound is 2x plus 20"},
+        {"nfr": "Range read cost", "mechanism": "get-windows over a fixed 3-window range as out-of-range windows grow from 700 to 2,900"},
+        {"nfr": "Counted-write cost vs breakdown size", "mechanism": "Read cost of a counted click as the target window's breakdown grows from 128 to 512 pairs"},
+        {"nfr": "Client-replay idempotence", "mechanism": "Replayed request ids leave audit and counters unchanged, including across campaigns"},
+        {"nfr": "Durable state", "mechanism": "Module update in the same JVM, then state is read back"}
+      ],
+      "gaps": [
+        {"gap": "get-window cost is measured only on windows holding 3 to 5 clicks", "wrongDesign": "Store raw clicks per window and sum totals and breakdown at read time; cost grows with clicks in the window and still passes"},
+        {"gap": "Write amplification and task balance are unmeasured", "wrongDesign": "Rewrite a per-campaign summary on every click, or route every event through |global; reads stay flat so all tests pass"},
+        {"gap": "No stream-retry injection", "wrongDesign": "A stream topology that writes the audit record, then hops to bump counters; a retry sees the audit and skips the counters, losing the click"}
+      ]
+    },
+    "matrix": {
+      "write_amp": "stated",
+      "read_cost": "tested",
+      "topology_type": "na",
+      "exactly_once": "stated",
+      "task_balance": "implied",
+      "races": "stated",
+      "bounded_work": "tested",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "hld-metrics-pipeline",
+    "contract": "The solver builds a multi-tenant metrics store keyed by tenant, metric and labels. Each series has a monotonic logical clock that decides whether a sample is accepted as new or rejected as future, expired or duplicate. Raw samples are kept for 300 clock units and folded into 60-unit and 3600-unit rollups kept for 7200 units past bucket end. Queries return raw samples or complete rollup buckets in a half-open range, plus per-series counters.",
+    "study": {
+      "number": null,
+      "title": "Metrics Pipeline",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/metrics-pipeline/",
+      "then": [],
+      "reason": "The case study's time-series aggregation, downsampling tiers and retention map directly to raw samples, 60 and 3600 rollups and clock-driven expiry.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [
+        {"name": "*series-events", "partition": "hash by series key [tenant metric labels]"}
+      ],
+      "pstates": [
+        {"name": "$$series", "schema": "{SeriesKey fixed-keys{clock, admission counters, raw: subindexed timestamp->value, buckets-60: subindexed start->{count sum min max}, buckets-3600: small plain map}}", "key": "series key"}
+      ],
+      "topologies": [
+        {"name": "metrics", "type": "microbatch", "does": "admits samples, folds both rollups and prunes expired keys on clock advance"},
+        {"name": "query-raw", "type": "query", "does": "range-selects retained raw samples for one series"},
+        {"name": "query-rollup", "type": "query", "does": "selects complete, retained buckets of one width in a range"}
+      ],
+      "ownership": "The canonical series key is both the depot hash key and the query |hash key, so ingest, expiry and reads for a series stay on one task. No read or write touches another series."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "Queries do work proportional to the series' data inside the range only",
+        "ingest-sample! does bounded work; get-series-info examines bounded state",
+        "advance-clock! may work in proportion to what it expires, on that series only",
+        "Raw kept while ts + 300 > clock; rollups kept while start + width + 7200 > clock",
+        "Durable state; runs with 2 and 4 tasks"
+      ],
+      "tested": [
+        {"nfr": "Read and ingest cost under growth", "mechanism": "Event hook counts RocksDB reads for query-raw, both rollup widths, get-series-info, ingest and a non-expiring clock advance, small vs grown; bound is 2x plus 20"},
+        {"nfr": "Absolute rollup read bound", "mechanism": "A 3-bucket 60-width rollup must cost under 50 reads with 100 out-of-range buckets present"},
+        {"nfr": "Clock-jump cost", "mechanism": "A large clock jump must cost under 8 times the expired-plus-retained count; upper bound only"},
+        {"nfr": "Series isolation on advance", "mechanism": "Other series are untouched by a clock advance"},
+        {"nfr": "Durable state", "mechanism": "Module update in the same JVM, then state is read back"}
+      ],
+      "gaps": [
+        {"gap": "Storage reclamation is never checked", "wrongDesign": "advance-clock! only writes the clock and queries clamp to the retention floor; expired data stays in RocksDB forever and every test passes"},
+        {"gap": "No data sits above a query range", "wrongDesign": "Range reads that iterate from the start key to the end of the map pass, because growth is all below the range"},
+        {"gap": "Write amplification, task balance and stream retries are untested", "wrongDesign": "Rewrite a whole non-subindexed bucket map per sample, route through |global, or double-count accepted under a stream retry"}
+      ]
+    },
+    "matrix": {
+      "write_amp": "implied",
+      "read_cost": "tested",
+      "topology_type": "na",
+      "exactly_once": "implied",
+      "task_balance": "implied",
+      "races": "na",
+      "bounded_work": "tested",
+      "retention": "stated"
+    }
+  },
+  {
+    "slug": "hld-rate-limiter",
+    "contract": "The solver builds the durable core of a per-user API rate limiter with two token buckets per request: one for the user and one for the user and endpoint. Each request debits both buckets or neither, using exact integer refill per logical tick. Users own versioned configurations, including a shadow mode that accounts identically but never rejects. Decisions are idempotent per request id and readable later.",
+    "study": {
+      "number": null,
+      "title": "Distributed Rate Limiter",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/rate-limiter/",
+      "then": [],
+      "reason": "The case study's token-bucket quota decisions map directly to atomic two-bucket debits and retry-safe consumption per request id.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [
+        {"name": "*user-events", "partition": "hash by user id"}
+      ],
+      "pstates": [
+        {"name": "$$users", "schema": "{String fixed-keys{limiter: version, config, clock, user bucket, endpoint buckets (up to 16); decisions: subindexed map of request id -> decision}}", "key": "user id"}
+      ],
+      "topologies": [
+        {"name": "core", "type": "microbatch", "does": "applies configs, refills and debits both buckets, and records decisions"}
+      ],
+      "ownership": "User id is the depot hash key and the PState key, so one user's buckets, clock and decisions live on one task. A single microbatch path there makes the two-bucket debit atomic with no cross-partition hop. Reads are direct point selects."
+    },
+    "nfr": {
+      "verdict": "ADEQUATE",
+      "stated": [
+        "check! is fixed work per request, independent of accumulated decisions",
+        "Numeric budgets: reads at most 4 point reads, 2 seeks, 8 iterator reads, 0 writes",
+        "Across 400 users, total writes 1x to 8x and per-task balance 0.5x to 1.5x",
+        "Atomic two-bucket debit; idempotent decisions per request id",
+        "Latency is explicitly not tested"
+      ],
+      "tested": [
+        {"nfr": "Read cost vs history", "mechanism": "Event hook counts reads at 32 vs 512 decisions against an absolute budget plus bounded growth, on user-owned PStates only"},
+        {"nfr": "Write cost of check!", "mechanism": "New, retried and denied checks measured with commit write counts against a write budget and growth bound"},
+        {"nfr": "Task balance", "mechanism": "400 users across two clients with one thread per task; per-task writes and reads within 0.5x to 1.5x of the mean; reads write nothing"},
+        {"nfr": "Concurrent debits on a hot user", "mechanism": "Two clients hit one user; debits sum exactly and tokens never go negative"},
+        {"nfr": "Client retries", "mechanism": "Retried request ids, including with changed bodies across config versions, keep the first decision"}
+      ],
+      "gaps": [
+        {"gap": "No stream-retry injection", "wrongDesign": "A stream topology that writes the debit before the decision record; a retry between the two finds no decision and debits again"},
+        {"gap": "Whole-value blobs are invisible to count-based tests", "wrongDesign": "Store all decision history as one non-subindexed value; operation counts stay flat while bytes grow"},
+        {"gap": "Decision records are never expired", "wrongDesign": "Keep every request-id decision forever; storage grows without bound and no test notices"}
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "tested",
+      "topology_type": "implied",
+      "exactly_once": "stated",
+      "task_balance": "tested",
+      "races": "tested",
+      "bounded_work": "tested",
+      "retention": "implied"
+    }
+  },
+  {
+    "slug": "hld-url-shortener",
+    "contract": "The solver builds the durable core of a URL shortener with caller-supplied aliases. An alias maps to an immutable target URL with optional expiry and can never be created again, even after deletion. Owners can delete, block and unblock links, and resolve-alias reports status-aware results. A lifetime click counter counts trusted click observations once per click id.",
+    "study": {
+      "number": null,
+      "title": "URL Shortener",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/url-shortener/",
+      "then": [],
+      "reason": "The case study's unique aliases, link lifecycle and click accounting map directly to permanent alias reservation, lifecycle flags and deduplicated click counts.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [
+        {"name": "*alias-events", "partition": "hash by alias"}
+      ],
+      "pstates": [
+        {"name": "$$links", "schema": "{String fixed-keys{link: target, expiry, deleted, blocked, clicks; outcomes: subindexed request id -> keyword; click-ids: subindexed set}}", "key": "alias"}
+      ],
+      "topologies": [
+        {"name": "core", "type": "microbatch", "does": "creates, deletes, blocks and unblocks links and counts deduplicated clicks"}
+      ],
+      "ownership": "Alias is the depot hash key and the PState key, so every command for an alias is point work on one task. Reads are direct point selects with no query topology and no cross-partition hop."
+    },
+    "nfr": {
+      "verdict": "ADEQUATE",
+      "stated": [
+        "Fixed-work reads and record-click!, independent of click and request history",
+        "Numeric read and write budgets, and balance across tasks",
+        "Workload: 100k resolves per second, viral aliases, 1M observations per alias",
+        "Exactly one created outcome among concurrent creates",
+        "Clicks deduplicated per alias and click id"
+      ],
+      "tested": [
+        {"nfr": "Read cost vs history", "mechanism": "Event hook counts reads for get-click-count, resolve-alias and outcomes at 32 vs 512 history, against an absolute budget plus growth"},
+        {"nfr": "Click write cost", "mechanism": "New and duplicate record-click! measured with commit write counts against a budget"},
+        {"nfr": "Task balance", "mechanism": "400 aliases with one thread per task; per-task writes and reads within 0.5x to 1.5x; reads write nothing"},
+        {"nfr": "Concurrent creates", "mechanism": "Two clients create the same alias; exactly one gets created"},
+        {"nfr": "Concurrent observations", "mechanism": "Distinct click observations from two clients are all counted"}
+      ],
+      "gaps": [
+        {"gap": "No stream-retry injection", "wrongDesign": "A stream topology that inserts the click id, then increments the count in a later step; a retry sees the id and skips, so the count is low"},
+        {"gap": "Whole-value blobs are invisible to count-based tests", "wrongDesign": "Store all click ids for an alias as one non-subindexed set; counts stay flat while bytes grow"},
+        {"gap": "Hot-alias click bursts are not measured directly", "wrongDesign": "A design whose per-click writes grow during a burst to one alias is caught only indirectly by the per-click budget"}
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "tested",
+      "topology_type": "na",
+      "exactly_once": "stated",
+      "task_balance": "tested",
+      "races": "tested",
+      "bounded_work": "tested",
+      "retention": "implied"
+    }
+  },
+  {
+    "slug": "hld-search-autocomplete",
+    "contract": "The solver builds the durable core of a typeahead service. Each locale publishes generational corpus snapshots, and search events add session-deduplicated trend points on the current generation. A persistent blocklist is applied before top-k selection. suggest returns the top-k phrases for a prefix with exact scores and deterministic tie-breaking.",
+    "study": {
+      "number": null,
+      "title": "Search Autocomplete",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/search-autocomplete/",
+      "then": [],
+      "reason": "The case study's precomputed top-k per prefix, trending overlay and policy filtering map directly to locale snapshots, session-deduplicated trends and blocklist-filtered prefix ranking.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [
+        {"name": "*events", "partition": "hash by locale"}
+      ],
+      "pstates": [
+        {"name": "$$owner", "schema": "{String Long}", "key": "locale; current generation at the owning task"},
+        {"name": "$$generation", "schema": "{String Long}", "key": "locale; replicated generation read by placed partitions"},
+        {"name": "$$blocked", "schema": "{String subindexed set of phrases}", "key": "locale"},
+        {"name": "$$phrases", "schema": "{String {generation {phrase {base sessions}}}}, inner maps subindexed", "key": "placement key, then generation"},
+        {"name": "$$sessions", "schema": "{String {generation {phrase subindexed set of session ids}}}", "key": "placement key, then generation"},
+        {"name": "$$prefixes", "schema": "{String {generation {prefix subindexed ranked set}}}", "key": "placement key, then generation"}
+      ],
+      "topologies": [
+        {"name": "core", "type": "microbatch", "does": "publishes snapshots, applies blocks and updates session-deduplicated trend ranks"},
+        {"name": "suggest", "type": "query", "does": "hashes to the placed prefix partition and reads the first k ranked entries"},
+        {"name": "phrase", "type": "query", "does": "hashes to the placed phrase partition and reads its score"}
+      ],
+      "ownership": "The depot hashes by locale, but phrase and prefix work is placed by locale plus the first two characters and reached with |hash. A search updates long-prefix ranks at its own placement, then hops to the one-character prefix placement."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "suggest work is independent of matching candidates and corpus size; no scan at query time",
+        "record-search! does fixed work bounded by phrase length",
+        "publish-snapshot! scales with snapshot size, not the previous generation's trends",
+        "Fixed-work get-phrase and get-generation",
+        "Work and storage are balanced across tasks"
+      ],
+      "tested": [
+        {"nfr": "suggest read cost vs corpus", "mechanism": "suggest for a 2-character prefix at k=1 with 300 vs 3,000 phrases must cost under 4 times the small case"},
+        {"nfr": "record-search! and get-phrase cost", "mechanism": "Read and commit write counts at 60 vs 600 sessions"},
+        {"nfr": "Publish cost vs prior generation", "mechanism": "Publish cost after 20 vs 320 prior-generation trending phrases"},
+        {"nfr": "Blocked top candidates", "mechanism": "A 600-phrase hot prefix with the top 12 blocked must still return correct results"},
+        {"nfr": "Durable state", "mechanism": "Module update in the same JVM, then state is read back"}
+      ],
+      "gaps": [
+        {"gap": "Fixture score order equals lexical order", "wrongDesign": "Scan the prefix range lexically, capped at 1,000 entries, and return the best k; results are correct and cost stays under the 4x ratio"},
+        {"gap": "Task balance is printed, not asserted", "wrongDesign": "Hash all work by locale so one locale sits on one task; tests use one locale and still pass"},
+        {"gap": "Old generations are never reclaimed", "wrongDesign": "Keep every superseded generation's phrases, sessions and prefixes forever; the reference does this too"}
+      ]
+    },
+    "matrix": {
+      "write_amp": "tested",
+      "read_cost": "tested",
+      "topology_type": "na",
+      "exactly_once": "implied",
+      "task_balance": "stated",
+      "races": "na",
+      "bounded_work": "tested",
+      "retention": "implied"
+    }
+  }
+]

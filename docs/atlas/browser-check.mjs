@@ -1,5 +1,5 @@
 // Run in the Portal browser: import('./browser-check.mjs').then(m => m.run()).
-// It navigates all real routes and exercises all five review surfaces.
+// It navigates all real routes, exercises every review surface (five tabs, six with a study guide) and the #coverage matrix.
 import { flows, diagramCard, renderGraphs } from './diagrams.mjs';
 import { mermaidSource } from './graph.mjs';
 
@@ -13,11 +13,16 @@ export async function run() {
       await new Promise(resolve => setTimeout(resolve, 50));
     }
   };
+  const onepagerFiles = ['rama-a', 'rama-b', 'rama-c', 'hld-streams', 'hld-txn', 'hld-jobs'];
+  const loaded = await Promise.allSettled(onepagerFiles.map(name => fetch(`data/onepagers-${name}.json`).then(r => r.ok ? r.json() : [])));
+  const guided = new Set(loaded.flatMap(r => r.status === 'fulfilled' && Array.isArray(r.value) ? r.value.map(x => x.slug) : []));
   for (const [slug, graphs] of Object.entries(flows)) {
     location.hash = slug;
     await wait(() => document.querySelector('.breadcrumbs')?.textContent.includes(slug));
-    check(document.querySelectorAll('[role=tab]').length === 5, `${slug}: five tabs`);
-    for (const tab of ['lr', 'td', 'requirements', 'user', 'reference']) {
+    const tabs = [...(guided.has(slug) ? ['guide'] : []), 'lr', 'td', 'requirements', 'user', 'reference'];
+    check(document.querySelectorAll('[role=tab]').length === tabs.length, `${slug}: ${tabs.length} tabs`);
+    check(document.querySelector('[role=tab]').id === `tab-${tabs[0]}`, `${slug}: first tab`);
+    for (const tab of tabs) {
       document.getElementById(`tab-${tab}`).click();
       const panel = document.getElementById(`panel-${tab}`);
       await wait(() => [...panel.querySelectorAll('.graph-card')].every(c => ['ready','error'].includes(c.dataset.rendered)));
@@ -75,6 +80,15 @@ export async function run() {
     report.links.push(...[...document.querySelectorAll('#main a[href]')].map(a => a.href));
     report.routes.push(slug);
   }
+  // Coverage matrix: one row per study guide, glyphs carry text, page never scrolls sideways.
+  location.hash = 'coverage';
+  await wait(() => document.querySelector('.matrix'));
+  const rows = document.querySelectorAll('.matrix tbody tr:not(.matrix-group)');
+  check(rows.length === guided.size, `coverage: ${rows.length} rows for ${guided.size} study guides`);
+  check([...document.querySelectorAll('.matrix td.m')].every(td => td.querySelector('.vh')?.textContent.trim()), 'coverage: glyph without text');
+  check(document.querySelectorAll('.matrix thead abbr[title]').length === 8, 'coverage: abbreviated headers');
+  check(document.documentElement.scrollWidth <= innerWidth + 1, `coverage: page overflow ${document.documentElement.scrollWidth}`);
+  report.routes.push('coverage');
   // Failure control: invalid graph must expose all its text and an alert.
   const g = { ...flows['chat-app'][0], columns: undefined, id: 'negative-control', nodes: [{ id: 'bad;directive', kind: 'event', label: 'Unsafe identifier' }], edges: [] };
   flows['negative-control'] = [g];

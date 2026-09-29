@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { flows, diagramCard } from './diagrams.mjs';
 import { mermaidSource, orderedColumns } from './graph.mjs';
@@ -65,5 +65,53 @@ assert(!mermaidSource(adversarial).includes('<script>'));
 assert(!diagramCard(adversarial).includes('<script>'));
 assert.throws(() => mermaidSource({ ...adversarial, nodes: [{ id: 'x; click', kind: 'event', label: 'bad' }] }));
 assert.throws(() => mermaidSource({ ...adversarial, edges: [{ from: 'safe', to: 'unknown' }] }));
+// Study-guide one-pagers: optional per file until all six exist (or ATLAS_REQUIRE_ONEPAGERS=1).
+const onepagerDir = process.env.ATLAS_ONEPAGER_DIR ? new URL(`file://${process.env.ATLAS_ONEPAGER_DIR.replace(/\/?$/, '/')}`) : new URL('data/', import.meta.url);
+const onepagerFiles = ['rama-a', 'rama-b', 'rama-c', 'hld-streams', 'hld-txn', 'hld-jobs'].map(name => new URL(`onepagers-${name}.json`, onepagerDir));
+const presentFiles = onepagerFiles.filter(existsSync);
+const onepagers = presentFiles.flatMap(file => {
+  const data = JSON.parse(readFileSync(file, 'utf8'));
+  assert(Array.isArray(data), `${file.pathname}: must be a JSON array`);
+  return data;
+});
+const auditText = readFileSync(`${root}docs/nfr-audit.md`, 'utf8');
+const auditVerdicts = new Map();
+for (const row of auditText.matchAll(/^\|\s*([a-z0-9-]+)\s*\|\s*(ADEQUATE|PARTIAL|ABSENT)\b/gm)) auditVerdicts.set(row[1], row[2]);
+const headings = [...auditText.matchAll(/^## \d+\. ([a-z0-9-]+)\s*$/gm)];
+headings.forEach((h, i) => {
+  const body = auditText.slice(h.index, headings[i + 1]?.index ?? auditText.length);
+  const found = body.match(/Verdict[\s:*#]*(ADEQUATE|PARTIAL|ABSENT)\b/);
+  if (found) auditVerdicts.set(h[1], found[1]);
+});
+const nfrKinds = new Set(['HLD', 'Rama module']);
+const nfrSlugs = entries.filter(x => nfrKinds.has(x.kind)).map(x => x.slug).sort();
+const matrixKeys = ['write_amp', 'read_cost', 'topology_type', 'exactly_once', 'task_balance', 'races', 'bounded_work', 'retention'];
+const handbook = 'https://hld.handbook.academy/curriculum/case-studies/';
+const seen = new Set();
+for (const o of onepagers) {
+  const where = `onepager ${o?.slug}`;
+  try {
+    assert(!seen.has(o.slug), 'duplicate slug'); seen.add(o.slug);
+    assert(nfrSlugs.includes(o.slug), 'slug is not an HLD or Rama module entry');
+    assert(typeof o.contract === 'string' && o.contract.trim(), 'missing contract');
+    assert.deepEqual(Object.keys(o.matrix || {}).sort(), [...matrixKeys].sort(), 'matrix categories');
+    for (const [key, value] of Object.entries(o.matrix)) assert(['tested', 'stated', 'implied', 'na'].includes(value), `matrix ${key}=${value}`);
+    assert(['ADEQUATE', 'PARTIAL', 'ABSENT'].includes(o.nfr?.verdict), `verdict ${o.nfr?.verdict}`);
+    assert(auditVerdicts.has(o.slug), 'no verdict for this slug in docs/nfr-audit.md');
+    assert.equal(o.nfr.verdict, auditVerdicts.get(o.slug), 'verdict differs from docs/nfr-audit.md');
+    const s = o.study || {};
+    assert(['strong', 'partial', 'weak', 'none'].includes(s.fit), `study fit ${s.fit}`);
+    if (s.fit === 'none') assert(s.url == null, 'fit none must have null url');
+    for (const link of [s, ...(s.then || [])].filter(x => x.url != null)) assert(String(link.url).startsWith(handbook), `handbook url ${link.url}`);
+    for (const t of o.design?.topologies || []) assert(['stream', 'microbatch', 'query'].includes(t.type), `topology type ${t.type}`);
+  } catch (e) { errors.push(`${where}: ${e.message}`); }
+}
+const requireAll = process.env.ATLAS_REQUIRE_ONEPAGERS === '1' || presentFiles.length === onepagerFiles.length;
+if (requireAll) {
+  const missing = nfrSlugs.filter(x => !seen.has(x));
+  if (presentFiles.length < onepagerFiles.length) errors.push(`onepagers: ${onepagerFiles.length - presentFiles.length} data files missing`);
+  if (missing.length) errors.push(`onepagers: missing slugs ${missing.join(', ')}`);
+  assert.equal(nfrSlugs.length, 31, 'expected 16 Rama modules and 15 HLD entries');
+}
 if (errors.length) { console.error(errors.join('\n')); process.exitCode = 1; }
-else console.log(`PASS ${entries.length} routes, ${all.length} graphs, ${all.reduce((n,g) => n + g.edges.length,0)} directed edges; source paths/ranges, ownership views, exemplar branches, grammar negative controls`);
+else console.log(`PASS ${onepagers.length} one-pagers from ${presentFiles.length}/${onepagerFiles.length} files${requireAll ? ' (all required)' : ''}; ${entries.length} routes, ${all.length} graphs, ${all.reduce((n,g) => n + g.edges.length,0)} directed edges; source paths/ranges, ownership views, exemplar branches, grammar negative controls`);

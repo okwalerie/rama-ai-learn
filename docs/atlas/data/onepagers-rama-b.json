@@ -1,0 +1,468 @@
+[
+  {
+    "slug": "time-series-module-hard",
+    "contract": "The solver builds a module that records render latency for each URL with a timestamp. It answers cardinality, total, minimum and maximum latency for any half-open range of minute buckets. The README requires queries to stay efficient for every range size, from one minute to multiple years, with no more disk reads than necessary.",
+    "study": {
+      "number": "8.22",
+      "title": "Metrics Pipeline",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/metrics-pipeline/",
+      "then": [],
+      "reason": "The rollup and range-query part of the metrics pipeline maps directly: ingest points once, pre-aggregate at several granularities, and answer long ranges from coarse buckets.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*render-latency-depot",
+          "partition": "hash by URL"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$window-stats",
+          "schema": "{String {Keyword {Long WindowStats}}}, bucket map subindexed",
+          "key": "URL, then granularity (minute, hour, day, 30-day), then bucket id"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "timeseries",
+          "type": "microbatch",
+          "does": "combines each measurement into its bucket at all four granularities"
+        },
+        {
+          "name": "get-stats-for-range",
+          "type": "query",
+          "does": "splits the range into aligned coarse buckets plus fine edges and combines them"
+        }
+      ],
+      "ownership": "URL is the only ownership key. The depot, the PState and the query all hash by URL, so a query makes one |hash hop and never fans out."
+    },
+    "nfr": {
+      "verdict": "ADEQUATE",
+      "stated": [
+        "Large-range queries must be efficient",
+        "Efficient for every range size, from one minute to multiple years",
+        "Queries should not do more disk reads than necessary"
+      ],
+      "tested": [
+        {
+          "nfr": "Large-range read cost",
+          "mechanism": "Event hook counts RocksDB reads over 400 points spread across about 42 days; iterator reads must stay under n/4 and some iterator must be used, which forces subindexing"
+        },
+        {
+          "nfr": "Served by a query topology",
+          "mechanism": "The same capture must contain a query topology event"
+        },
+        {
+          "nfr": "Small-range cost",
+          "mechanism": "A one-minute range must issue exactly one local select"
+        },
+        {
+          "nfr": "Exactly-once ingestion",
+          "mechanism": "The set of topology types seen during ingestion must be microbatch only"
+        },
+        {
+          "nfr": "Partition balance",
+          "mechanism": "Depot reads per task must be equal over URLs generated to hash evenly across tasks"
+        }
+      ],
+      "gaps": [
+        {
+          "gap": "The stated multi-year range is never exercised; the longest range is about 42 days",
+          "wrongDesign": "Minute, hour and day rollups with no month level pass, but read about 1,000 day buckets for a 3-year range"
+        },
+        {
+          "gap": "Only one large range size, so no check that cost is independent of range size",
+          "wrongDesign": "A design whose read cost grows linearly with days passes while 42 days stays under the bound"
+        },
+        {
+          "gap": "Ranges across a year boundary are untested",
+          "wrongDesign": "A prefix-sum or cache design with a bug that only appears when a range crosses a year boundary passes"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "implied",
+      "read_cost": "tested",
+      "topology_type": "tested",
+      "exactly_once": "tested",
+      "task_balance": "tested",
+      "races": "na",
+      "bounded_work": "implied",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "top-users-module",
+    "contract": "The solver builds a module that adds nonnegative purchase amounts in cents to each user's running total. It returns up to 500 distinct users ranked by cumulative spend, highest first. Purchases are not deduplicated, so every appended purchase counts.",
+    "study": {
+      "number": "8.26",
+      "title": "Leaderboard",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/leaderboard/",
+      "then": [],
+      "reason": "The leaderboard's top-N problem maps directly: keep partitioned per-user scores and maintain a bounded global ranking incrementally.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*purchase-depot",
+          "partition": "hash by user id"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$user-total-spend",
+          "schema": "{Long Long}",
+          "key": "user id"
+        },
+        {
+          "name": "$$top-spending-users",
+          "schema": "list of [user-id total] pairs, global",
+          "key": "single global partition, capped at 500"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "topusers",
+          "type": "microbatch",
+          "does": "sums purchases per user and merges changed totals into a bounded top-500 list"
+        }
+      ],
+      "ownership": "User id owns each running total, so sums stay local to the user's task. Only the users whose totals changed in a microbatch cross a |global hop to update the single-partition top-500 list, which readers select directly."
+    },
+    "nfr": {
+      "verdict": "ABSENT",
+      "stated": [
+        "The README disclaims NFRs: tests do not measure latency, throughput or recovery",
+        "Every appended purchase counts again; there is no deduplication"
+      ],
+      "tested": [
+        {
+          "nfr": "Partitioning sanity",
+          "mechanism": "Functional tests run at both 2 and 4 tasks"
+        },
+        {
+          "nfr": "State survives module update",
+          "mechanism": "Totals are checked after update-module!; this is lifecycle, not cost"
+        }
+      ],
+      "gaps": [
+        {
+          "gap": "Read cost of the ranking is unmeasured",
+          "wrongDesign": "Top-N at query time: keep only per-user totals and scan and sort every total on each top-users call"
+        },
+        {
+          "gap": "Per-purchase processing cost is unmeasured",
+          "wrongDesign": "Re-rank all users from $$user-total-spend in every microbatch"
+        },
+        {
+          "gap": "No retry injection and no partition check",
+          "wrongDesign": "A stream topology with +sum double-counts on retry, and a single global {Long Long} map puts every purchase on one task; both pass"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "implied",
+      "read_cost": "implied",
+      "topology_type": "implied",
+      "exactly_once": "implied",
+      "task_balance": "implied",
+      "races": "na",
+      "bounded_work": "implied",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "who-to-follow",
+    "contract": "The solver builds a module that records directed follows between accounts and recommends up to 300 accounts that the accounts you follow also follow. It ranks candidates by that count, keeps the top 1,000 before removing self and existing follows, and stores the result. A recurring refresh computes recommendations, not the read, and every account must be revisited within a stated number of refresh calls.",
+    "study": {
+      "number": "8.17",
+      "title": "Recommendation System",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/recommendation-system/",
+      "then": [],
+      "reason": "The offline candidate-generation part of the recommendation system maps here: a friends-of-friends signal computed in bounded batches and served as a precomputed list.",
+      "fit": "partial"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*follows-depot",
+          "partition": "hash by follower (from) id"
+        },
+        {
+          "name": "*who-to-follow-tick",
+          "partition": "global tick every 30 s in production; appendable in test mode"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$follows",
+          "schema": "{Long #{Long}}, inner set subindexed",
+          "key": "follower account id"
+        },
+        {
+          "name": "$$who-to-follow",
+          "schema": "{Long [Long]}",
+          "key": "account id"
+        },
+        {
+          "name": "$$next-id",
+          "schema": "Long",
+          "key": "per-task sweep cursor"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "core",
+          "type": "stream",
+          "does": "adds each follow to the follower's set"
+        },
+        {
+          "name": "who-to-follow",
+          "type": "microbatch",
+          "does": "on each tick pages 15 accounts per task, counts candidates, filters and stores 300 recommendations"
+        }
+      ],
+      "ownership": "Account id owns both the follow set and the stored recommendations. Each refresh walks a local cursor on every task, hops by |hash to each followee to read its out-set, then returns to the account's task to write the list."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "All accounts revisited within ceil(N / 15) + 2 refresh calls; more work per call is allowed",
+        "Recommendations stay empty until a refresh computes them",
+        "Repeated follows are idempotent"
+      ],
+      "tested": [
+        {
+          "nfr": "Refresh liveness",
+          "mechanism": "12 refreshes over about 137 accounts must reach both an early and a late account, including cursor wrap-around after a new edge"
+        },
+        {
+          "nfr": "Duplicate follow",
+          "mechanism": "A repeated follow edge does not change the result"
+        },
+        {
+          "nfr": "State survives module update",
+          "mechanism": "Recommendations are checked after update-module!"
+        }
+      ],
+      "gaps": [
+        {
+          "gap": "Precomputed reads are never checked; no test reads before a refresh",
+          "wrongDesign": "A query topology computes the 2-hop ranking on every recommendations call while refresh! does nothing"
+        },
+        {
+          "gap": "Per-refresh work is unbounded, and the README permits it",
+          "wrongDesign": "Every refresh scans all accounts on all tasks and recomputes everyone"
+        },
+        {
+          "gap": "Follow write cost is unmeasured",
+          "wrongDesign": "A non-subindexed follow set is rewritten and read in full on each follow"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "implied",
+      "read_cost": "stated",
+      "topology_type": "implied",
+      "exactly_once": "stated",
+      "task_balance": "implied",
+      "races": "na",
+      "bounded_work": "implied",
+      "retention": "na"
+    }
+  },
+  {
+    "slug": "timed-notifications",
+    "contract": "The solver builds a module that schedules a post for an account at an absolute time in milliseconds. When the timer runs, every post whose time has arrived is appended to that account's feed, and no post is delivered early. Feeds stay separate per account, and delivery is asynchronous.",
+    "study": {
+      "number": "8.29",
+      "title": "Job Scheduler",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/job-scheduler/",
+      "then": [
+        {
+          "number": null,
+          "title": "Notification System",
+          "url": "https://hld.handbook.academy/curriculum/case-studies/notification-system/"
+        }
+      ],
+      "reason": "The durable delayed-execution part of the job scheduler maps here: store pending items in time order and fire only those that are due on each tick.",
+      "fit": "partial"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*scheduled-post-depot",
+          "partition": "hash by account id"
+        },
+        {
+          "name": "*tick",
+          "partition": "global tick every 1 s in production; appendable in test mode"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$feeds",
+          "schema": "{String [String]}, vector subindexed",
+          "key": "account id"
+        },
+        {
+          "name": "$$scheduled",
+          "schema": "owned by the scheduler helper; time-ordered pending entries",
+          "key": "per task"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "core",
+          "type": "stream",
+          "does": "schedules each post by time and, on each tick, appends due posts to feeds"
+        }
+      ],
+      "ownership": "Account id owns both the pending schedule entry and the feed, so a due post is delivered on the task where it was scheduled with no hop. The tick depot is global and reaches every task."
+    },
+    "nfr": {
+      "verdict": "PARTIAL",
+      "stated": [
+        "A not-yet-due item is not delivered early",
+        "Production delivery is driven by a timer",
+        "The README disclaims latency, restart, replay and exactly-once delivery"
+      ],
+      "tested": [
+        {
+          "nfr": "Due-time boundary",
+          "mechanism": "Simulated time checks before, at and after the scheduled time"
+        },
+        {
+          "nfr": "Durable pending schedule",
+          "mechanism": "Posts scheduled before update-module! are delivered after it"
+        },
+        {
+          "nfr": "No redelivery on repeated ticks",
+          "mechanism": "A second tick at the same time adds nothing to the feed"
+        }
+      ],
+      "gaps": [
+        {
+          "gap": "Tick cost is unmeasured",
+          "wrongDesign": "On each tick, visit every task and scan every pending item; cost grows with total pending, not due items"
+        },
+        {
+          "gap": "Exactly-once delivery under stream retry is untested, and the reference fails it",
+          "wrongDesign": "Any stream design that schedules without a dedupe key; one injected retry on schedule delivers the post twice"
+        },
+        {
+          "gap": "Latency class is disclaimed",
+          "wrongDesign": "Microbatch delivery adds latency and passes"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "na",
+      "read_cost": "na",
+      "topology_type": "implied",
+      "exactly_once": "implied",
+      "task_balance": "implied",
+      "races": "na",
+      "bounded_work": "implied",
+      "retention": "implied"
+    }
+  },
+  {
+    "slug": "unbalanced-social-graph",
+    "contract": "The solver builds a follow graph with idempotent follow and unfollow and returns each account's followers and followees. The layout must let a separate fanout module read it directly with even CPU across tasks and near-optimal total disk work. That must hold for any follower distribution, from many small accounts to accounts with millions of followers.",
+    "study": {
+      "number": "8.6",
+      "title": "Social Media Feed",
+      "url": "https://hld.handbook.academy/curriculum/case-studies/social-media-feed/",
+      "then": [],
+      "reason": "The celebrity fanout problem in the social media feed maps directly: spread very large follower sets across tasks while keeping small accounts local.",
+      "fit": "strong"
+    },
+    "design": {
+      "depots": [
+        {
+          "name": "*follow-depot",
+          "partition": "hash by account id (the follower)"
+        }
+      ],
+      "pstates": [
+        {
+          "name": "$$partitioned-followers-control",
+          "schema": "{Long List}",
+          "key": "target account id; lists the tasks that hold its followers"
+        },
+        {
+          "name": "$$partitioned-follower-tasks",
+          "schema": "{Long {Long Long}}, inner map subindexed",
+          "key": "target account id, then follower id to task"
+        },
+        {
+          "name": "$$partitioned-followers",
+          "schema": "{Long #{Long}}, inner set subindexed",
+          "key": "target account id, on each task that holds a slice"
+        },
+        {
+          "name": "$$user-followees",
+          "schema": "{Long #{Long}}, inner set subindexed",
+          "key": "follower account id"
+        }
+      ],
+      "topologies": [
+        {
+          "name": "social-graph",
+          "type": "stream",
+          "does": "updates followees and places each follower on a task for the target"
+        },
+        {
+          "name": "get-followers",
+          "type": "query",
+          "does": "reads the target's task list and gathers each follower slice"
+        }
+      ],
+      "ownership": "The follower owns the followee set. The target's home task owns the control list and follower-to-task index; a target keeps followers on one task until a cutoff, then new slices go to other tasks by direct routing. Reads hop by |hash to the home task, then to each listed task."
+    },
+    "nfr": {
+      "verdict": "ABSENT",
+      "stated": [
+        "CPU across tasks must be even",
+        "Total disk work must be near-optimal for every distribution",
+        "Fanout must stay balanced whatever post it processes",
+        "Load: at most 5,000 followees, about 7k posts/s, about 100 follows/s",
+        "Follow and unfollow are idempotent"
+      ],
+      "tested": [
+        {
+          "nfr": "Functional only",
+          "mechanism": "Tests cover both directions, idempotency and unfollow on graphs of at most 5 followers; the suite states it makes no partitioning assumption"
+        }
+      ],
+      "gaps": [
+        {
+          "gap": "No balance test",
+          "wrongDesign": "A plain follower set hashed by target puts a celebrity's whole follower set on one task"
+        },
+        {
+          "gap": "No locality or total-work test",
+          "wrongDesign": "Scatter every account's followers across all tasks; balanced, but each small-account post touches every task"
+        },
+        {
+          "gap": "No per-follow cost test",
+          "wrongDesign": "A non-subindexed follower set rewrites a million-element set on each follow"
+        }
+      ]
+    },
+    "matrix": {
+      "write_amp": "stated",
+      "read_cost": "stated",
+      "topology_type": "na",
+      "exactly_once": "stated",
+      "task_balance": "stated",
+      "races": "na",
+      "bounded_work": "implied",
+      "retention": "implied"
+    }
+  }
+]
