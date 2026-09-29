@@ -97,7 +97,7 @@
 (defmodule TimeSeriesHard [setup topologies]
   (declare-depot setup *render-latency-depot (hash-by :url))
 
-  (let [mb (microbatch-topology topologies "timeseries")]
+  (let [mb (stream-topology topologies "timeseries")]
 
     ;; Window stats: url -> granularity -> bucket -> WindowStats
     (declare-pstate mb $$window-stats
@@ -106,8 +106,7 @@
                       (map-schema Long WindowStats {:subindex? true})}})
 
     (<<sources mb
-               (source> *render-latency-depot :> %microbatch)
-               (%microbatch :> {:keys [*url *render-millis *timestamp-millis]})
+               (source> *render-latency-depot :> {:keys [*url *render-millis *timestamp-millis]})
                (make-single-stat *render-millis :> *single-stat)
                (emit-index-granularities *timestamp-millis :> *granularity *bucket)
                (+compound $$window-stats
@@ -144,7 +143,8 @@
 
       harness/Synchronizable
       (wait-for-processing! [_]
-        (rtest/wait-for-microbatch-processed-count ipc module-name "timeseries" @cnt)))))
+        ;; stream appends default to :ack, so each append already waited for processing
+        @cnt))))
 
 (defn create-module
   "Returns the module descriptor for the time-series-module-hard challenge."

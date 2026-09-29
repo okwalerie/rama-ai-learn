@@ -118,10 +118,16 @@
 ;;; ── command construction ─────────────────────────────────────────────────────
 
 (defn private-alias
-  "The challenge's grader alias (:test-private) from deps.edn."
+  "The challenge's grader alias (:test-private) from deps.edn. When the
+   challenge also has a :test-private-harness alias, its :replace-paths name
+   the reference's resource roots (e.g. test-resources/upstream for
+   source-backed challenges); they are kept as ::resource-paths."
   [root challenge]
-  (let [deps (edn/read-string (slurp (str (fs/path (challenge-dir root challenge) "deps.edn"))))]
-    (get-in deps [:aliases :test-private])))
+  (let [deps (edn/read-string (slurp (str (fs/path (challenge-dir root challenge) "deps.edn"))))
+        harness-paths (get-in deps [:aliases :test-private-harness :replace-paths])]
+    (cond-> (get-in deps [:aliases :test-private])
+      harness-paths (assoc ::resource-paths
+                           (vec (remove #{"src" "test-private"} harness-paths))))))
 
 (defn grader-alias
   "Alias that runs the challenge grader against `module-dir` (a mutant src dir,
@@ -131,7 +137,8 @@
    the files it provides."
   [test-private-alias module-dir]
   (let [base (or test-private-alias {})]
-    {:paths (vec (concat ["src"] (when module-dir [module-dir]) ["test-resources"]))
+    {:paths (vec (concat ["src"] (when module-dir [module-dir])
+                         (or (::resource-paths base) ["test-resources"])))
      :extra-paths (or (:extra-paths base) ["test-private"])
      :extra-deps (merge test-runner-dep (:extra-deps base))
      :exec-fn (or (:exec-fn base) 'cognitect.test-runner.api/test)

@@ -1,0 +1,8 @@
+{:id "per-member-post-writes"
+ :challenge "chat-app"
+ :targets-nfr "a room post must not write per room member (bounded write amplification)"
+ :wrong-design "Every room message is also fanned out into a per-member inbox PState, so a post to an N-member room does N extra writes."
+ :expected :killed
+ :split :dev
+ :functional-preserved? true
+ :notes "Positive control on a gold-standard grader: performance_test_support.clj:69 asserts < 40 rocks writes for a post to a 300-member room. The extra PState is never read, so functional behaviour is unchanged."}

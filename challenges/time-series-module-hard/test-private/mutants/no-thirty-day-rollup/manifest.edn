@@ -1,0 +1,8 @@
+{:id "no-thirty-day-rollup"
+ :challenge "time-series-module-hard"
+ :targets-nfr "README:18 get-stats-for-range efficient for ranges up to multiple years"
+ :wrong-design "Only minute/hour/day rollups are kept (no 30-day level), so a multi-year range reads ~1 day bucket per day of range."
+ :expected :survives
+ :split :dev
+ :functional-preserved? true
+ :notes "Known-gap control: nfr-audit (time-series-module-hard, Gaps) predicts the ~42-day large-range test cannot kill this; the recommended multi-year test should."}

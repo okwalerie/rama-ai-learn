@@ -65,6 +65,17 @@
             (manifest-problems {:id "x" :challenge "c" :targets-nfr "t"
                                 :wrong-design "w" :expected :maybe} "x" "c"))))
 
+(deftest private-alias-test
+  (let [root (make-fixture-root)
+        deps (fs/path root "challenges" "demo" "deps.edn")]
+    (is (nil? (::resource-paths (private-alias (str root) "demo"))))
+    (spit (str deps) (pr-str {:aliases {:test-private {:exec-args {:dirs ["test-private"]}}
+                                        :test-private-harness
+                                        {:replace-paths ["src" "test-private" "test-resources"
+                                                         "test-resources/upstream"]}}}))
+    (is (= ["test-resources" "test-resources/upstream"]
+           (::resource-paths (private-alias (str root) "demo"))))))
+
 (deftest grader-alias-test
   (testing "mutant dir shadows test-resources and implementations are never on the path"
     (let [a (grader-alias {:extra-paths ["test-private"] :exec-args {:dirs ["test-private"]}}
@@ -73,6 +84,10 @@
       (is (not-any? #(str/includes? % "implementations") (concat (:paths a) (:extra-paths a))))
       (is (= {:dirs ["test-private"]} (:exec-args a)))
       (is (contains? (:extra-deps a) 'io.github.cognitect-labs/test-runner))))
+  (testing "harness resource roots (e.g. upstream sources) follow the mutant dir"
+    (is (= ["src" "test-private/mutants/m/src" "test-resources" "test-resources/upstream"]
+           (:paths (grader-alias {::resource-paths ["test-resources" "test-resources/upstream"]}
+                                 "test-private/mutants/m/src")))))
   (testing "reference run has no mutant dir"
     (is (= ["src" "test-resources"] (:paths (grader-alias nil nil)))))
   (testing "command is a -Sdeps -X invocation"

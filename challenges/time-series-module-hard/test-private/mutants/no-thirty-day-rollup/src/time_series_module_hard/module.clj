@@ -52,21 +52,19 @@
   (long (/ *timestamp-millis 60000) :> *minute-bucket)
   (long (/ *minute-bucket 60) :> *hour-bucket)
   (long (/ *hour-bucket 24) :> *day-bucket)
-  (long (/ *day-bucket 30) :> *thirty-day-bucket)
   (:> :m *minute-bucket)
   (:> :h *hour-bucket)
-  (:> :d *day-bucket)
-  (:> :td *thirty-day-bucket))
+  (:> :d *day-bucket))
 
 ;;; Granularity constants for query optimization
 
 (def next-granularity
   "Maps each granularity to its next coarser level."
-  {:m :h, :h :d, :d :td})
+  {:m :h, :h :d})
 
 (def next-granularity-divisor
   "Number of finer buckets per coarser bucket."
-  {:m 60, :h 24, :d 30})
+  {:m 60, :h 24})
 
 (defn query-granularities
   "Computes the minimal set of granularity/bucket ranges needed to query a minute range.

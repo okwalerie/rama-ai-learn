@@ -257,6 +257,9 @@
     (declare-pstate mb $$user-rooms
                     {Long (set-schema Long {:subindex? true})})
     (declare-pstate mb $$room-seq {Long Long})
+    ;; MUTANT: per-member inbox, fanned out on every room message
+    (declare-pstate mb $$member-inbox
+                    {Long (map-schema UUID Long {:subindex? true})})
     (declare-pstate mb $$read-cursors
                     {Long (map-schema Long Long {:subindex? true})})
     (declare-pstate mb $$room-reply-counts
@@ -345,6 +348,11 @@
         ;; room message: bump the room's unread sequence
         (local-transform> [(keypath *room-id) (nil->val 0) (term inc)]
                           $$room-seq)
+        ;; MUTANT: write the message id into every member's inbox
+        (local-select> [(keypath *room-id) ALL] $$room-members :> *member)
+        (|hash *member)
+        (local-transform> [(keypath *member *message-id) (termval *room-id)]
+                          $$member-inbox)
        (else>)
         ;; thread reply: reply counts, participants, recent-threads fanout
         (local-transform> [(keypath *room-id *root-message-id)

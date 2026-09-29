@@ -1,0 +1,8 @@
+{:id "stream-ingest"
+ :challenge "time-series-module-hard"
+ :targets-nfr "exactly-once aggregate ingestion (microbatch)"
+ :wrong-design "Ingestion runs in a stream topology, so +combine aggregates can double-count under retry."
+ :expected :killed
+ :split :dev
+ :functional-preserved? true
+ :notes "Positive control: grader asserts topology types = #{:microbatch} (performance_test_support.clj:251-259 per nfr-audit)."}
