@@ -1,75 +1,76 @@
 # HLD web crawler reference idiom review
 
-**Scope:** Review of `challenges/hld-web-crawler/test-resources/hld_web_crawler/module.clj` at the requested baseline `43abd3fccff8777d8995f8a29658f3c4c97df01a`. This is a review only; the reference implementation, README, protocol, tests, and Rama skill are unchanged.
+**Scope:** Review of `challenges/hld-web-crawler/test-resources/hld_web_crawler/module.clj` at baseline `43abd3fccff8777d8995f8a29658f3c4c97df01a`, against the challenge README, `src/hld_web_crawler/protocol.clj`, the private suite `test-private/hld_web_crawler/frontier_test.clj`, the auction-module and chat-app reference modules, and `plugins/rama-skill/skills/rama/SKILL.md` with its references. All `module.clj:N` citations refer to the HLD crawler reference module unless another path is given.
 
-**Decision:** Keep this branch documentation-only. A rewrite would change the event-ordering mechanism, durable-state layout, and all state-machine transitions for a production-scale workload. Although the private suite is available, no safe, narrow rewrite is established by this audit alone; changing the reference under a deadline would be riskier than recording actionable alternatives.
+**Decision:** Documentation-only. None of the findings below is a correctness defect. The only safe local changes are readability changes (findings 2 and 5). They would change nothing measurable and would still require a full private-suite run, so they do not justify rewriting a validated reference. The README, protocol, private tests, reference module, and skill are unchanged.
 
 ## Findings
 
-### 1. One host-partitioned depot and one microbatch topology — mostly idiomatic
+### 1. One host-partitioned depot and one microbatch topology — idiomatic, keep
 
-- `module.clj:45-47` declares one `*events` depot partitioned by `:host` and one `"core"` microbatch topology. All four write operations affect the same host-owned state and their order matters to claims, policies, discovery, and completion.
-- This matches the depot-design guidance in `plugins/rama-skill/skills/rama/references/app-design.md:114-145`: events that need ordering for the same entity belong together, and partitioning by the entity keeps that entity's events together. It also matches the reference skill's default to microbatch for high-throughput writes and exactly-once PState updates (`references/app-design.md:158-170`).
-- The design naturally leaves one hot host on one task. That is an inherent per-host serialization boundary for this contract, not something a different depot partitioner can remove without changing the state machine. The documented workload includes a host with up to one million pending URLs, so it is still important not to make each host event scan or materialize that queue.
-- Splitting command types into separate depots/topologies is not the first improvement to make: it would complicate the per-host ordering contract and permit topology schedules to change the semantics. The app-design guidance says to split events when they are independent or have distinct throughput/latency/ack profiles, not merely because they have different record types.
+- `module.clj:45-47` declares one `*events` depot partitioned by `(hash-by :host)` and one `"core"` microbatch topology. All four command types (`module.clj:33-36`) update the same host-owned `$$hosts` entry, and their relative order matters: claims depend on earlier discoveries, policies, and completions.
+- This matches the skill's depot scope rule. Events that affect the same PStates and need mutual ordering share a depot (`plugins/rama-skill/skills/rama/references/app-design.md:116-129`, `references/depot-design.md:15-18`). Partitioning by the owning entity colocates the depot with its PState (`app-design.md:131-139`). It also follows "Default to microbatch" (`app-design.md:155-172`): writes are asynchronous (`README.md:145-147`), and the workload is about 50k ops/s per operation type (`README.md:104-111`).
+- The auction reference splits depots because its events have *different* owners (`challenges/auction-module/test-resources/auction_module/module.clj:70-71`). This challenge has a single owner key, so a single depot is correct.
+- One hot host is serialized on one task. That is inherent in the per-host single-lease/fence contract, not a partitioning defect.
 
-### 2. Grouping and ordered command buffering add complexity and per-batch memory
+### 2. Command dispatch uses `<<cond` + `instance?` instead of `<<subsource`
 
-- `module.clj:63-70` enters a microbatch `<<batch`, groups by host with `+group-by`, and collects every host's commands in `+ordered-commands`. The accumulator at `module.clj:38-43` appends each command to a vector; `module.clj:70-188` then serially replays that vector with `loop<-`.
-- The input depot is already hash-partitioned by host (`module.clj:46`), and the batch source documentation describes per-partition emission in depot append order (`plugins/rama-skill/skills/rama/references/microbatch.md:11-13`). The extra group/collect/replay stage therefore deserves a proof of necessity: it builds a second in-memory representation of all commands for a host in the microbatch and delays PState updates until the group is collected. A very busy host or large batch makes this retained vector a potential memory/latency cost.
-- `+group-by` intentionally hash-partitions by its key and groups rows (`plugins/rama-skill/skills/rama/references/aggregators.md`, “+group-by”). This is a meaningful repartitioning step even though the source depot was already partitioned by host; do not assume it is free or that the accumulator's ordering property follows merely from grouping.
-- **Alternative to evaluate:** process source records directly in the microbatch's per-record dataflow, routing/writing by the host key and retaining the same-host sequential transition semantics. This avoids a whole-batch command vector and potentially redundant grouping. Before changing it, prove that order for records of the same host is preserved through the chosen batch form and that retries remain idempotent. If a grouping stage is required, document precisely where order is established and boundedly accumulate only the data needed for a group.
-- The requested token `:ingress-seq` does not occur in this reference module. No sequence field is currently attached to events; the ordering argument instead relies on depot partitioning and the custom ordered accumulator. Do not add an ingress sequence speculatively: first establish what guarantee the runtime requires and whether direct same-partition processing already supplies it.
+- `module.clj:76-77`, `:98`, `:103`, and `:172` dispatch with `(case> (instance? Discover *event))` and similar. They then pull fields with `get` (`:78`, `:104`, `(get *event :delay)` at `:101`, `(get *event :fence)`/`:outcome`/`:now` at `:175-186`).
+- The skill's idiom for a multi-type depot is `<<subsource`, which dispatches by record type and destructures in the `case>` (`app-design.md:123-124`, `depot-design.md:16-17`, `references/syntax.md:463`). The chat reference uses it for exactly this situation, in both the stream topology and the microbatch (`challenges/chat-app/test-resources/chat_app/module.clj:201-203`, `:282-285`).
+- **Idiomatic alternative:** `(<<subsource *event (case> Discover :> {:keys [*urls]}) ... (case> Policy :> {:keys [*delay *rules]}) ... (case> Claim :> {:keys [*claim-id *now]}) ... (case> Complete :> {:keys [*fence *outcome *now]}) ...)` inside the existing loop body. The loop-local `*event` is an ordinary value, so this changes only the dispatch form. It does not change semantics, partitioning, or ordering. It is a readability change only, which is why this review does not apply it.
 
-### 3. Queue pagination and blocked-head skipping use appropriate subindexed range access
+### 3. `+group-by` + ordered accumulator + `loop<-` is justified by yielding; do not replace it with direct per-record emit
 
-- `module.clj:55-62` keeps URL status, pending URLs, and claim results in nested subindexed maps/set. `module.clj:129-155` scans pending URLs in sorted chunks of 64 and retires disallowed head entries; `module.clj:228-233` pages through a sorted-set range with the caller's limit.
-- These choices fit the contract's bounded-read requirements and the skill's sorted subindex range guidance (`plugins/rama-skill/skills/rama/references/paths.md:457-490`). `list-pending` reads a bounded range rather than loading/sorting the full host queue. It avoids client-side sorting and avoids scanning retired URLs because the pending set is a separate active index.
-- `claim!` work is bounded by fixed processing plus the number of newly blocked URLs: each blocked URL is removed from the active pending set as it is retired (`module.clj:145-151`). The chunk size is a tuning constant, but changing it is not necessary to fix an asymptotic issue.
-- `:ingress-seq`, `+vec-agg`, and a post-aggregation `sort` are not used in this module. The set's sorted range navigation is the ordering mechanism. Replacing that with `+vec-agg` followed by sorting would materialize an unbounded host queue and violate the bounded-work contract; an aggregator/sort is appropriate only for an already-bounded result set.
+- `module.clj:65-70` enters `<<batch`, groups records by host with `+group-by`, and collects each host's commands in depot-emission order with the custom `+ordered-commands` accumulator (`:38-43`). It then replays that vector with one `loop<-` per host (`:70-188`).
+- The naive idiomatic alternative is direct emit, `(%events :> *e)` followed by per-record `local-transform>` with no `<<batch` (`references/microbatch.md:68-84`). That form *is* ordered for synchronous code, because `%mb` emits each partition's records in append order (`microbatch.md:13`). But this module must call `(yield-if-overtime)` in long loops (`module.clj:71`, `:81`, `:130`, `:140`). Discovery processes up to 100 URLs per command, and a claim may retire up to 1,000 blocked head URLs (`README.md:110-111`), while tasks are single-threaded (`SKILL.md:26`). The skill is explicit about the consequence: "while an event is suspended at a yield point, later-queued events on the task execute ... Do NOT yield on a path where correctness depends on same-key events processing in order" (`references/dataflow.md:156`).
+- Collecting one host's commands into one group and replaying them in a single sequential loop makes the whole host sequence one event. The loop can then yield without reordering same-host commands. The comment at `module.clj:38-39` states that intent. So the extra stage is a deliberate order-preserving construct, not redundant grouping. **Keep it.** Direct per-record emit would require either removing the yields (violating `SKILL.md:26` on hot hosts) or losing per-host ordering.
+- Cost to acknowledge: the accumulator retains one vector of commands per host for the duration of the microbatch. That memory is bounded by the microbatch size, not by the host's queue. `+group-by` also performs a hash partition by `*host` (`references/aggregators.md:78-83`), but because the depot is `hash-by :host` it resolves to the task already holding the records.
+- `+ordered-commands` is order-dependent and has no combiner (`aggregators.md:41`). Its correctness relies on every record for one host originating from one depot partition and on `+group-by` accepting a non-combiner accumulator. Both hold here, but anyone changing the depot partitioner (for example, to a random or composite key) must revisit this.
+- The module attaches no ingress sequence number to events and does not need one: ordering comes from single-partition append order plus the single-loop replay.
 
-### 4. Large per-host state is correctly subindexed, but historical cardinality is a real storage obligation
+### 4. Pending queue, pagination, and blocked-head skipping use subindexed sorted-set ranges — idiomatic, keep
 
-- In `module.clj:48-62`, `:urls` preserves every URL for exact dedup and status lookup; `:pending` is the ordered active URL index; `:claims` preserves outcomes so `(host, claim-id)` replay is a no-op. All three can grow without bound for a hot host. They are subindexed with size tracking disabled.
-- The shape supports point reads and bounded range scans, and disabling subindex size tracking is reasonable because the code keeps `:queued` as an explicit counter (`module.clj:30-31`, updated around `module.clj:79-96` and claims at `module.clj:156-170`). The schema avoids the prohibited full-collection count scan.
-- There is no safe pruning alternative under the current contract: exact dedup is “ever,” claims are immutable/replay-safe, and reads may occur after processing. Retention/compaction would require an explicit contract change, not a cleanup hidden in the topology. Storage growth should be called out as an accepted consequence of those semantics.
-- The `:urls` status record and pending set intentionally duplicate the URL key while it is active: the former supports `get-url` and permanent dedup/status history; the latter supports ordered active-only pagination. This is a write/storage tradeoff for bounded reads, not accidental duplication.
+- `module.clj:55-62` stores URL status, the active pending set, and claim outcomes as subindexed nested structures. `module.clj:129-155` scans `:pending` in sorted chunks of 64 (`sorted-set-range-from-start` / `sorted-set-range-from ... {:max-amt 64 :inclusive? false}`) and retires each disallowed head URL as `:blocked`, removing it from `:pending` (`:145-151`). `list-pending` (`module.clj:228-233`) reads one bounded sorted-set range with the caller's `limit`.
+- This matches the skill's sorted-set navigators: one seek plus a sequential scan on subindexed sets (`references/paths.md:488-506`). A claim does fixed work plus amortized work per blocked URL, because each blocked URL leaves `:pending` exactly once. `list-pending` work is bounded by `limit`. `bounded-work-growth` (`frontier_test.clj:263-301`) and `skip-chunks-and-pagination` (`frontier_test.clj:166-190`) enforce these bounds.
+- The chunk loop stops once the explicit `:queued` counter reaches zero (`module.clj:152-155`). That avoids a final empty range read when the queue is exhausted.
+- Do not replace range navigation with `+vec-agg` plus a post-aggregation sort. That would materialize an unbounded host queue and break the README's bounded-work contract (`README.md:118-127`).
 
-### 5. The transition loop is complex but aligned to per-host atomic state transitions
+### 5. State-machine loop: correct placement, some local readability costs
 
-- `module.clj:70-188` processes a host's collected commands serially and calls `yield-if-overtime` in the outer command loop, URL discovery loop, and claim/skip loops (`:70-71`, `:80-81`, `:129-140`). This is important because tasks are single-threaded and one long synchronous event can stall queries on that task.
-- Within `Claim`, stale-lease requeue, delay checks, blocked-URL retirement, queue count, fencing, and outcome recording all share one `*host` owner (`:103-170`). `Complete` similarly validates and updates lease, URL status, and host clock in the same owner path (`:172-187`). The location of these transitions is sensible for consistency.
-- **Alternative to evaluate:** extract pure helper functions for the host-level state-machine decisions and keep the path reads/transforms in the topology. This may make correctness review easier without changing partitioning or durability. Avoid moving policy/lease decisions client-side: two clients could then race, and each would need extra reads/roundtrips before appending.
-- Before any loop rewrite, test invariants at expiry equality, rejected completion clock immutability, policy non-retroactivity, retry of a claim ID, and sequential same-host discovery. The existing private suite covers these cases and the work-growth constraints.
+- Claim (`module.clj:103-170`) and Complete (`:172-187`) keep lease expiry, politeness, requeue, fencing, clock advance, and outcome recording in one host-owned sequential path. That is the right place for them. Moving these decisions into the client wrapper would race between clients and violate the README requirement that all business state live in the module (`README.md:162-165`).
+- Readability costs that a future rewrite may address (no behavior change):
+  - The discover loop tests `(nil? *existing)` twice (`module.clj:87-94`): once to write and once to choose the `continue>`. A single `<<if` with both transforms followed by `(continue> (rest *remaining) (inc *n))`, and `(continue> (rest *remaining) *n)` in the `else>`, expresses the same logic once.
+  - The `:info` map is read, `assoc`-ed, and written back with `termval` at `:95-96`, `:100-101`, `:169`, and `:185-187`. This is safe because the host is processed by one sequential loop and `:info` is a small fixed-keys record. Field-level paths (`(keypath *host :info :delay)` etc.) would make the "policy never touches the clock, fence, lease, or last-claim-at" guarantee (`protocol.clj:65-70`) visible in the code rather than dependent on `assoc` discipline. This is optional.
+  - Pure helpers for the claim decision would make the rules easier to audit, for example `(claim-decision info tick) -> {:outcome ... :free-info ...}` mirroring protocol steps 3-5 (`protocol.clj:72-89`). The PState reads and writes would stay in dataflow.
+- Before any loop rewrite, rely on the private suite's boundary coverage: expiry equality (`frontier_test.clj:64-75`), rejected-completion clock immutability, non-retroactive policy (`:130-164`), claim-id replay (`:101-103`, `:324-329`), stale requeue order (`:226-238`), and unchanged-module update durability (`:303-338`).
 
-### 6. Client-side reads are direct single-host PState reads, not multi-hop distributed queries
+### 6. Durable history is correctly subindexed; unbounded growth is a contract consequence
 
-- `module.clj:213-233` implements `get-claim`, `get-url`, and `get-host` using one `foreign-select-one` each; `list-pending` uses one bounded `foreign-select` on the host's sorted set. Writes append one command each (`:202-212`).
-- These are appropriate state-inspector-style reads for the current one-host-per-call protocol. The paths have a leading host key and resolve to one owning partition; the wrapper does not fan out over all hosts or make an N+1 set of PState reads. So the concern is a client-to-Rama roundtrip per protocol read, not a distributed client-side scan.
-- **Alternative to evaluate only if the API evolves:** a query topology can combine multiple host-local reads into one invocation or centralize a compound response. The chat reference demonstrates query topologies for bounded pages/composite reads (`challenges/chat-app/test-resources/chat_app/module.clj:417-494`), and invokes them from its wrapper (`:581-590`). For the present protocol, each read returns one small value and already costs one request, so replacing each direct select with a query topology is not automatically lower latency or lower network cost.
-- The auction reference uses direct foreign selects for simple entity reads (`challenges/auction-module/test-resources/auction_module/module.clj:184-204`); the chat reference likewise uses them for simple point lookups (`:546-553`). Both provide precedent for keeping small point reads direct.
+- `:urls` keeps every URL ever seen, for exact "at most once, ever" dedup (`README.md:49-50`) and `get-url`. `:claims` keeps every `(host, claim-id)` outcome so replays are no-ops and outcomes stay immutable (`protocol.clj:74`, `:108`). Both are subindexed with `{:track-size? false}` (`module.clj:57`, `:58`, `:62`). That is correct because `get-host`'s `:queued` comes from the explicit counter in `:info` (`module.clj:30-31`, `:53`), not from counting a collection, as `README.md:124-125` requires.
+- `:urls` and `:pending` both hold an active URL key. The first provides point status lookup and permanent history; the second provides an ordered active-only index. This is the standard trade of a second index for bounded reads, not accidental duplication.
+- Pruning is not possible without changing the contract ("ever" dedup and immutable claims). Storage growth is an accepted consequence.
+
+### 7. Client reads are direct single-partition `foreign-select-one` / bounded `foreign-select` — idiomatic, keep
+
+- `get-claim`, `get-url`, and `get-host` each make one `foreign-select-one` call on a host-leading path (`module.clj:213-227`). `list-pending` makes one bounded `foreign-select` (`:228-233`). Writes each make one `foreign-append!` (`:198-212`). `discover!` canonicalizes, deduplicates, and groups by host client-side (`:203-205`), which the README permits (`README.md:164-165`). As a result, each host gets one ordered `Discover` record, which preserves within-host element order (`README.md:185-187`).
+- Both peer references use direct foreign selects for single-key reads: auction at `challenges/auction-module/test-resources/auction_module/module.clj:184-204`, and chat at `challenges/chat-app/test-resources/chat_app/module.clj:546-553`. Chat moves to query topologies only for composite or paged views and online filtering (`chat_app/module.clj:417-494`, invoked at `:575-590`). Every read in this protocol targets one host partition, so a query topology would add an invocation hop without saving a round trip.
 
 ## Idiom comparison
 
 | Topic | Current reference | Idiomatic direction |
 |---|---|---|
-| Event partitioning | One depot hash-by host | Keep: host is the owning state key and commands need same-host order. |
-| Topology | One microbatch topology | Keep unless a measured/required latency profile justifies stream; this API is asynchronous and workload is high throughput. |
-| Grouping / command order | `+group-by` + ordered vector accumulator + `loop<-` | Re-evaluate against direct ordered processing; current approach has group/repartition and whole-group memory overhead. Preserve same-host order explicitly. |
-| Pending order | Subindexed sorted set + range navigation | Keep: bounded pagination and lexicographic next-URL selection. |
-| Aggregation/sorting | No `+vec-agg` or `sort` in frontier reads | Keep absent; do not gather/sort an unbounded queue. Use aggregators only for bounded cross-partition result sets. |
-| Growing history | Subindexed URL/claim maps | Keep under current exact-dedup/idempotency contract; no pruning without changing that contract. |
-| Read API | Direct single-key foreign selects | Keep for individual point reads; use query topology if a future operation composes multiple reads or needs server-side fanout. |
-
-## Reference material reviewed
-
-- Challenge README, protocol, complete private test namespace, and reference module.
-- `challenges/auction-module/test-resources/auction_module/module.clj`: separate depots for different ownership keys, stream/microbatch separation for distinct timing needs, and direct foreign selects for simple reads.
-- `challenges/chat-app/test-resources/chat_app/module.clj`: entity-key partitioning, subindexed collections, query topologies for bounded pages/composite views, and direct foreign selects for simple point reads.
-- `plugins/rama-skill/skills/rama/SKILL.md` and relevant app-design, microbatch, aggregator, path, and query-topology references.
+| Event partitioning | One depot, `hash-by :host` | Keep: single owner key; same-host order required. |
+| Topology | One microbatch topology | Keep: asynchronous API, high throughput, exactly-once. |
+| Type dispatch | `<<cond` + `instance?` + `get` | Prefer `<<subsource` with `case>` destructuring (as in chat-app). |
+| Command ordering | `+group-by` + ordered accumulator + one `loop<-` per host | Keep: required so `yield-if-overtime` does not reorder same-host commands (`dataflow.md:156`). |
+| Pending order / pagination | Subindexed sorted set + range navigators | Keep. |
+| Aggregation / sort | None on frontier reads | Keep absent; never gather/sort an unbounded queue. |
+| Counters | Explicit `:queued`, `track-size? false` | Keep. |
+| Growing history | Subindexed `:urls` / `:claims` | Keep under the current dedup/idempotency contract. |
+| Reads | Direct single-partition foreign selects | Keep; use query topologies only for composite/fan-out reads. |
 
 ## Verification / limits
 
-- Baseline checked: `43abd3fccff8777d8995f8a29658f3c4c97df01a` is present, and this branch starts exactly there.
-- No implementation rewrite was made, so private tests were not run. The review is not a test verdict on the reference implementation.
-- The only file added by this work is this review document.
+- Branch `orb/idiom-hld-web-crawler` starts at baseline `43abd3fccff8777d8995f8a29658f3c4c97df01a`. The only changed file relative to the baseline is this document.
+- Every `file:line` citation above was checked against the files at the baseline.
+- The reference was not rewritten, so the private suite was not run for this review, as instructed for a doc-only outcome. This document is not a new test verdict. The reference's own recorded validation is in `challenges/hld-web-crawler/test-resources/BUILD_VALIDATION.md:5-6` (author-reported: 10 tests, 2,892 assertions, 0 failures).
