@@ -15,8 +15,9 @@ to justify under the stated deadline constraint.
   declares one `*execution-events` depot hashed by `:execution-id` and one
   `"lifecycle"` microbatch topology. The events for any execution are thus
   routed by the same key, matching the README's same-execution ordering
-  requirement (`challenges/hld-job-scheduler/README.md:171-177`). Different
-  executions may be handled independently, as the contract permits.
+  requirement (`challenges/hld-job-scheduler/README.md:175-177`). Different
+  executions may be handled independently, as the contract permits
+  (`challenges/hld-job-scheduler/README.md:177-178`).
 - The single `<<subsource` dispatch at lines 89-117 is a compact shared
   state-transition path, not a funnel through a global task. No additional
   depot or topology is justified by the current operations: they all need
@@ -68,9 +69,11 @@ to justify under the stated deadline constraint.
   The independent private suite grows unrelated executions from 256 to 1024 and
   target history from 256 to 1024 denied claims
   (`challenges/hld-job-scheduler/test-private/hld_job_scheduler/independent_test_support.clj:34-69`).
-  Its contract checks point reads, claim writes, clock writes, and completion
-  writes remain bounded as unrelated history grows. This is aligned with the
-  README efficiency contract rather than a latent all-record scan.
+  It checks that the storage work of point and claimable reads, denied and
+  replayed claim writes, clock writes, and completion writes at 1024 stays
+  within `max(12, 8 + 3 × work-at-256)` (line 64). This is aligned with the
+  README efficiency contract (`challenges/hld-job-scheduler/README.md:148-158`)
+  rather than a latent all-record scan.
 
 ### Client reads make one direct selection per requested entity
 
