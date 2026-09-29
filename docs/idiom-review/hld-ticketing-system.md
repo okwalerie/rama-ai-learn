@@ -34,8 +34,9 @@ groups by event, collects with `+vec-agg`, sorts, then applies each command in
 a `loop<-` (`.../module.clj:201-208`). This makes order explicit instead of
 assuming aggregator order, and lets each event's commands see earlier
 commands in the loop. It also adds an ingress-sequence PState read and write
-for every command, an aggregation/repartition hop, per-event buffering, a
-sort, and loop machinery. The stamp is correctly separate from the
+for every command, a `+group-by` aggregation phase (keyed by the same event
+id as the depot partitioner), per-event buffering, a sort, and loop
+machinery. The stamp is correctly separate from the
 compensation sequence because those counters have different semantics.
 
 **Alternative:** a stream topology consuming the same event-partitioned
@@ -69,6 +70,11 @@ all seats (`.../module.clj:267-288`). This addresses the README's own-history
 bound; the growing collections are not stored as one unindexed serialized
 value. The record's `:seat-ids` vector is bounded by the protocol (at most
 eight for a hold), and the request payload is bounded by command input.
+The retained evidence agrees: `test-resources/SUCCESSOR_HARNESS.log` records
+identical read/write counts for all six measured operations at 256 and 1,280
+records of own history (2 and 4 tasks), and `SUCCESSOR_SCAN_CONTROL.log`
+records that a full compensation-scan control failed only the page-read
+growth assertions.
 
 **Alternative:** separate PStates for seats, holds, outcomes, and
 compensations could make ownership/schema boundaries more visible and permit
@@ -124,9 +130,22 @@ rewrite.
 ## Verification and disposition
 
 This is a documentation-only change. No Rama implementation or challenge
-contract files were edited, and no challenge test command was rerun. The
-challenge's existing `test-resources/VALIDATION.md` records the most recent
-full private harness run as **9 tests, 176 assertions, 0 failures, 0 errors**
-(`clojure -J-Xmx1600m -X:test-private-harness`), plus a separate reference
-ordering diagnostic of **1 test, 16 assertions, 0 failures/errors**. Those
-are recorded evidence, not fresh results from this review branch.
+contract files were edited, and no challenge test command was rerun for this
+review. The results below are historical, recorded in the challenge's
+`test-resources/`, not fresh results from this branch:
+
+- **Full private harness, most recent:** 9 tests, 214 assertions, 0 failures,
+  0 errors (`clojure -J-Xmx1600m -X:test-private-harness`,
+  `SUCCESSOR_HARNESS.log`, summarized in `VALIDATION.md` under the
+  September 23, 2026 successor acceptance). `VALIDATION.md` records that run
+  against reference SHA256 `44ec6142…5760`; the reference in this checkout
+  hashes to the same value, and the test file contains the paired
+  `bounded-own-history-work` test that the run exercised.
+- **Earlier full run:** 9 tests, 176 assertions, 0 failures/errors
+  (`HARNESS_RUN.log`). Its log has no paired-work output; it predates the
+  paired history test that replaced absolute operation caps, so it is
+  superseded, not the current count.
+- **Reference-only ordering diagnostic:** 1 test, 16 assertions, 0
+  failures/errors at 2 and 4 tasks (`DIAGNOSTIC_RUN.log`,
+  `PARENT_DIAGNOSTIC.log`). `VALIDATION.md` states that this was a parent
+  run and was not rerun by the successor.
