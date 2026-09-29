@@ -11,7 +11,7 @@ to justify under the stated deadline constraint.
 
 ### One execution-keyed depot and one microbatch topology are appropriate
 
-- `challenges/hld-job-scheduler/test-resources/hld_job_scheduler/module.clj:79-88`
+- `challenges/hld-job-scheduler/test-resources/hld_job_scheduler/module.clj:80-81`
   declares one `*execution-events` depot hashed by `:execution-id` and one
   `"lifecycle"` microbatch topology. The events for any execution are thus
   routed by the same key, matching the README's same-execution ordering
@@ -43,8 +43,8 @@ to justify under the stated deadline constraint.
   `:claims` fields (`challenges/hld-job-scheduler/test-resources/hld_job_scheduler/module.clj:82-85`).
   The `ExecutionState` holds the DAG, clock, and node records
   (`challenges/hld-job-scheduler/test-resources/hld_job_scheduler/module.clj:13`,
-  `40-48`). The contract caps one DAG
-  at 32 nodes (`challenges/hld-job-scheduler/README.md:3-7`, `135-141`), so
+  `40-41`). The contract caps one DAG
+  at 32 nodes (`challenges/hld-job-scheduler/README.md:21-23`, `47-48`, `135-141`), so
   retaining the whole state value for bounded DAG calculations is a defensible
   trade-off; operations do not scan all executions.
 - Historical claim decisions must remain immutable and queryable for
@@ -64,7 +64,7 @@ to justify under the stated deadline constraint.
   reads one execution and one indexed claim at a time, so that alternative
   would not reduce the work required.
 - The functional private suite populates 40 unrelated executions
-  (`challenges/hld-job-scheduler/test-private/hld_job_scheduler/functional_test_support.clj:120-128`).
+  (`challenges/hld-job-scheduler/test-private/hld_job_scheduler/functional_test_support.clj:121-122`).
   The independent private suite grows unrelated executions from 256 to 1024 and
   target history from 256 to 1024 denied claims
   (`challenges/hld-job-scheduler/test-private/hld_job_scheduler/independent_test_support.clj:34-69`).
@@ -92,23 +92,23 @@ to justify under the stated deadline constraint.
 - **Auction** (`challenges/auction-module/test-resources/auction_module/module.clj`):
   separate the low-latency stream (`:77-114`) from expiration microbatch
   processing (`:115-158`); define separate PStates by access pattern
-  (`:78-95`); repartition with `|hash` when a subsequent local operation is
+  (`:78-93`); repartition with `|hash` when a subsequent local operation is
   addressed by a different key (`:112-113`, `:149`). This supports the
   principle that topology and PState boundaries should follow distinct
   workloads and key ownership. It does not imply splitting the scheduler's
   ordered per-execution lifecycle events.
 - **Chat app** (`challenges/chat-app/test-resources/chat_app/module.clj`):
   multiple topologies/PStates support genuinely different visibility and
-  read patterns (`:159-160`, `:254-276`, `:393-495`); paginated query
+  read patterns (`:159-160`, `:165`, `:254-277`, `:393-494`); paginated query
   topologies aggregate tuples at the query boundary (`:417-493`), and the
-  client calls those query topologies for combined pages (`:585-593`). Its
+  client calls those query topologies for combined pages (`:581-590`). Its
   direct key lookups still use foreign PState selects (`:547-553`), and the
-  intentionally multi-step member scan (`:563-581`) exists because online
+  intentionally multi-step member scan (`:564-580`) exists because online
   filtering requires scanning candidate members. Neither cross-partition
   page assembly nor iterative filtering exists in the scheduler's reads.
 - The Rama skill emphasizes matching depot partitioners to PState keys,
   colocating related state, subindexing growing collections, and using query
-  topologies to avoid multiple client roundtrips (`plugins/rama-skill/skills/rama/SKILL.md:51-68`).
+  topologies to avoid multiple client roundtrips (`plugins/rama-skill/skills/rama/SKILL.md:39`, `:53-68`).
   The scheduler follows these principles: execution is the partition key,
   claim history is subindexed, and each client read makes one selection.
 
@@ -123,3 +123,12 @@ change (for example, multiple executions become a single query unit, a single
 execution becomes unbounded, or distinct write classes need different service
 levels). Any such change should preserve same-execution ordering, durable
 claim-id decisions, and the independent storage-work bounds.
+
+## Verification
+
+With the reference unchanged, `clojure -X:test-private-harness` from
+`challenges/hld-job-scheduler` reports `Ran 3 tests containing 132
+assertions. 0 failures, 0 errors.` Per-operation storage work observed by the
+independent suite was identical at 256 and 1024 unrelated
+executions/decisions for both 2 and 4 tasks: `{:execution 1, :node 1,
+:claim 2, :claimable 1, :denial 8, :replay 2, :clock 1, :completion 1}`.
