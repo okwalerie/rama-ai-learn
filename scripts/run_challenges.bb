@@ -852,15 +852,178 @@
     (assoc result :duration-s duration-s
                   :started-at started-at :finished-at (str (java.time.Instant/now)))))
 
-;;; Challenge scoring
+;;; Outcome taxonomy and scoring (see docs/outcome-taxonomy.md)
+
+(def outcome-order
+  "Headline outcomes in report order."
+  [:private-pass :public-pass :private-fail :private-unavailable
+   :solver-fail :solver-no-implementation :timeout
+   :quota-or-provider-limit :user-stopped :infra-error])
+
+(def ^:private quota-error-re
+  ;; Quota / billing exhaustion. Not retried (retrying cannot help), but still a
+  ;; provider limit rather than a solver failure. Applied only to
+  ;; `agent-error-text`, never to raw stdout.
+  #"(?i)insufficient_quota|quota\s+(?:exceeded|exhausted|reached)|exceeded your (?:current )?quota|usage limit|credit balance (?:is )?too low|out of credits|payment required|billing (?:hard )?limit")
+
+(defn parse-test-counts
+  "Sum every clojure.test summary in `text`. Returns
+  {:tests n :assertions m :failures f :errors e}, or nil when no
+  `Ran N tests` line is present."
+  [text]
+  (let [text (or text "")
+        ran (re-seq #"Ran (\d+) tests? containing (\d+) assertions?" text)
+        fe  (re-seq #"(\d+) failures?, (\d+) errors?" text)]
+    (when (seq ran)
+      {:tests      (reduce + (map #(parse-long (nth % 1)) ran))
+       :assertions (reduce + (map #(parse-long (nth % 2)) ran))
+       :failures   (reduce + (map #(parse-long (nth % 1)) fe))
+       :errors     (reduce + (map #(parse-long (nth % 2)) fe))})))
+
+(defn classify-private-result
+  "Turn a private-test invocation into a verdict. `has-suite?` is whether the
+  challenge has test-private/; `private-result` is nil when the suite was not
+  started, else {:exit :out :err :timed-out? :timeout-s}. Sentinels (zero
+  tests, no summary, grader timeout) are :unavailable, never :fail.
+  Returns {:private-status kw :private-counts map? :private-reason str?}."
+  [has-suite? private-result]
+  (cond
+    (not has-suite?)
+    {:private-status :none}
+
+    (nil? private-result)
+    {:private-status :not-run :private-reason "private suite not started"}
+
+    (:timed-out? private-result)
+    {:private-status :unavailable
+     :private-reason (str "grader timeout after " (:timeout-s private-result) "s")}
+
+    :else
+    (let [counts (parse-test-counts (str (:out private-result) "\n" (:err private-result)))
+          bad (when counts (+ (:failures counts) (:errors counts)))]
+      (cond
+        (nil? counts)
+        {:private-status :unavailable
+         :private-reason (format "no test summary (exit %d): compile/load error or missing implementation namespace"
+                                 (:exit private-result))}
+
+        (zero? (:tests counts))
+        {:private-status :unavailable :private-counts counts
+         :private-reason "Ran 0 tests: suite did not load"}
+
+        (pos? bad)
+        {:private-status :fail :private-counts counts}
+
+        (zero? (:exit private-result))
+        {:private-status :pass :private-counts counts}
+
+        :else
+        {:private-status :unavailable :private-counts counts
+         :private-reason (format "exit %d with no failing assertions" (:exit private-result))}))))
+
+(defn classify-completion
+  "How the solver run ended, from phase-loop!'s {:status :phase-results}."
+  [{:keys [status phase-results]}]
+  (let [last-r (last phase-results)]
+    (cond
+      (= :pass status)          :completed
+      (:provider-limit? last-r) :quota-or-provider-limit
+      (:user-stopped? last-r)   :user-stopped
+      (= :timeout status)       :timeout
+      :else                     :solver-fail)))
+
+(defn classify-outcome
+  "Headline outcome. First match wins; the private verdict dominates the
+  runner's phase status."
+  [{:keys [infra-error? completion private-status has-implementation?]}]
+  (cond
+    infra-error?                                                     :infra-error
+    (= :pass private-status)                                         :private-pass
+    (= :fail private-status)                                         :private-fail
+    (#{:timeout :quota-or-provider-limit :user-stopped} completion)  completion
+    (false? has-implementation?)                                     :solver-no-implementation
+    (#{:unavailable :not-run} private-status)                        :private-unavailable
+    (and (= :none private-status) (= :completed completion))         :public-pass
+    :else                                                            :solver-fail))
+
+(defn count-semantic-retries
+  "Phase invocations that directly follow a FAIL / MAJOR_FAIL verdict in the
+  same subsystem. One build per subsystem is NOT a retry, and transient
+  provider retries inside a single invocation are infrastructure, not solver
+  behaviour."
+  [phase-results]
+  (count (filter (fn [[a b]]
+                   (and (#{:fail :major-fail} (:verdict a))
+                        (= (:subsystem a) (:subsystem b))))
+                 (partition 2 1 phase-results))))
 
 (defn compute-challenge-score
-  "Compute challenge score: 0 if failed, otherwise max(1, round(100 / 2^(iterations-1)))."
-  [status private-status iterations]
-  (if (or (not= :pass status)
-          (= :fail private-status))
-    0
-    (max 1 (Math/round (/ 100.0 (Math/pow 2 (dec iterations)))))))
+  "Score from the headline outcome and semantic retry count. Returns nil for
+  outcomes that carry no evidence about the solver (unscored, excluded from
+  averages)."
+  [outcome retries]
+  (case outcome
+    (:private-pass :public-pass) (max 1 (Math/round (/ 100.0 (Math/pow 2 (or retries 0)))))
+    (:private-unavailable :infra-error :quota-or-provider-limit :user-stopped) nil
+    0))
+
+(defn outcome-label [outcome]
+  (str/upper-case (name (or outcome :solver-fail))))
+
+(defn runner-label [status]
+  (case status :pass "PASS" :timeout "TIMEOUT" "FAIL"))
+
+(defn private-label [private-status]
+  (case private-status
+    :pass "PASS" :fail "FAIL" :unavailable "UNAVAIL" :not-run "not-run" "-"))
+
+(defn private-detail
+  "Private verdict plus counts or reason, e.g. `FAIL (2 failures, 0 errors / 10 tests)`."
+  [{:keys [private-status private-counts private-reason]}]
+  (str (private-label private-status)
+       (cond
+         (and private-counts (#{:pass :fail} private-status))
+         (format " (%d failures, %d errors / %d tests)"
+                 (:failures private-counts) (:errors private-counts) (:tests private-counts))
+         private-reason (str " (" private-reason ")")
+         :else "")))
+
+(defn challenge-headline
+  "Per-challenge console line. Leads with the outcome; the runner's phase
+  status is labelled as such and never stands alone."
+  [{:keys [outcome status challenge-score scoring duration-s retries builds] :as r}]
+  (let [scores (:scores scoring)]
+    (str (outcome-label outcome)
+         " | Private: " (private-detail r)
+         " | Runner: " (runner-label status)
+         " | Score: " (if (some? challenge-score) challenge-score "-")
+         (format " | Builds: %d Retries: %d" (or builds 0) (or retries 0))
+         (when-let [a (:alignment scores)] (str " | Align: " a "/5"))
+         (when-let [a (:test-alignment scores)] (str " | TestAlign: " a "/5"))
+         (format " (%ds)" (or duration-s 0)))))
+
+(defn outcome-counts-line
+  "Summary line counting results by headline outcome. Correctness (private
+  pass) leads; runner PASS is reported separately as completion only."
+  [results]
+  (let [by (frequencies (map :outcome results))
+        runner-pass (count (filter #(= :pass (:status %)) results))]
+    (str (format "Challenges: %d | " (count results))
+         (str/join " | " (for [o outcome-order
+                               :let [n (get by o 0)]
+                               :when (or (pos? n) (#{:private-pass :private-fail :private-unavailable} o))]
+                           (format "%s: %d" (outcome-label o) n)))
+         (format " | Runner PASS (completion only): %d" runner-pass))))
+
+(defn average-score-line
+  "Average over scored results only; unscored outcomes are counted, not zeroed."
+  [results]
+  (let [scored (keep :challenge-score results)
+        unscored (- (count results) (count scored))]
+    (if (seq scored)
+      (format "Average score: %.1f (n=%d scored, %d unscored)"
+              (/ (reduce + 0.0 scored) (count scored)) (count scored) unscored)
+      (format "Average score: - (n=0 scored, %d unscored)" unscored))))
 
 ;;; Alignment scoring
 
@@ -1088,20 +1251,58 @@
   [project-root challenge-name]
   (run-hidden-script! project-root challenge-name "teardown.sh"))
 
+(def ^:dynamic *grader-timeout-s*
+  "Wall-clock cap for one private-test (grader) invocation, in seconds."
+  1800)
+
+(def ^:dynamic *private-test-cmd*
+  "Command that runs a challenge's private suite from the challenge dir."
+  ["clojure" "-X:test-private"])
+
+(def ^:private setsid-path (delay (some-> (fs/which "setsid") str)))
+
+(defn kill-process-tree!
+  "Kill a process started through `setsid` (its own process group), plus any
+  descendants still visible through ProcessHandle. Safe to call after the
+  process exited: leftover grandchildren in the group are still reaped.
+  Returns the number of descendant handles signalled."
+  [^Process proc group?]
+  (let [kids (try (vec (iterator-seq (.iterator (.descendants (.toHandle proc)))))
+                  (catch Exception _ []))]
+    (when group?
+      (try (p/shell {:out :string :err :string :continue true}
+                    "kill" "-KILL" "--" (str "-" (.pid proc)))
+           (catch Exception _ nil)))
+    (doseq [^ProcessHandle k kids] (try (.destroyForcibly k) (catch Exception _ nil)))
+    (try (.destroyForcibly proc) (catch Exception _ nil))
+    (count kids)))
+
 (defn run-private-tests!
-  "Run private tests for a challenge. Returns {:exit int, :out str, :err str, :duration-s int}."
+  "Run private tests for a challenge under *grader-timeout-s*. The grader runs
+  in its own session (setsid) so the whole process tree is killed on timeout
+  and cleaned up after a normal exit. Returns {:exit int, :out str, :err str,
+  :duration-s int, :timed-out? bool, :timeout-s int}."
   [project-root challenge-name]
   (let [challenge-dir (str (fs/path project-root "challenges" challenge-name))
-        cmd ["clojure" "-X:test-private"]
+        group? (boolean @setsid-path)
+        cmd (if group? (into [@setsid-path] *private-test-cmd*) *private-test-cmd*)
+        timeout-s *grader-timeout-s*
         start (System/currentTimeMillis)
         proc (p/process cmd {:dir challenge-dir :in ""})
         out-fut (future (slurp (:out proc)))
         err-fut (future (slurp (:err proc)))
-        done @proc
+        done (deref proc (* 1000 timeout-s) ::timeout)
+        timed-out? (= ::timeout done)
+        _ (kill-process-tree! (:proc proc) group?)
+        ;; A stray child holding the pipes open must not hang the runner.
+        out (deref out-fut 10000 "")
+        err (deref err-fut 10000 "")
         duration-s (quot (- (System/currentTimeMillis) start) 1000)]
-    {:exit (:exit done)
-     :out @out-fut
-     :err @err-fut
+    {:exit (if timed-out? 124 (:exit done))
+     :out out
+     :err (if timed-out? (str "Grader timeout after " timeout-s "s\n" err) err)
+     :timed-out? timed-out?
+     :timeout-s timeout-s
      :duration-s duration-s}))
 
 (defn- challenge-dir?
@@ -1302,9 +1503,17 @@
         combined (str out "\n" err)
         verdict (parse-phase-verdict combined)
         token-usage (parse-token-usage canonical)
-        cost (or (:total_cost_usd summary)
-                 (when (contains? #{"claude" "codex"} agent-name)
-                   (compute-cost token-usage (model->pricing model))))
+        cost-reported (:total_cost_usd summary)
+        cost-estimated (when (contains? #{"claude" "codex"} agent-name)
+                         (compute-cost token-usage (model->pricing model)))
+        cost (or cost-reported cost-estimated)
+        final-exit (if (and (zero? exit) (:is_error summary)) 1 exit)
+        error-text (agent-error-text out err)
+        provider-limit? (boolean (and (not= 0 final-exit)
+                                      (not timed-out?)
+                                      (or (re-find transient-error-re error-text)
+                                          (re-find quota-error-re error-text))))
+        user-stopped? (boolean (and (not timed-out?) (contains? #{130 143} exit)))
         tool-uses (parse-tool-uses canonical)
         skills-used (parse-skills-used canonical)
         skill-refs-used (parse-skill-refs-used canonical)]
@@ -1316,13 +1525,17 @@
      :attempt attempt
      :retries retries
      :subsystem subsystem
-     :exit (if (and (zero? exit) (:is_error summary)) 1 exit)
+     :exit final-exit
      :timed-out? (boolean timed-out?)
+     :provider-limit? provider-limit?
+     :user-stopped? user-stopped?
      :duration-s duration-s
      :verdict verdict
      :transcript-path transcript-path
      :token-usage token-usage
      :cost cost
+     :cost-reported cost-reported
+     :cost-estimated cost-estimated
      :tool-uses tool-uses
      :skills-used skills-used
      :skill-refs-used skill-refs-used}))
@@ -1338,6 +1551,10 @@
         all-skill-refs (vec (sort (into #{} (mapcat :skill-refs-used phase-results))))]
     {:token-usage     total-tokens
      :cost            total-cost
+     :cost-reported   (when (some :cost-reported phase-results)
+                        (reduce + 0 (keep :cost-reported phase-results)))
+     :cost-estimated  (when (some :cost-estimated phase-results)
+                        (reduce + 0 (keep :cost-estimated phase-results)))
      :duration-s      total-duration
      :tool-uses       total-tool-uses
      :skills-used     all-skills
@@ -1783,29 +2000,24 @@
                           (println (str/trim (:err result))))))
                     result))
 
-                ;; cognitect-test-runner can exit 0 with "Ran 0 tests" when the
-                ;; impl namespace is missing or tests fail to load. Treat that
-                ;; as :skip, not :pass.
-                tests-actually-ran?
-                (when private-result
-                  (let [combined (str (:out private-result) "\n" (:err private-result))]
-                    (if-let [m (re-find #"Ran (\d+) tests" combined)]
-                      (pos? (parse-long (second m)))
-                      ;; No "Ran N tests" line at all — tests didn't reach that point.
-                      false)))
+                ;; Sentinels (Ran 0 tests, no summary, grader timeout) are
+                ;; :unavailable, never :fail. See docs/outcome-taxonomy.md.
+                has-suite? (has-private-tests? project-root challenge-name)
+                private-verdict (classify-private-result has-suite? private-result)
+                private-status (:private-status private-verdict)
+                has-implementation? (boolean (seq (find-impl-files project-root challenge-name)))
+                completion (classify-completion phase-result)
+                outcome (classify-outcome {:completion completion
+                                           :private-status private-status
+                                           :has-implementation? has-implementation?})
+                phase-results (:phase-results phase-result)
+                builds (count (filter #(= :build (:phase-id %)) phase-results))
+                retries (count-semantic-retries phase-results)
 
-                private-status (cond
-                                 (nil? private-result)           nil
-                                 (not tests-actually-ran?)       nil
-                                 (zero? (:exit private-result))  :pass
-                                 :else                           :fail)
-
-                private-output (when (= :fail private-status)
-                                 (str (:out private-result) "\n" (:err private-result)))
-
-                ;; Run alignment scoring for passing challenges
+                ;; Alignment is a separate dimension from correctness: score it
+                ;; whenever there is a finished or correct implementation.
                 scoring
-                (when (= :pass status)
+                (when (or (= :pass status) (= :private-pass outcome))
                   (let [impl-scores (do (when *verbose*
                                           (println (format "Scoring alignment for %s..." challenge-name)))
                                         (run-alignment-scoring! project-root challenge-name model agent-fns))
@@ -1817,50 +2029,48 @@
                       {:scores scores :composite (:alignment scores)})))]
 
 
-              (let [status-str (case status :pass "PASS" :timeout "TIMEOUT" "FAIL")
-                    private-str (case private-status
-                                  :pass " | Private: PASS"
-                                  :fail " | Private: FAIL"
-                                  "")
-                    align-str (if-let [a (get-in scoring [:scores :alignment])]
-                                (str " | Align: " a "/5")
-                                "")
-                    test-align-str (if-let [a (get-in scoring [:scores :test-alignment])]
-                                     (str " | TestAlign: " a "/5")
-                                     "")]
-                (println (format "%s%s%s%s (%ds)" status-str private-str align-str test-align-str duration-s)))
-
-              (when (#{:fail :timeout} status)
-                (binding [*out* *err*]
-                  (println (str "--- " (if (= status :timeout) "TIMEOUT" "FAILED") ": " challenge-name " ---"))
-                  (when (seq (str/trim out))
-                    (println "stdout:")
-                    (println (str/trim out)))
-                  (when (seq (str/trim err))
-                    (println "stderr:")
-                    (println (str/trim err)))
-                  (println (str "exit code: " exit))
-                  (println "---")))
-
-              (let [priv (or private-status :skip)
-                    score (compute-challenge-score status priv iterations)]
-                (merge {:name challenge-name
-                        :status status
-                        :private-status priv
-                        :challenge-score score
-                        :iterations iterations
-                        :duration-s duration-s
-                        :cost cost
-                        :tool-uses tool-uses
-                        :skills-used skills-used
-                        :skill-refs-used skill-refs-used
-                        :scoring scoring
-                        :transcript-path transcript-path
-                        :error (when (#{:fail :timeout} status)
-                                 (let [err-str (str/trim err)]
-                                   (when (seq err-str)
-                                     err-str)))}
-                       token-usage)))
+              (let [score (compute-challenge-score outcome retries)
+                    result (merge {:name challenge-name
+                                   :outcome outcome
+                                   :completion completion
+                                   :status status
+                                   :private-status private-status
+                                   :private-counts (:private-counts private-verdict)
+                                   :private-reason (:private-reason private-verdict)
+                                   :has-private-suite? has-suite?
+                                   :has-implementation? has-implementation?
+                                   :challenge-score score
+                                   :builds builds
+                                   :retries retries
+                                   :iterations iterations
+                                   :duration-s duration-s
+                                   :cost cost
+                                   :cost-reported (:cost-reported agg)
+                                   :cost-estimated (:cost-estimated agg)
+                                   :tool-uses tool-uses
+                                   :skills-used skills-used
+                                   :skill-refs-used skill-refs-used
+                                   :scoring scoring
+                                   :transcript-path transcript-path
+                                   :phase-results phase-results
+                                   :error (when (#{:fail :timeout} status)
+                                            (let [err-str (str/trim err)]
+                                              (when (seq err-str)
+                                                err-str)))}
+                                  token-usage)]
+                (println (challenge-headline result))
+                (when (#{:fail :timeout} status)
+                  (binding [*out* *err*]
+                    (println (str "--- " (if (= status :timeout) "TIMEOUT" "FAILED") ": " challenge-name " ---"))
+                    (when (seq (str/trim out))
+                      (println "stdout:")
+                      (println (str/trim out)))
+                    (when (seq (str/trim err))
+                      (println "stderr:")
+                      (println (str/trim err)))
+                    (println (str "exit code: " exit))
+                    (println "---")))
+                result))
           (finally
             (when (has-hidden-teardown? project-root challenge-name)
               (when *verbose*
@@ -1883,11 +2093,16 @@
           (when (has-hidden-teardown? project-root challenge-name)
             (run-hidden-teardown! project-root challenge-name))
           (catch Exception _))
-        (println (format "FAIL (error: %s)" (.getMessage e)))
+        (println (format "INFRA-ERROR (not scored): %s" (.getMessage e)))
         {:name challenge-name
+         :outcome :infra-error
+         :completion :infra-error
          :status :fail
-         :private-status :skip
-         :challenge-score 0
+         :private-status :not-run
+         :private-reason "runner error before private suite"
+         :challenge-score nil
+         :builds 0
+         :retries 0
          :iterations 0
          :duration-s 0
          :input-tokens 0
