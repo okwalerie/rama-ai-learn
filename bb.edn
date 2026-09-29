@@ -56,6 +56,10 @@
              (load-file "scripts/encrypt_challenges.bb")
              ((resolve '-main) *command-line-args*))}
 
+  mutant-kill-rate
+  {:doc "Run each challenge's private suite against its reference and its mutants; report grader kill rate"
+   :task (do (load-file "scripts/mutant_kill_rate.bb") ((resolve '-main) *command-line-args*))}
+
   error-catalog
   {:doc "Run error-catalog tests to verify Rama troubleshooting signals"
    :task (shell {:dir "lib/error-catalog"} "clojure" "-X:test")}
