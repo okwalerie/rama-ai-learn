@@ -1,0 +1,7 @@
+{:id "lazy-retention"
+ :challenge "hld-metrics-pipeline"
+ :targets-nfr "bounded storage: expired raw samples and rollup buckets are deleted"
+ :wrong-design "Clock advancement only writes the new clock and removes all three expiry branches, so expired raw samples, 60s buckets, and 3600s buckets are never deleted."
+ :expected :killed
+ :functional-preserved? :unverified
+ :notes "Unexecuted: manifest written from diff review only; compile and functional preservation not yet validated. Query results should stay correct only if every read path clamps by the clock (mutant comment claims so; not verified)."}

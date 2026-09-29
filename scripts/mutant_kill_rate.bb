@@ -69,13 +69,28 @@
          (not (#{:killed :survives} (:expected manifest))))
     (conj ":expected must be :killed or :survives")))
 
+(defn identical-to-reference?
+  "True when the mutant provides no source files, or every file it provides is
+   byte-identical to the test-resources file it shadows. Such a placeholder
+   would always \"survive\" and must not count against the grader."
+  [root challenge dir]
+  (let [src (fs/path dir "src")
+        files (when (fs/directory? src) (filter fs/regular-file? (fs/glob src "**")))]
+    (every? (fn [f]
+              (let [ref (fs/path (challenge-dir root challenge) "test-resources"
+                                 (str (fs/relativize src f)))]
+                (and (fs/exists? ref) (= (slurp (str f)) (slurp (str ref))))))
+            files)))
+
 (defn read-mutant [root challenge dir]
   (let [id (str (fs/file-name dir))
         mf (fs/path dir "manifest.edn")
         manifest (when (fs/exists? mf) (edn/read-string (slurp (str mf))))
-        problems (if manifest
-                   (manifest-problems manifest id challenge)
-                   ["missing manifest.edn"])
+        problems (cond-> (if manifest
+                           (manifest-problems manifest id challenge)
+                           ["missing manifest.edn"])
+                   (identical-to-reference? root challenge dir)
+                   (conj "no mutation: source identical to reference"))
         split (or (:split manifest) (if (held-out-by-hash? id) :held-out :dev))]
     (merge manifest
            {:id id

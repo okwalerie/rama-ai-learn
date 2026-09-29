@@ -1,0 +1,7 @@
+{:id "global-pstate"
+ :challenge "hld-feature-flag-service"
+ :targets-nfr "horizontal scalability: flags partitioned across tasks"
+ :wrong-design "Declares $$flags with {:global? true} and adds |global to the microbatch so every flag write and read goes to a single task."
+ :expected :killed
+ :functional-preserved? :unverified
+ :notes "Unexecuted: manifest written from diff review only; compile and functional preservation not yet validated."}

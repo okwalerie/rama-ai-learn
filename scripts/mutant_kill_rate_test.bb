@@ -38,7 +38,20 @@
     (is (empty? (:problems (by-id "global-placement"))))
     (is (= :dev (:split (by-id "global-placement"))))
     (is (= "test-private/mutants/global-placement/src" (:src-rel (by-id "global-placement"))))
-    (is (= ["missing manifest.edn"] (:problems (by-id "no-manifest"))))))
+    (is (= ["missing manifest.edn" "no mutation: source identical to reference"]
+           (:problems (by-id "no-manifest"))))))
+
+(deftest identical-mutant-is-invalid-test
+  (let [root (make-fixture-root)
+        ch (fs/path root "challenges" "demo")
+        m (fs/path ch "test-private" "mutants" "global-placement")]
+    (spit (str (fs/path ch "test-resources" "demo" "module.clj")) "(ns demo.module)")
+    (is (identical-to-reference? (str root) "demo" m))
+    (is (some #{"no mutation: source identical to reference"}
+              (:problems (read-mutant (str root) "demo" m))))
+    (spit (str (fs/path m "src" "demo" "module.clj")) "(ns demo.module) (def changed 1)")
+    (is (not (identical-to-reference? (str root) "demo" m)))
+    (is (empty? (:problems (read-mutant (str root) "demo" m))))))
 
 (deftest manifest-validation-test
   (is (empty? (manifest-problems {:id "x" :challenge "c" :targets-nfr "t"

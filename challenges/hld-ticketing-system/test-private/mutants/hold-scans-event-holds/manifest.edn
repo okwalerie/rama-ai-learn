@@ -1,0 +1,7 @@
+{:id "hold-scans-event-holds"
+ :challenge "hld-ticketing-system"
+ :targets-nfr "hold cost proportional to requested seats, not to total holds on the event"
+ :wrong-design "For HoldSeats commands, rebuilds the requested seats' occupancy by selecting and scanning every hold of the event (seats-from-holds) instead of trusting the per-seat records passed to decide."
+ :expected :killed
+ :functional-preserved? :unverified
+ :notes "Unexecuted: manifest written from diff review only; compile and functional preservation not yet validated. seats-from-holds re-derives occupancy (confirmed or unexpired held) rather than copying per-seat records; equivalence with the reference's seat state (e.g. released/expired/cancelled holds, record shape passed to decide) is not verified and could change results."}

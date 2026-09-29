@@ -1,0 +1,7 @@
+{:id "stream-client-dedup"
+ :challenge "hld-url-shortener"
+ :targets-nfr "exactly-once click counting under retries/concurrency"
+ :wrong-design "Switches the core topology from microbatch to stream and moves click dedup to a client-side check-then-append (foreign-select on :click-ids before append), so the topology increments clicks unconditionally and retries or concurrent duplicate clicks double-count."
+ :expected :killed
+ :functional-preserved? :unverified
+ :notes "Unexecuted: manifest written from diff review only; compile and functional preservation not yet validated. Sequential duplicate clicks still dedup, but concurrent duplicates change the count (functional, not just NFR). The client check uses (view contains? click-id) on a subindexed set, which may fail or load the whole set; set-elem would be the point-lookup form. wait-for-processing! becomes a no-op relying on default :ack appends."}
