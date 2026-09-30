@@ -8,11 +8,15 @@ Source: `next-level-backends-with-rama-clj` at commit
 topology and a `doc+version` query. The source and its tests are not altered.
 
 The challenge-specific `collaborative-document-editor.module/create-module`
-adapter translates public protocol records to upstream records, uses a full
-ack for stream writes, and delegates queries to the upstream module. This is
-integration code, not a replacement implementation. The private harness runs
-both the direct upstream tests and the candidate-facing protocol tests; the
-ordinary private alias uses only candidate source and does not expose upstream.
+adapter translates public protocol records to upstream records and uses a full
+ack for stream writes. The upstream topology applies an edit again when a
+stream retry replays its depot record: a retried insertion is inserted twice.
+So the adapter owns `RetrySafeCollaborativeDocumentEditorModule`. It keeps the
+upstream PStates, query, records, `transform-edit`, and `apply-edits`, and adds
+a per-document set of applied request IDs so that a replayed record is skipped.
+The private harness runs both the direct upstream tests and the
+candidate-facing protocol tests; the ordinary private alias uses only
+candidate source and does not expose upstream.
 
 Limits: stored transformed operations, rather than submitted edits, define
 the version. General overlapping removals remain outside this package's
