@@ -2,6 +2,6 @@
  :challenge "top-users-module"
  :targets-nfr "user totals must be hash-partitioned (no hot partition); audit gap: all totals in one global map"
  :wrong-design "Per-user cumulative totals are stored in a single :global? PState, so every purchase is routed to task 0."
- :expected :killed
+ :expected :survives
  :functional-preserved? true
  :notes "TBD"}

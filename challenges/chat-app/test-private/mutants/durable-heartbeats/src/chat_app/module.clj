@@ -88,6 +88,10 @@
 (defn presence-online? [^PresenceStore pr user-id]
   (.isOnline pr user-id (System/currentTimeMillis)))
 
+;; MUTANT: presence from a durable last-beat timestamp.
+(defn online-at? [t]
+  (boolean (and t (< (- (System/currentTimeMillis) (long t)) ONLINE-WINDOW-MS))))
+
 ;; Plain helpers used from dataflow.
 (defn bump-meta [m room-id]
   {:room-id room-id :reply-count (inc (or (:reply-count m) 0))})
@@ -160,6 +164,15 @@
   (declare-depot setup *user-actions-depot (hash-by :user-id))
 
   (declare-object setup *presence (make-presence))
+  ;; MUTANT: heartbeats are durable depot records
+  (declare-depot setup *heartbeat-depot (hash-by first))
+  (let [hb (stream-topology topologies "presence-writes")]
+    (declare-pstate hb $$last-beat {Long Long})
+    (<<sources hb
+      (source> *heartbeat-depot :> [*hb-user *hb-millis])
+      (local-select> [(keypath *hb-user)] $$users :> *hb-reg)
+      (<<if (some? *hb-reg)
+        (local-transform> [(keypath *hb-user) (termval *hb-millis)] $$last-beat))))
 
   ;; ---------- Stream topology: 5ms-visibility durable writes ----------
   (let [s (stream-topology topologies "core")]
@@ -402,14 +415,16 @@
   (<<query-topology topologies "presence"
     [*user-id :> *online?]
     (|hash *user-id)
-    (presence-online? *presence *user-id :> *online?)
+    (local-select> [(keypath *user-id)] $$last-beat :> *beat)
+    (online-at? *beat :> *online?)
     (|origin))
 
   (<<query-topology topologies "online-filter"
     [*ids :> *online]
     (ops/explode *ids :> *id)
     (|hash *id)
-    (presence-online? *presence *id :> *on?)
+    (local-select> [(keypath *id)] $$last-beat :> *beat)
+    (online-at? *beat :> *on?)
     (filter> *on?)
     (|origin)
     (aggs/+set-agg *id :> *online))
@@ -504,6 +519,7 @@
         profiles-p (foreign-pstate ipc m "$$profiles")
         room-members-p (foreign-pstate ipc m "$$room-members")
         heartbeat-q (foreign-query ipc m "heartbeat")
+        heartbeat-depot (foreign-depot ipc m "*heartbeat-depot")
         presence-q (foreign-query ipc m "presence")
         online-filter-q (foreign-query ipc m "online-filter")
         room-page-q (foreign-query ipc m "room-page")
@@ -525,7 +541,7 @@
       (set-profile! [_ user-id name title]
         (ua-append! (->ProfileEvent user-id name title)))
       (heartbeat! [_ user-id]
-        (foreign-invoke-query heartbeat-q user-id)
+        (foreign-append! heartbeat-depot [user-id (System/currentTimeMillis)])
         nil)
       (create-room! [_ room-name]
         (let [candidate (rand-id)]

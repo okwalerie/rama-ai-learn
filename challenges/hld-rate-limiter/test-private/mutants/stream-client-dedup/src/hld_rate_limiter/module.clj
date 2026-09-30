@@ -100,7 +100,7 @@
 (defmodule RateLimiterModule [setup topologies]
   (declare-depot setup *user-events (hash-by :user-id))
 
-  (let [mb (microbatch-topology topologies "core")]
+  (let [mb (stream-topology topologies "core")]
     (declare-pstate mb $$users
       {String (fixed-keys-schema
                {:limiter   (fixed-keys-schema
@@ -122,8 +122,7 @@
                                        {:subindex? true})})})
 
     (<<sources mb
-      (source> *user-events :> %mb)
-      (%mb :> *event)
+      (source> *user-events :> *event)
       (<<subsource *event
         ;; set-config!: strictly newer version replaces config and resets
         ;; every bucket in one write; older/equal versions are ignored.
@@ -200,7 +199,8 @@
 
       harness/Synchronizable
       (wait-for-processing! [_]
-        (rtest/wait-for-microbatch-processed-count ipc module-name "core" @counter)))))
+        ;; stream appends default to :ack, so each append already waited for processing
+        @counter))))
 
 (defn create-module
   []

@@ -265,8 +265,7 @@
                                               :size-bytes  Long
                                               :request-id  String
                                               :seq         Long
-                                              :conflict-of String})
-                                           {:subindex? true})})
+                                              :conflict-of String}))})
                          {:subindex? true})
           :journal     (map-schema Long
                          (fixed-keys-schema

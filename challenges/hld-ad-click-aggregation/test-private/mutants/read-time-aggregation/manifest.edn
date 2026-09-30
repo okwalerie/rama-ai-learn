@@ -2,6 +2,6 @@
  :challenge "hld-ad-click-aggregation"
  :targets-nfr "query cost independent of click volume (pre-aggregated windows)"
  :wrong-design "Stores each counted click as a raw [geo device delta] row keyed by request-id under the window instead of +compound totals/breakdown counters, and folds all raw rows of each window into totals and breakdown at query time."
- :expected :killed
+ :expected :survives
  :functional-preserved? :unverified
  :notes "Unexecuted: manifest written from diff review only; compile and functional preservation not yet validated. Relies on *rid being non-nil whenever *delta is non-nil (appears true from the diff)."}

@@ -5,150 +5,171 @@ against the reference module (must pass) and against each mutant (should
 fail). A mutant is a copy of the reference with one wrong design, usually an
 NFR violation. A mutant that survives points to a grader gap.
 
-## Status: inventory only, NOT EXECUTED
+## Baseline (2026-09-30, graders as on `origin/master` 4bed04d)
 
-The kill rate has **not** been measured yet. In the session that wrote this
-file (2026-09-29, branch `wip/mutant-kill-rate`), the permission mode blocked
-every `bb` and `clojure` invocation, so:
+**References: 16/16 pass. Mutants: 6/25 killed (24%), 19 survived, 0 broken
+(no compile or JVM crashes).** Machine-readable: `docs/mutant-kill-rate.json`.
 
-- no reference was run against its private suite;
-- no mutant was compiled or run (compile status and functional preservation
-  are unverified for every mutant);
-- `bb scripts/mutant_kill_rate_test.bb` (unit tests for the task) was not run
-  after this session's edits.
+Every survivor passed the challenge's complete private suite, functional tests
+included. So each survivor compiles and keeps the reference's
+functionally-tested behaviour. Only the design differs, which makes it a clean
+NFR gap. Killed mutants were not separately checked for functional
+preservation. `chat-app/durable-heartbeats` is not functional-preserving by
+design (see its manifest).
 
-Every killed/survived figure below is therefore **TBD**. Do not quote a kill
-rate from this file until the "Results" section is filled from a real run.
+| Challenge | Mutant | Result | Killed by / wrong design (one line) |
+|---|---|---|---|
+| bank-transfer-module | stream-topology | **killed** | performance test (topology type, read bounds). Transfers run in a stream topology instead of microbatch. |
+| bank-transfer-module | unsubindexed-history | **killed** | performance test. Transfer histories are plain maps, loaded whole per read. |
+| chat-app | durable-heartbeats | **killed** | "heartbeats perform no durable writes" and fault tolerance. Heartbeats go to a depot and a durable last-beat PState. |
+| chat-app | per-member-post-writes | **killed** | "a post to a 300-member room writes a bounded number of records". Every post is fanned out into a per-member inbox. |
+| hld-search-autocomplete | full-prefix-scan | **killed** | "suggest work grew with unrelated state". Suggest reads every candidate of the prefix, then sorts and takes k. |
+| time-series-module-hard | stream-ingest | **killed** | "microbatch topology required". Ingest runs in a stream topology. |
+| collaborative-document-editor | non-subindexed-history | survived | The `$$edits` log is a plain vector, loaded and rewritten whole. |
+| collaborative-document-editor | recompute-doc-on-read | survived | No `$$docs`; every read replays the whole edit log. |
+| hld-ad-click-aggregation | global-placement | survived | `$$campaigns` is `:global?`, so all campaigns sit on one task. |
+| hld-ad-click-aggregation | read-time-aggregation | survived | Raw rows per window, summed at query time. |
+| hld-feature-flag-service | env-scan | survived | A flag read scans every flag in its (tenant, env). |
+| hld-feature-flag-service | global-pstate | survived | `$$flags` is `:global?`, so all flags sit on one task. |
+| hld-file-sync | version-history-vector | survived | A file's version history is one non-subindexed value. |
+| hld-hotel-reservation | cancel-scans-bookings | survived | `cancel-booking!` scans all bookings to recompute availability. |
+| hld-metrics-pipeline | lazy-retention | survived | Nothing is ever expired; queries filter by clock. |
+| hld-metrics-pipeline | series-blob | survived | The 60s bucket map is non-subindexed, rewritten whole per sample. |
+| hld-payment-system | journal-sorted-map-blob | survived | The tenant journal is one non-subindexed sorted-map. |
+| hld-rate-limiter | stream-client-dedup | survived | Stream topology, so a retry can double-debit. |
+| hld-search-autocomplete | locale-placement | survived | Partitioned by locale only (a hot partition per locale). |
+| hld-stock-exchange | book-as-one-value | survived | Each book side is one non-subindexed value per symbol. |
+| hld-ticketing-system | hold-scans-event-holds | survived | HoldSeats scans every hold of the event. |
+| hld-url-shortener | stream-client-dedup | survived | Stream topology with client-side click dedup. |
+| time-series-module-hard | no-thirty-day-rollup | survived | No 30-day rollup, so multi-year ranges read per-day buckets. |
+| top-users-module | global-user-totals | survived | User totals in one `:global?` PState. |
+| top-users-module | query-time-top-n | survived | No maintained top-500; every read scans and sorts all users. |
 
-## Partial run, 2026-09-29 (commit 78b293a; scripts unchanged since except for reference output-tail capture)
+Every survivor matches a gap named in the NFR audit
+(`origin/wip/atlas-onepagers:docs/nfr-audit.md`). The audit either names the
+design as passing, or says the relevant cost, balance, or retry behaviour is
+untested (top-users: no NFR tests at all). **Caveat:** the manifests'
+`:expected :survives` values were set *after* the run, by checking each
+survivor against the audit. They are not blind predictions. The exceptions are
+`time-series/no-thirty-day-rollup`, `hotel/cancel-scans-bookings`,
+`file-sync/version-history-vector` and `rate-limiter/stream-client-dedup`,
+which were marked `:survives` from the audit before they ran. The six killed
+mutants were all `:expected :killed` beforehand.
 
-Four `bb mutant-kill-rate` processes ran concurrently on a 4-CPU/7 GB host
-with `--timeout-s 360`. The session was killed before any process finished,
-so no JSON report was written. From the logs:
+### Positive controls (gold-standard graders)
 
-| Run | Outcome | Valid? |
-|---|---|---|
-| collaborative-document-editor reference | **pass** (96s) | Yes. Confirms the `test-resources/upstream` classpath fix; the run before the fix crashed in 36s. |
-| top-users-module reference | **fail** (60s), twice (runs at 06:47 and 06:53) | Yes, but cause unknown. Output tail not captured (the process was killed before the JSON was written). **Investigate before trusting any top-users result.** |
-| chat-app reference | timeout (518s) | No: CPU contention (4 concurrent JVMs) |
-| hld-stock-exchange reference | timeout (536s) | No: CPU contention |
-| collaborative-document-editor/non-subindexed-history | timeout (518s) | No: contention. Would count as killed; do not trust. |
-| top-users-module/global-user-totals | timeout (505s) | No: contention, and the reference fails anyway |
+- `chat-app/per-member-post-writes` and `chat-app/durable-heartbeats`, both
+  killed by the assertions written for exactly those designs. The first
+  version of `per-member-post-writes` fanned out with
+  `(local-select> [(keypath *room-id) ALL] $$room-members :> *member)`
+  followed by `|hash`. A probe showed it wrote to only **1 of 300** members,
+  so it survived for a reason unrelated to the grader. Fixed to
+  `sorted-set-range-from-start` + `ops/explode`: the probe then showed 300/300
+  inbox entries and 603 counted writes, and the grader killed it.
+  **Follow-up:** the reference uses the same `ALL` + `|hash` pattern for
+  thread-participant fanout. Check whether it also under-emits for large
+  subindexed sets.
+- `time-series-module-hard/stream-ingest` and
+  `bank-transfer-module/stream-topology`, both killed by topology-type checks.
 
-Rerun with at most 1–2 concurrent processes and `--timeout-s 900`.
+### Provenance and how the runs were made
+
+All runs were sequential, one grader JVM at a time (`--jobs 1`, one process).
+The baseline merges three runs:
+
+1. Full run, 03:33–04:25 UTC. All 16 challenges; the script as at 8286be6
+   (before the lock). `hotel/cancel-scans-bookings`,
+   `file-sync/version-history-vector` and `rate-limiter/stream-client-dedup`
+   were written while this run was in progress, before it reached those
+   challenges. The report's `git-rev` (6bf5e71) therefore predates them; they
+   are committed together with this doc.
+2. chat-app rerun, 04:32: reference pass (129s), `durable-heartbeats` killed.
+3. `per-member-post-writes` regraded after the fanout fix, 04:45:
+   `--skip-reference`, killed.
+
+An earlier attempt (2026-09-29) ran 4 grader processes concurrently on a
+4-CPU host. It produced timeouts and a spurious top-users-module reference
+failure, which did not reproduce in isolation: the direct grader gave exit 0,
+1 test, 14 assertions, 0 failures, and the task reported a pass (54s). The
+task now takes a machine-wide lock (`$TMPDIR/mutant-kill-rate.lock`; a second
+run exits 3) and warns on `--jobs > 1`.
 
 ## How to run (and rerun after `wip/nfr-tests` merges)
 
 ```bash
-bb scripts/mutant_kill_rate_test.bb            # task unit tests
-bb mutant-kill-rate --jobs 2 --timeout-s 900   # all challenges with mutants
-bb mutant-kill-rate -c hld-payment-system      # one challenge
+bb scripts/mutant_kill_rate_test.bb                # task unit tests
+bb mutant-kill-rate --jobs 1 --timeout-s 900       # all challenges, ~55 min
+bb mutant-kill-rate -c hld-payment-system          # one challenge
 ```
 
-Output: a Markdown summary and per-mutant table on stdout, plus
-`docs/mutant-kill-rate.json`. To measure the effect of the NFR tests, run once
-on this branch, then once on a scratch merge
-(`git switch -c scratch/mkr-nfr && git merge origin/wip/nfr-tests`), and diff
-the two JSON files. Mutants and graders are independent, so the merge needs no
-changes to the mutants.
+To measure the NFR tests, make a scratch merge
+(`git switch -c scratch/mkr-nfr && git merge origin/wip/nfr-tests`), rerun,
+and diff the resulting JSON against `docs/mutant-kill-rate.json`. Mutants are
+independent of the graders, so the merge needs no mutant changes. The
+survivors above are the audit's gaps, so each one the NFR tests close should
+flip to killed; update its manifest `:expected` to `:killed`. Not done yet.
 
 Classification rules (in `scripts/mutant_kill_rate.bb`):
 
 - `pass` means the grader accepted the mutant, so it **survived**.
-- `fail` (some test FAIL/ERROR) or `timeout` counts as **killed**.
+- `fail` (some test FAIL/ERROR) or `timeout` counts as **killed**. A timeout
+  is only meaningful with `--jobs 1` on an idle host.
 - `crash` (JVM/compile died and no test reported) counts as **broken**. It is
   excluded from the rate, so compile errors are never counted as kills.
-- Invalid mutants are skipped and listed separately, never counted. Invalid
-  means a missing or invalid `manifest.edn`, or source byte-identical to the
-  reference.
-- If a reference fails its own suite, the task exits 2, because kill rates for
-  that challenge would be meaningless.
+- Invalid mutants are skipped and listed, never counted. Invalid means a
+  missing or invalid manifest, or source byte-identical to the reference.
+- If a reference fails, the task exits 2. A failing reference's output tail is
+  kept in the JSON.
+- Source-backed challenges (`test-resources/upstream`) get their resource
+  roots from the `:test-private-harness` alias. Before this fix, the
+  collaborative-document-editor reference crashed.
 
-## Solver protection (verified by code reading, not by a run)
+## Solver protection (verified by code reading)
 
 Mutants live only under `challenges/<name>/test-private/mutants/<id>/`.
 
 - Isolated runs: `scripts/isolate_solver.py` `snapshot` copies an allowlist.
   From the challenge it copies only `README.md`, `deps.edn`, `src`, and
-  `.clj-kondo`. `test-private/` (and so every mutant) is never copied.
+  `.clj-kondo`, so `test-private/` never reaches the solver.
 - Non-isolated runs: `scripts/encrypt_challenges.bb` `sensitive-dirs`
-  includes `test-private`. `source-files` globs `**` under it, so manifests
-  and mutant sources are encrypted with the rest of the private suite.
+  includes `test-private`, and `source-files` globs `**` under it, so
+  manifests and mutant sources are encrypted with the private suite.
 - Grading: `-X:test-private` puts `test-private` on the classpath as a root.
-  Mutant namespaces then sit at `mutants/<id>/src/...`, which cannot resolve
-  as `<ns>.module`. The test-runner only loads `*-test` namespaces, so
-  mutants never shadow a solver's module during grading.
-- `run_challenges.bb` `find-functional-test-files` globs `test-private/**`
-  but keeps only filenames containing `functional`, so no mutant file matches.
-- Residual risk: **this file (`docs/`) is not protected.** It names the wrong
-  designs, and eventually which of them survive. Isolated snapshots exclude
-  `docs/`, but a non-isolated solver could read it.
+  Mutant namespaces then sit at `mutants/<id>/src/...` and cannot resolve as
+  `<ns>.module`, so they never shadow a solver's module.
+- `run_challenges.bb` `find-functional-test-files` keeps only filenames
+  containing `functional`, so no mutant file matches.
+- Residual risk: `docs/` (this file and the JSON) is not protected. It names
+  the grader gaps. Isolated snapshots exclude `docs/`, but a non-isolated
+  solver could read it.
 
-## Inventory (31 mutant directories in WIP commit 935c229)
+## Remaining gaps
 
-### Placeholders: byte-identical to the reference in 935c229 (7). Invalid, not counted.
+- The scratch merge with `wip/nfr-tests` and a rerun have not been done.
+- Audited challenges with no mutants: auction-module, fanout,
+  social-graph-and-fanout, who-to-follow, timed-notifications,
+  unbalanced-social-graph, content-moderation, family-tree,
+  music-catalog-migration, profile-module, rest-api-integration-module,
+  hld-job-scheduler, hld-notification-system, hld-web-crawler,
+  hld-enterprise-rag.
+- Killed mutants were not checked separately for functional preservation (a
+  kill could partly come from a functional test). Per the killing-test labels,
+  all six were killed by performance/write-volume tests. Additional
+  fault-tolerance failures were also recorded for `durable-heartbeats`.
+- `hld-url-shortener/stream-client-dedup` and
+  `hld-ticketing-system/hold-scans-event-holds` were flagged in review as
+  possibly not functional-preserving. Both passed the full functional suite,
+  so any drift is untested rather than absent.
+- The positive control mutants run on a single random task count (2 or 4)
+  per run, as the harness chooses.
 
-Update (78b293a): real mutations were written for three of them:
-`time-series-module-hard/stream-ingest` (positive control; the audit documents a
-`#{:microbatch}` check), `time-series-module-hard/no-thirty-day-rollup`
-(`:expected :survives`, an audit-predicted grader gap), and
-`chat-app/per-member-post-writes` (positive control; gold-standard grader asserts
-fewer than 40 writes per post to a 300-member room). None has been run yet.
-The remaining four are still placeholders.
+## Session ledger
 
-These were committed as mutants but contain no mutation. The task now rejects
-them with `no mutation: source identical to reference`. Each one still needs
-a real mutation written.
+| When (UTC) | Model (evidence) | Permission mode (evidence) | Notes |
+|---|---|---|---|
+| 2026-09-29 06:25–07:15 | claude-opus-5-5 (transcript `"model":"claude-opus-5-5"`; process `claude --model claude-opus-5-5`) | default, then bypassPermissions (by the operator), then acceptEdits | bb/clojure/git were blocked at first; the partial concurrent run was invalid |
+| 2026-09-30 03:30– | claude-opus-5-5 (process `claude --model claude-opus-5-5 --permission-mode auto`; debug log `[auto-mode] verifyAutoModeGateAccess: enabledState=enabled ... model=claude-opus-5-5 modelSupported=true`; transcript `"permissionMode":"auto"`) | auto (`~/.claude/settings.json` = `{"permissions":{"defaultMode":"auto"}}`) | All runs in this doc; `git push` worked under auto |
 
-| Challenge | Mutant dir | Intended wrong design (from dir name) |
-|---|---|---|
-| chat-app | durable-heartbeats | Presence heartbeats written to a durable depot/PState instead of ephemeral state |
-| chat-app | per-member-post-writes | Each post written once per channel member instead of once per channel |
-| hld-file-sync | version-history-vector | Version history kept as one growing vector value instead of subindexed |
-| hld-hotel-reservation | cancel-scans-bookings | Cancel scans all bookings instead of a keyed lookup |
-| hld-rate-limiter | stream-client-dedup | Client dedup done in a stream topology instead of microbatch |
-| time-series-module-hard | no-thirty-day-rollup | 30-day window aggregated from raw points instead of a rollup |
-| time-series-module-hard | stream-ingest | Ingest in a stream topology instead of microbatch |
-
-### Real mutations (24)
-
-"Manifest" says whether `manifest.edn` was present in 935c229 or written in
-this session from a diff review. For every row, compile status, functional
-preservation, and kill status are TBD.
-
-| Challenge | Mutant | Manifest | Wrong design (one line) | Result |
-|---|---|---|---|---|
-| bank-transfer-module | stream-topology | 935c229 | Deposits/transfers processed in a stream topology instead of microbatch | TBD |
-| bank-transfer-module | unsubindexed-history | 935c229 | Transfer histories are plain nested maps (no `:subindex?`), loaded whole on read | TBD |
-| hld-payment-system | journal-sorted-map-blob | 935c229 | Tenant journal stored as one non-subindexed sorted-map, read and rewritten whole on every command | TBD |
-| hld-stock-exchange | book-as-one-value | 935c229 | Each book side stored as one non-subindexed map per symbol, rewritten whole on every submit/cancel | TBD |
-| top-users-module | global-user-totals | 935c229 | Per-user totals in a single `:global?` PState, so every purchase routes to task 0 | TBD |
-| top-users-module | query-time-top-n | 935c229 | No top-500 maintained; reads scan and sort every user total | TBD |
-| collaborative-document-editor | non-subindexed-history | this session | `$$edits` log is a plain vector, loaded and rewritten whole per edit/read | TBD |
-| collaborative-document-editor | recompute-doc-on-read | this session | No `$$docs` PState; every doc+version read replays the whole edit log | TBD |
-| hld-ad-click-aggregation | global-placement | this session | `$$campaigns` is `:global?`, so all campaigns sit on one task | TBD |
-| hld-ad-click-aggregation | read-time-aggregation | this session | Raw rows kept per window and summed at query time instead of pre-aggregated | TBD |
-| hld-feature-flag-service | env-scan | this session | Partitioned by (tenant, env); a flag read scans every flag in the env | TBD |
-| hld-feature-flag-service | global-pstate | this session | `$$flags` is `:global?`, so all flags sit on one task | TBD |
-| hld-metrics-pipeline | lazy-retention | this session | Clock advance never expires raw/60s/3600s data; queries rely on range filtering | TBD |
-| hld-metrics-pipeline | series-blob | this session | 60s bucket map not subindexed, loaded and rewritten whole | TBD |
-| hld-search-autocomplete | full-prefix-scan | this session | Suggest reads all candidates for the prefix, then sorts and takes k | TBD |
-| hld-search-autocomplete | locale-placement | this session | Partition key is `[locale]` only, so each locale is one hot partition | TBD |
-| hld-ticketing-system | hold-scans-event-holds | this session | HoldSeats scans every hold on the event instead of per-seat records (**may change results**) | TBD |
-| hld-url-shortener | stream-client-dedup | this session | Stream topology with client-side click dedup (**not functional-preserving**: concurrent duplicates double-count; possible runtime failure) | TBD |
-
-The bank-transfer-module manifests carry `:notes` claiming KILLED results from
-an earlier run. That run is not reproduced here, so treat the notes as
-unverified.
-
-## Not yet done
-
-- Run the task: reference pass counts, mutant compile/functional checks, and
-  kill results.
-- Write real mutations for the 7 placeholders.
-- Add mutants for the audited challenges that have none (see
-  `origin/wip/atlas-onepagers:docs/nfr-audit.md`).
-- Add 2–3 gold-standard positive-control mutants on graders known to be
-  strong. Each should be a mutant whose kill is certain, e.g. a deliberately
-  wrong functional result, to prove the harness can observe a kill end-to-end.
-- Scratch-merge `origin/wip/nfr-tests` and rerun.
+One manifest-drafting subagent ran on 2026-09-29 (alias `opus`; its transcript
+records `claude-opus-5-5`). Its 12 manifests were reviewed and the outcomes
+re-derived from runs in this session. No other model was used.

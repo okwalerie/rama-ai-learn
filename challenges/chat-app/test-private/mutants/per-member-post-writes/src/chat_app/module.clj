@@ -349,7 +349,9 @@
         (local-transform> [(keypath *room-id) (nil->val 0) (term inc)]
                           $$room-seq)
         ;; MUTANT: write the message id into every member's inbox
-        (local-select> [(keypath *room-id) ALL] $$room-members :> *member)
+        (local-select> [(keypath *room-id) (sorted-set-range-from-start 100000)]
+                       $$room-members :> *members)
+        (ops/explode *members :> *member)
         (|hash *member)
         (local-transform> [(keypath *member *message-id) (termval *room-id)]
                           $$member-inbox)

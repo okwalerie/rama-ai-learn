@@ -56,6 +56,16 @@
     (= reason :night-not-configured) (assoc :nights missing)
     (= reason :insufficient-capacity) (assoc :nights lacking)))
 
+;; MUTANT: availability recomputed from a scan of the property's bookings.
+(defn reserved-by-night
+  "Sum of confirmed quantities per night for room type rt, excluding bid."
+  [bookings rt bid]
+  (reduce-kv (fn [acc b {:keys [room-type state checkin checkout quantity]}]
+               (if (and (= rt room-type) (= :confirmed state) (not= b bid))
+                 (reduce #(update %1 %2 (fnil + 0) quantity) acc (range checkin checkout))
+                 acc))
+             {} (into {} bookings)))
+
 (defmodule HotelModule [setup topologies]
   (declare-depot setup *commands (hash-by :property-id))
   (set-launch-depot-dynamic-option! setup "*commands" "depot.microbatch.max.records" 1000)
@@ -227,12 +237,19 @@
                     (local-select> [(keypath *p :room-types *rt :nights)
                                     (sorted-map-range *ci *co)] $$properties :> *nights)
                     (inc *seq :> *new-seq)
+                    ;; MUTANT: scan every booking of the property to recompute availability
+                    (local-select> [(keypath *p :bookings) (sorted-map-range-from-start 1000000000)]
+                                   $$properties :> *all-bookings)
+                    (reserved-by-night *all-bookings *rt *bid :> *reserved)
                     (loop<- [*n *ci :> *written]
                       (<<if (= *n *co)
                         (:> true)
                        (else>)
+                        (get *nights *n :> *night)
                         (local-transform> [(keypath *p :room-types *rt :nights *n)
-                                           (termval (update (get *nights *n) :available + *quantity))] $$properties)
+                                           (termval (assoc *night :available
+                                                           (- (get *night :capacity)
+                                                              (get *reserved *n 0))))] $$properties)
                         (continue> (inc *n))))
                     (local-transform> [(keypath *p :bookings *bid)
                                        (termval (assoc *booking :state :cancelled))] $$properties)

@@ -1,0 +1,8 @@
+{:id "stream-client-dedup"
+ :challenge "hld-rate-limiter"
+ :targets-nfr "README:36,47-50 atomic two-bucket debit and idempotent decisions under engine retry"
+ :wrong-design "Checks run in a stream topology, so a retried check between the debit and the decision write can debit twice."
+ :expected :survives
+ :split :dev
+ :functional-preserved? true
+ :notes "Audit-predicted gap (nfr-audit hld-rate-limiter Gap 1: no stream-retry injection; no test inspects topology type). Directory name kept from WIP; this mutant has no client-side dedup."}

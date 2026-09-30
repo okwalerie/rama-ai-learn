@@ -1,0 +1,8 @@
+{:id "cancel-scans-bookings"
+ :challenge "hld-hotel-reservation"
+ :targets-nfr "README:257-275 cancel-booking! proportional to stay nights; availability must not be recomputed by scanning bookings"
+ :wrong-design "cancel-booking! reads every booking of the property and recomputes each stay night's availability as capacity minus confirmed quantities."
+ :expected :survives
+ :split :dev
+ :functional-preserved? true
+ :notes "Audit-predicted gap (nfr-audit hld-hotel-reservation: cancel-booking! cost is untested). Relies on available = capacity - sum of confirmed quantities, which holds because capacity is only set at init-night."}

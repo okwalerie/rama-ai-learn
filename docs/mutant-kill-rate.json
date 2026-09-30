@@ -1,0 +1,585 @@
+{
+  "generated-at" : "2026-09-30T04:39:34.682310454Z",
+  "provenance" : "Merged from three sequential --jobs 1 runs on 2026-09-30: full run (03:33-04:25 UTC, script at 8286be6/6bf5e71 plus uncommitted mutants), chat-app rerun (04:32), per-member-post-writes regrade after fanout fix (04:45). Commit containing all mutants: see git log.",
+  "summary" : {
+    "mutants" : 25,
+    "killed" : 6,
+    "rate" : 0.24
+  },
+  "challenges" : [ {
+    "challenge" : "bank-transfer-module",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 38,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 1,
+      "targets-nfr" : "exactly-once transfers require microbatch topology",
+      "as-expected?" : true,
+      "wrong-design" : "Deposits and transfers are processed in a stream topology (non-idempotent +sum / balance debit under retry) instead of a microbatch topology.",
+      "killed-by" : [ {
+        "kind" : "fail",
+        "test" : "performance-challenge-test",
+        "context" : "BankTransferModule (agent implementation, performance tests)"
+      }, {
+        "kind" : "fail",
+        "test" : "performance-challenge-test",
+        "context" : "BankTransferModule (agent implementation, performance tests) balanced partitioning depot reads distributed evenly across tasks"
+      } ],
+      "split" : "held-out",
+      "killed?" : true,
+      "challenge" : "bank-transfer-module",
+      "status" : "fail",
+      "id" : "stream-topology",
+      "expected" : "killed",
+      "duration-s" : 35,
+      "functional-preserved?" : true,
+      "ran" : 2
+    }, {
+      "exit" : 1,
+      "targets-nfr" : "unbounded transfer history must be subindexed (iterator reads)",
+      "as-expected?" : true,
+      "wrong-design" : "Incoming/outgoing transfer histories are plain nested maps (no :subindex?), so each history read loads the whole unbounded collection as one value.",
+      "killed-by" : [ {
+        "kind" : "fail",
+        "test" : "performance-challenge-test",
+        "context" : "BankTransferModule (agent implementation, performance tests)"
+      } ],
+      "split" : "held-out",
+      "killed?" : true,
+      "challenge" : "bank-transfer-module",
+      "status" : "fail",
+      "id" : "unsubindexed-history",
+      "expected" : "killed",
+      "duration-s" : 41,
+      "functional-preserved?" : true,
+      "ran" : 2
+    } ]
+  }, {
+    "challenge" : "chat-app",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 129,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 1,
+      "targets-nfr" : "heartbeats perform no durable writes (presence is ephemeral)",
+      "as-expected?" : true,
+      "wrong-design" : "Each heartbeat is appended to a depot and a stream topology writes a durable last-beat PState that presence reads.",
+      "killed-by" : [ {
+        "kind" : "fail",
+        "test" : "write-volume-challenge-test",
+        "context" : "chat-app: durable write volume of hot writes heartbeats perform no durable writes"
+      }, {
+        "kind" : "fail",
+        "test" : "fault-tolerance-challenge-test",
+        "context" : "chat-app: durable state survives module update; presence resets presence resets on restart; next heartbeat revives it"
+      } ],
+      "split" : "dev",
+      "killed?" : true,
+      "challenge" : "chat-app",
+      "status" : "fail",
+      "id" : "durable-heartbeats",
+      "expected" : "killed",
+      "duration-s" : 140,
+      "functional-preserved?" : false,
+      "ran" : 8
+    }, {
+      "exit" : 1,
+      "targets-nfr" : "a room post must not write per room member (bounded write amplification)",
+      "as-expected?" : true,
+      "wrong-design" : "Every room message is also fanned out into a per-member inbox PState, so a post to an N-member room does N extra writes.",
+      "killed-by" : [ {
+        "kind" : "fail",
+        "test" : "write-volume-challenge-test",
+        "context" : "chat-app: durable write volume of hot writes a post to a 300-member room writes a bounded number of records"
+      } ],
+      "split" : "dev",
+      "killed?" : true,
+      "challenge" : "chat-app",
+      "status" : "fail",
+      "id" : "per-member-post-writes",
+      "expected" : "killed",
+      "duration-s" : 138,
+      "functional-preserved?" : true,
+      "ran" : 8
+    } ]
+  }, {
+    "challenge" : "collaborative-document-editor",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 40,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 0,
+      "targets-nfr" : "edit and version-read cost independent of history length",
+      "as-expected?" : true,
+      "wrong-design" : "Inlines the upstream module but declares the per-document $$edits log as a plain (non-subindexed) vector, so every edit and every doc+version read loads and rewrites the whole history.",
+      "killed-by" : [ ],
+      "split" : "dev",
+      "killed?" : false,
+      "challenge" : "collaborative-document-editor",
+      "status" : "pass",
+      "id" : "non-subindexed-history",
+      "expected" : "survives",
+      "duration-s" : 34,
+      "functional-preserved?" : "unverified",
+      "ran" : 2
+    }, {
+      "exit" : 0,
+      "targets-nfr" : "document read cost independent of history length",
+      "as-expected?" : true,
+      "wrong-design" : "Drops the materialized $$docs PState and has the doc+version query replay the entire edit log from the empty string on every read.",
+      "killed-by" : [ ],
+      "split" : "dev",
+      "killed?" : false,
+      "challenge" : "collaborative-document-editor",
+      "status" : "pass",
+      "id" : "recompute-doc-on-read",
+      "expected" : "survives",
+      "duration-s" : 36,
+      "functional-preserved?" : "unverified",
+      "ran" : 2
+    } ]
+  }, {
+    "challenge" : "hld-ad-click-aggregation",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 123,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 0,
+      "targets-nfr" : "horizontal scalability: campaigns partitioned across tasks",
+      "as-expected?" : true,
+      "wrong-design" : "Declares $$campaigns with {:global? true} and routes both the microbatch ingest and the windows-in-range query to |global, so all campaigns live on a single task.",
+      "killed-by" : [ ],
+      "split" : "dev",
+      "killed?" : false,
+      "challenge" : "hld-ad-click-aggregation",
+      "status" : "pass",
+      "id" : "global-placement",
+      "expected" : "survives",
+      "duration-s" : 112,
+      "functional-preserved?" : "unverified",
+      "ran" : 6
+    }, {
+      "exit" : 0,
+      "targets-nfr" : "query cost independent of click volume (pre-aggregated windows)",
+      "as-expected?" : true,
+      "wrong-design" : "Stores each counted click as a raw [geo device delta] row keyed by request-id under the window instead of +compound totals/breakdown counters, and folds all raw rows of each window into totals and breakdown at query time.",
+      "killed-by" : [ ],
+      "split" : "dev",
+      "killed?" : false,
+      "challenge" : "hld-ad-click-aggregation",
+      "status" : "pass",
+      "id" : "read-time-aggregation",
+      "expected" : "survives",
+      "duration-s" : 117,
+      "functional-preserved?" : "unverified",
+      "ran" : 6
+    } ]
+  }, {
+    "challenge" : "hld-feature-flag-service",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 60,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 0,
+      "targets-nfr" : "flag read is a point lookup independent of flags per environment",
+      "as-expected?" : true,
+      "wrong-design" : "Partitions and keys flags by (tenant, env) with a subindexed flag-key map per environment, and flag reads fetch every flag of the environment via foreign-select ALL and linearly scan for the requested key.",
+      "killed-by" : [ ],
+      "split" : "held-out",
+      "killed?" : false,
+      "challenge" : "hld-feature-flag-service",
+      "status" : "pass",
+      "id" : "env-scan",
+      "expected" : "survives",
+      "duration-s" : 60,
+      "functional-preserved?" : "unverified",
+      "ran" : 2
+    }, {
+      "exit" : 0,
+      "targets-nfr" : "horizontal scalability: flags partitioned across tasks",
+      "as-expected?" : true,
+      "wrong-design" : "Declares $$flags with {:global? true} and adds |global to the microbatch so every flag write and read goes to a single task.",
+      "killed-by" : [ ],
+      "split" : "dev",
+      "killed?" : false,
+      "challenge" : "hld-feature-flag-service",
+      "status" : "pass",
+      "id" : "global-pstate",
+      "expected" : "survives",
+      "duration-s" : 58,
+      "functional-preserved?" : "unverified",
+      "ran" : 2
+    } ]
+  }, {
+    "challenge" : "hld-file-sync",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 110,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 0,
+      "targets-nfr" : "README:272 a file's whole version history must not be used as one value",
+      "as-expected?" : true,
+      "wrong-design" : "A file's :versions map is not subindexed, so every commit and version read loads and rewrites the file's whole version history as one value.",
+      "killed-by" : [ ],
+      "split" : "dev",
+      "killed?" : false,
+      "challenge" : "hld-file-sync",
+      "status" : "pass",
+      "id" : "version-history-vector",
+      "expected" : "survives",
+      "duration-s" : 110,
+      "functional-preserved?" : true,
+      "ran" : 2
+    } ]
+  }, {
+    "challenge" : "hld-hotel-reservation",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 98,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 0,
+      "targets-nfr" : "README:257-275 cancel-booking! proportional to stay nights; availability must not be recomputed by scanning bookings",
+      "as-expected?" : true,
+      "wrong-design" : "cancel-booking! reads every booking of the property and recomputes each stay night's availability as capacity minus confirmed quantities.",
+      "killed-by" : [ ],
+      "split" : "dev",
+      "killed?" : false,
+      "challenge" : "hld-hotel-reservation",
+      "status" : "pass",
+      "id" : "cancel-scans-bookings",
+      "expected" : "survives",
+      "duration-s" : 94,
+      "functional-preserved?" : true,
+      "ran" : 5
+    } ]
+  }, {
+    "challenge" : "hld-metrics-pipeline",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 82,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 0,
+      "targets-nfr" : "bounded storage: expired raw samples and rollup buckets are deleted",
+      "as-expected?" : true,
+      "wrong-design" : "Clock advancement only writes the new clock and removes all three expiry branches, so expired raw samples, 60s buckets, and 3600s buckets are never deleted.",
+      "killed-by" : [ ],
+      "split" : "dev",
+      "killed?" : false,
+      "challenge" : "hld-metrics-pipeline",
+      "status" : "pass",
+      "id" : "lazy-retention",
+      "expected" : "survives",
+      "duration-s" : 82,
+      "functional-preserved?" : "unverified",
+      "ran" : 4
+    }, {
+      "exit" : 0,
+      "targets-nfr" : "per-sample write and range-read cost independent of bucket count",
+      "as-expected?" : true,
+      "wrong-design" : "Makes the per-series 60s bucket map non-subindexed, so each sample, expiry pass, and range query reads the whole map and (for writes) rewrites it via termval instead of using +compound and sorted-map-range.",
+      "killed-by" : [ ],
+      "split" : "held-out",
+      "killed?" : false,
+      "challenge" : "hld-metrics-pipeline",
+      "status" : "pass",
+      "id" : "series-blob",
+      "expected" : "survives",
+      "duration-s" : 86,
+      "functional-preserved?" : "unverified",
+      "ran" : 4
+    } ]
+  }, {
+    "challenge" : "hld-payment-system",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 82,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 0,
+      "targets-nfr" : "README resource guarantees: no unbounded per-tenant collection (journal) read/deserialized/rewritten as one value; get-journal proportional to limit",
+      "as-expected?" : true,
+      "wrong-design" : "The tenant's journal is stored as one non-subindexed sorted-map value: every fund!/charge!/refund! reads, deserializes and rewrites the whole journal, and get-journal fetches the whole journal and pages it client-side.",
+      "killed-by" : [ ],
+      "split" : "held-out",
+      "killed?" : false,
+      "challenge" : "hld-payment-system",
+      "status" : "pass",
+      "id" : "journal-sorted-map-blob",
+      "expected" : "survives",
+      "duration-s" : 92,
+      "functional-preserved?" : true,
+      "ran" : 4
+    } ]
+  }, {
+    "challenge" : "hld-rate-limiter",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 64,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 0,
+      "targets-nfr" : "README:36,47-50 atomic two-bucket debit and idempotent decisions under engine retry",
+      "as-expected?" : true,
+      "wrong-design" : "Checks run in a stream topology, so a retried check between the debit and the decision write can debit twice.",
+      "killed-by" : [ ],
+      "split" : "dev",
+      "killed?" : false,
+      "challenge" : "hld-rate-limiter",
+      "status" : "pass",
+      "id" : "stream-client-dedup",
+      "expected" : "survives",
+      "duration-s" : 60,
+      "functional-preserved?" : true,
+      "ran" : 4
+    } ]
+  }, {
+    "challenge" : "hld-search-autocomplete",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 78,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 1,
+      "targets-nfr" : "top-k query cost proportional to k, not to candidates per prefix",
+      "as-expected?" : true,
+      "wrong-design" : "Reads every ranked candidate of the prefix with subselect ALL and takes the top k in the query instead of a bounded sorted-set-range-from-start of k.",
+      "killed-by" : [ {
+        "kind" : "fail",
+        "test" : "independent-four-tasks",
+        "context" : "4 tasks suggest work grew with unrelated state: {:point 4, :iterator 2, :next 303, :writes 0} -> {:point 4, :iterator 11, :next 3021, :writes 0}"
+      }, {
+        "kind" : "fail",
+        "test" : "independent-two-tasks",
+        "context" : "2 tasks suggest work grew with unrelated state: {:point 4, :iterator 2, :next 303, :writes 0} -> {:point 4, :iterator 11, :next 3021, :writes 0}"
+      } ],
+      "split" : "dev",
+      "killed?" : true,
+      "challenge" : "hld-search-autocomplete",
+      "status" : "fail",
+      "id" : "full-prefix-scan",
+      "expected" : "killed",
+      "duration-s" : 82,
+      "functional-preserved?" : "unverified",
+      "ran" : 4
+    }, {
+      "exit" : 0,
+      "targets-nfr" : "load spread within a locale (no hot partition per locale)",
+      "as-expected?" : true,
+      "wrong-design" : "Changes the partition key from [locale, first two chars of the phrase/prefix] to [locale] alone, placing a locale's entire corpus and query load on one task.",
+      "killed-by" : [ ],
+      "split" : "dev",
+      "killed?" : false,
+      "challenge" : "hld-search-autocomplete",
+      "status" : "pass",
+      "id" : "locale-placement",
+      "expected" : "survives",
+      "duration-s" : 81,
+      "functional-preserved?" : "unverified",
+      "ran" : 4
+    } ]
+  }, {
+    "challenge" : "hld-stock-exchange",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 130,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 0,
+      "targets-nfr" : "README :258 'the book of a symbol must not be held as a single value read and rewritten whole on every command'; get-depth proportional to levels",
+      "as-expected?" : true,
+      "wrong-design" : "Each side's price levels and per-level FIFO queues are stored as one non-subindexed map value per symbol, so every submit/cancel reads and rewrites the whole side of the book and get-depth fetches the whole side and sorts it client-side.",
+      "killed-by" : [ ],
+      "split" : "dev",
+      "killed?" : false,
+      "challenge" : "hld-stock-exchange",
+      "status" : "pass",
+      "id" : "book-as-one-value",
+      "expected" : "survives",
+      "duration-s" : 130,
+      "functional-preserved?" : true,
+      "ran" : 7
+    } ]
+  }, {
+    "challenge" : "hld-ticketing-system",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 118,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 0,
+      "targets-nfr" : "hold cost proportional to requested seats, not to total holds on the event",
+      "as-expected?" : true,
+      "wrong-design" : "For HoldSeats commands, rebuilds the requested seats' occupancy by selecting and scanning every hold of the event (seats-from-holds) instead of trusting the per-seat records passed to decide.",
+      "killed-by" : [ ],
+      "split" : "dev",
+      "killed?" : false,
+      "challenge" : "hld-ticketing-system",
+      "status" : "pass",
+      "id" : "hold-scans-event-holds",
+      "expected" : "survives",
+      "duration-s" : 128,
+      "functional-preserved?" : "unverified",
+      "ran" : 9
+    } ]
+  }, {
+    "challenge" : "hld-url-shortener",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 64,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 0,
+      "targets-nfr" : "exactly-once click counting under retries/concurrency",
+      "as-expected?" : true,
+      "wrong-design" : "Switches the core topology from microbatch to stream and moves click dedup to a client-side check-then-append (foreign-select on :click-ids before append), so the topology increments clicks unconditionally and retries or concurrent duplicate clicks double-count.",
+      "killed-by" : [ ],
+      "split" : "held-out",
+      "killed?" : false,
+      "challenge" : "hld-url-shortener",
+      "status" : "pass",
+      "id" : "stream-client-dedup",
+      "expected" : "survives",
+      "duration-s" : 70,
+      "functional-preserved?" : "unverified",
+      "ran" : 4
+    } ]
+  }, {
+    "challenge" : "time-series-module-hard",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 36,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 0,
+      "targets-nfr" : "README:18 get-stats-for-range efficient for ranges up to multiple years",
+      "as-expected?" : true,
+      "wrong-design" : "Only minute/hour/day rollups are kept (no 30-day level), so a multi-year range reads ~1 day bucket per day of range.",
+      "killed-by" : [ ],
+      "split" : "dev",
+      "killed?" : false,
+      "challenge" : "time-series-module-hard",
+      "status" : "pass",
+      "id" : "no-thirty-day-rollup",
+      "expected" : "survives",
+      "duration-s" : 38,
+      "functional-preserved?" : true,
+      "ran" : 2
+    }, {
+      "exit" : 1,
+      "targets-nfr" : "exactly-once aggregate ingestion (microbatch)",
+      "as-expected?" : true,
+      "wrong-design" : "Ingestion runs in a stream topology, so +combine aggregates can double-count under retry.",
+      "killed-by" : [ {
+        "kind" : "fail",
+        "test" : "performance-challenge-test",
+        "context" : "TimeSeriesModuleHard (agent implementation, performance tests) microbatch topology required"
+      }, {
+        "kind" : "fail",
+        "test" : "performance-challenge-test",
+        "context" : "TimeSeriesModuleHard (agent implementation, performance tests) balanced partitioning across tasks"
+      } ],
+      "split" : "dev",
+      "killed?" : true,
+      "challenge" : "time-series-module-hard",
+      "status" : "fail",
+      "id" : "stream-ingest",
+      "expected" : "killed",
+      "duration-s" : 36,
+      "functional-preserved?" : true,
+      "ran" : 2
+    } ]
+  }, {
+    "challenge" : "top-users-module",
+    "reference" : {
+      "status" : "pass",
+      "duration-s" : 54,
+      "killed-by" : [ ]
+    },
+    "reference-ok?" : true,
+    "invalid" : [ ],
+    "mutants" : [ {
+      "exit" : 0,
+      "targets-nfr" : "user totals must be hash-partitioned (no hot partition); audit gap: all totals in one global map",
+      "as-expected?" : true,
+      "wrong-design" : "Per-user cumulative totals are stored in a single :global? PState, so every purchase is routed to task 0.",
+      "killed-by" : [ ],
+      "split" : "dev",
+      "killed?" : false,
+      "challenge" : "top-users-module",
+      "status" : "pass",
+      "id" : "global-user-totals",
+      "expected" : "survives",
+      "duration-s" : 56,
+      "functional-preserved?" : true,
+      "ran" : 1
+    }, {
+      "exit" : 0,
+      "targets-nfr" : "top-users read must be precomputed, O(500) not O(users); audit gap: top-N at query time",
+      "as-expected?" : true,
+      "wrong-design" : "No top-500 list is maintained; top-users runs an |all query topology that scans and sorts every user total on each read.",
+      "killed-by" : [ ],
+      "split" : "dev",
+      "killed?" : false,
+      "challenge" : "top-users-module",
+      "status" : "pass",
+      "id" : "query-time-top-n",
+      "expected" : "survives",
+      "duration-s" : 56,
+      "functional-preserved?" : true,
+      "ran" : 1
+    } ]
+  } ]
+}

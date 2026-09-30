@@ -2,6 +2,6 @@
  :challenge "hld-metrics-pipeline"
  :targets-nfr "per-sample write and range-read cost independent of bucket count"
  :wrong-design "Makes the per-series 60s bucket map non-subindexed, so each sample, expiry pass, and range query reads the whole map and (for writes) rewrites it via termval instead of using +compound and sorted-map-range."
- :expected :killed
+ :expected :survives
  :functional-preserved? :unverified
  :notes "Unexecuted: manifest written from diff review only; compile and functional preservation not yet validated. Helpers fold-into-map, bucket-rows-in, prune-buckets are defined in the mutant."}
