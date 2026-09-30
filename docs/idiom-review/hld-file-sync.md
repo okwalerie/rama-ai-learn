@@ -127,6 +127,117 @@ review only; no README, protocol, tests, or skill files were changed.
   that is a real multi-roundtrip pattern. HLD file sync has no analogous
   client-side fanout to consolidate.
 
+### 5. Additional source-verified observations
+
+Each item below was checked against the reference source and the published
+skill references. Claims the references do not support are marked as open
+questions rather than findings.
+
+- **Partition alignment is implicit.** Two sets of local PState operations
+  on `$$namespaces` must land on the same task:
+  - the pre-agg `:ingress-seq` read and write
+    ([`module.clj:290-292`](../../challenges/hld-file-sync/test-resources/hld_file_sync/module.clj#L290)),
+    which run on the depot partition chosen by `(hash-by :ns-id)`
+    ([`module.clj:247`](../../challenges/hld-file-sync/test-resources/hld_file_sync/module.clj#L247));
+  - the post-agg reads and writes
+    ([`module.clj:299-372`](../../challenges/hld-file-sync/test-resources/hld_file_sync/module.clj#L299)),
+    which run where `+group-by *ns` routes them.
+
+  The skill documents both as hash-of-key-mod-task-count placement:
+  - [`core-concepts.md:75`](../../plugins/rama-skill/skills/rama/references/core-concepts.md#L75)
+    covers `hash-by`;
+  - [`aggregators.md:78-83`](../../plugins/rama-skill/skills/rama/references/aggregators.md#L78)
+    says `+group-by` auto-hash-partitions by key.
+
+  Both use the same key, so they align. The functional and performance
+  suites exercise this at 2 and 4 tasks
+  ([`functional_test_support.clj:633-637`](../../challenges/hld-file-sync/test-private/hld_file_sync/functional_test_support.clj#L633)).
+  Line 294's comment notes the post-agg routing, but nothing notes that the
+  pre-agg write also depends on the depot partitioner. Changing the depot
+  partitioner or the `+group-by` key without the other would misplace state
+  silently, because the skill warns that misalignment compiles and produces
+  wrong results (SKILL.md Implementation Goal 5).
+- **`:ingress-seq` cost and scope.** Every command pays one local read and
+  one field write for its position
+  ([`module.clj:290-292`](../../challenges/hld-file-sync/test-resources/hld_file_sync/module.clj#L290)).
+  This includes replays, conflicting attempts, and rejections. The
+  positions are compared only inside one microbatch's grouped vector
+  ([`module.clj:295-298`](../../challenges/hld-file-sync/test-resources/hld_file_sync/module.clj#L295)).
+  Cross-batch continuity is therefore not used for ordering. Keeping the
+  counter in the PState makes it retry-safe, because a microbatch attempt
+  resets PStates to their previous state before reprocessing
+  ([`microbatch.md:128`](../../plugins/rama-skill/skills/rama/references/microbatch.md#L128)).
+  This review does not propose a non-durable replacement: the skill
+  references document no per-record ordering key for microbatch emits that
+  could substitute for it.
+- **Block-size read strategy differs from the plan, and the stated reason is
+  not supported by the skill.** The plan proposed a single
+  `(submap *hashes)` read with `{:allow-yield? true}`, with a point-read
+  loop as the fallback
+  ([`PLAN.md:276-277`](../../challenges/hld-file-sync/test-resources/PLAN.md#L276)).
+  The reference uses the fallback loop
+  ([`module.clj:226-241`](../../challenges/hld-file-sync/test-resources/hld_file_sync/module.clj#L226)).
+  Its docstring says a suspended yielding select "reads a committed
+  snapshot" and would miss blocks registered earlier in the same
+  microbatch.
+
+  The published references do not support that claim:
+  - [`dataflow.md:195`](../../plugins/rama-skill/skills/rama/references/dataflow.md#L195)
+    says emits with `:allow-yield?` are identical to emits without it,
+    continuing on a stable snapshot;
+  - [`pstate-schema.md:44`](../../plugins/rama-skill/skills/rama/references/pstate-schema.md#L44)
+    says reads inside the owning topology see its uncommitted writes.
+
+  Neither reference explicitly says whether that snapshot includes the
+  attempt's uncommitted writes. Treat the docstring's rationale as an
+  unverified claim, not as a Rama rule. The loop itself is correct and yields between reads. Any switch to
+  `submap` with `:allow-yield?` must be validated by the unbarriered
+  register→commit tests
+  ([`functional_test_support.clj:433-477`](../../challenges/hld-file-sync/test-private/hld_file_sync/functional_test_support.clj#L433))
+  and the full private suite.
+- **Request records duplicate commit blocklists.** `request-record` stores
+  the full command as `:payload`
+  ([`module.clj:199-200`](../../challenges/hld-file-sync/test-resources/hld_file_sync/module.clj#L199),
+  [`:279`](../../challenges/hld-file-sync/test-resources/hld_file_sync/module.clj#L279)).
+  For an accepted commit, that payload contains the same blocklist of up
+  to 1024 hashes that the version record stores
+  ([`module.clj:350-353`](../../challenges/hld-file-sync/test-resources/hld_file_sync/module.clj#L350)).
+  The contract requires this data. Replay detection compares the whole
+  payload with `=`
+  ([`README.md:104-113`](../../challenges/hld-file-sync/README.md#L104);
+  [`module.clj:364`](../../challenges/hld-file-sync/test-resources/hld_file_sync/module.clj#L364)),
+  and outcomes must be kept for the module's lifetime. The cost is storage
+  growth per command, not a correctness problem. `get-outcome` projects out
+  `:payload` with `submap`
+  ([`module.clj:423-425`](../../challenges/hld-file-sync/test-resources/hld_file_sync/module.clj#L423)),
+  so the client never receives it. The skill references do not say whether
+  a nested `fixed-keys-schema` value in a subindexed map is read field by
+  field, so this review makes no claim about server-side read savings.
+- **Optional one-read `get-file` (not adopted).** The `file-head` query
+  topology is idiomatic as written. The skill lists "combining multiple
+  reads on the same partition into a single roundtrip" as a query-topology
+  use
+  ([`core-concepts.md:51`](../../plugins/rama-skill/skills/rama/references/core-concepts.md#L51)).
+  There is also a single-read alternative:
+  - Versions are written only as `1` on create or `head + 1` on update
+    ([`module.clj:186-188`](../../challenges/hld-file-sync/test-resources/hld_file_sync/module.clj#L186)),
+    and they are never deleted, so the largest key in a file's `:versions`
+    map is its head.
+  - Subindexed maps are sorted, and numeric keys sort as their in-memory
+    values
+    ([`pstate-schema.md:77-79`](../../plugins/rama-skill/skills/rama/references/pstate-schema.md#L77)),
+    and `sorted-map-range-to-end` returns the last entries of a map
+    ([`paths.md:486`](../../plugins/rama-skill/skills/rama/references/paths.md#L486)).
+  - A client
+    `foreign-select-one [(keypath ns-id :files file-id :versions) (sorted-map-range-to-end 1) ALL]`
+    could therefore return `[head record]` in one read, with no dependent
+    `:head` lookup and no query topology.
+
+  Both forms take one client roundtrip. The alternative was not run against
+  the private suite, including the `get-file` read ceilings in
+  [`performance_test_support.clj:127-141`](../../challenges/hld-file-sync/test-private/hld_file_sync/performance_test_support.clj#L127).
+  It is recorded as an option, not a recommendation.
+
 ## Reference idioms inspected
 
 - **Auction module:** two depots partitioned by different entity keys and a
@@ -148,8 +259,10 @@ review only; no README, protocol, tests, or skill files were changed.
 ## Verification boundary
 
 This change adds documentation only. The private functional and performance
-suites were read, but not run because no reference implementation rewrite was
-made. The full tests are available through the challenge's `:test-private-harness`
-alias; if a future implementation edit is made, run that full suite and the
-reference-package checks before considering the change safe. No solver or
+suites were read but not run: the reference implementation was not
+rewritten, and the review session could not execute Clojure. Section 5
+therefore records the untested alternatives as options and does not report
+them as validated. The full tests are available through the challenge's
+`:test-private-harness` alias. Before treating any future implementation
+edit as safe, run that full suite and `scripts/test_reference_packages.py`. No solver or
 `bb run-challenges` run was performed.
