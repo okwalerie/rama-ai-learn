@@ -50,13 +50,16 @@ extra dedup state (`PLAN_VALIDATION.md:26-28,39-42`). No read requires stream-la
 visibility, because tests read only after `wait-for-processing!` (`README.md:150-151`).
 
 **Comparison.** `chat-app` also multiplexes many record types on one owner-hashed depot
-(`*user-actions-depot (hash-by :user-id)`, `chat_app/module.clj:26-30,160`). It uses a separate
-depot only where the partition key differs (`*register-depot (hash-by :handle)`, `:159`), and it
-dispatches with `<<subsource` (`:200-201,280-282`). `auction-module` partitions its bid depot by
-the listing owner, not the bid (`hash-by nested-listing-user-id`,
-`auction_module/module.clj:66-71`), so each bid first lands where the listing state it updates
-lives. The shared lesson is: partition each record by the owner of the state it touches first.
-This reference already does that.
+(`*user-actions-depot (hash-by :user-id)`, `chat_app/module.clj:26-30,160`) and dispatches with
+`<<subsource` (`:200-201,280-282`). Registration claims get a separate depot
+(`*register-depot (hash-by :handle)`, `:159`), but a differing key does not always mean a separate
+depot: `RoomCreate` stays on the shared depot, carries its candidate room ID in `:user-id` only to
+satisfy the partitioner, and immediately repartitions to `hash(room-name)` (`:47-52,212-213`).
+`auction-module` partitions its bid depot by the listing owner, not the bid
+(`hash-by nested-listing-user-id`, `auction_module/module.clj:66-71`), so each bid first lands where the listing state it updates
+lives. The shared lesson is: partition each record by the owner whose order or local reads it
+depends on; this reference already does that. A record with no such owner, like chat-app's room
+creation, can ride a shared depot and repartition.
 
 **Optional clarity alternative.** Split the depot into `*user-events (hash-by :user-id)` and
 `*delivery-events (hash-by :submission-id)`, both consumed by the same `core` microbatch.
@@ -95,17 +98,21 @@ exactly this: owners `["v" "u"]` are excluded (`notification_test.clj:137-155`).
 case `repeat` requires the earlier payload to win without a barrier (`:156-160`).
 
 `(task, pos)` is a total order that extends every per-owner depot order (`PLAN.md:49-65`). The
-minimum rank per ID therefore always yields a serializable winner set. A direct point claim at
+minimum rank per ID therefore always yields a serializable winner set. Any such order would do;
+a per-task total order is not itself required for serializability. A direct point claim at
 the submission owner would reintroduce the cross-owner race. That is only acceptable if the
 contract is relaxed.
 
 **`:ingress-seq`.** This is not a Rama API. It is an application PState field in another
 challenge's plan (`challenges/hld-hotel-reservation/test-resources/PLAN.md:60,176-180,214-235`).
 There, it gives a durable per-owner position so a whole batch of one owner's commands can be
-grouped and applied in order. Here `$$task-pos` plays the analogous role, with one difference:
-the order must be total across all owners on a task, not per owner. A per-user sequence (the
-existing `submit-seq`) cannot serve as the rank. With `u` and `v` on the same task, the crossed
-case gives `x: min(u1, v2) = u` and `y: min(u2, v1) = v`, which is again the forbidden cycle.
+grouped and applied in order. Here `$$task-pos` plays the analogous role. A per-user
+sequence (the existing `submit-seq`) would also respect each user's order: with `u` and `v` on the
+same task, the crossed case gives `x: min(u1, v2) = u` and `y: min(u2, v1) = v`, owners `["u" "v"]`,
+which the test permits (`notification_test.clj:147`) via the serial history x(u), y(v), y(u),
+x(v). The reason for `$$task-pos` is encoding: it makes the rank a unique `Long`. Per-user
+sequence values collide across users, and a tie-breaker by the `String` user ID would need a
+vector sort key, whose support in `+limit` `:sort` is undocumented (`PLAN_VALIDATION.md:53-54`).
 
 **`+limit [1]` vs `+vec-agg` + sort vs `loop<-`.**
 
