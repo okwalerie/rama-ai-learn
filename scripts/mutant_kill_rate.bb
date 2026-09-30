@@ -318,6 +318,28 @@
               (let [l (killed-by-label m)] (if (str/blank? l) "-" (str/replace l "|" "/")))
               (str/replace (str (:wrong-design m)) "|" "/"))))))
 
+;;; ── single-run lock ─────────────────────────────────────────────────────────
+;; Graders contain timing- and cost-sensitive tests. Concurrent grader JVMs
+;; on one host produced spurious timeouts and a spurious reference failure,
+;; so only one mutant-kill-rate process may run at a time.
+
+(defn try-lock
+  "Try to take an exclusive lock on `path`. Returns a release fn, or nil when
+   another holder (any process, or this JVM) already has it."
+  [path]
+  (let [ch (java.nio.channels.FileChannel/open
+            (fs/path path)
+            (into-array java.nio.file.OpenOption
+                        [java.nio.file.StandardOpenOption/CREATE
+                         java.nio.file.StandardOpenOption/WRITE]))
+        lock (try (.tryLock ch)
+                  (catch IllegalStateException _ nil))]
+    (if lock
+      (fn [] (.close ch)) ; closing the channel releases the lock
+      (do (.close ch) nil))))
+
+(def lock-path (str (fs/path (System/getProperty "java.io.tmpdir") "mutant-kill-rate.lock")))
+
 (def cli-spec
   {:challenge {:desc "Challenge to evaluate (repeatable; default: all with mutants)"
                :alias :c :coerce []}
@@ -334,6 +356,13 @@
       (println "Usage: bb mutant-kill-rate [options]")
       (println (cli/format-opts {:spec cli-spec}))
       (System/exit 0))
+    (when-not (try-lock lock-path)
+      (println "ERROR: another mutant-kill-rate run holds" lock-path
+               "- concurrent grader runs produce spurious timeouts; wait for it to finish.")
+      (System/exit 3))
+    (when (> (or (:jobs opts) 1) 1)
+      (println "WARNING: --jobs > 1 runs grader JVMs concurrently; timeouts and"
+               "timing-sensitive failures may be spurious. Use --jobs 1 for a baseline."))
     (let [challenges (or (seq (:challenge opts)) (challenges-with-mutants project-root))
           opts (merge {:jobs 1 :timeout-s 900} opts)
           results (mapv #(run-challenge project-root % opts) challenges)

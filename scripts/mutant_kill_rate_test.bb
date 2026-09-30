@@ -136,6 +136,16 @@ Ran 2 tests containing 51 assertions.
       (is (str/includes? t "dev: 1/1"))
       (is (str/includes? t "held-out: 0/1")))))
 
+(deftest single-run-lock-test
+  (let [path (str (fs/path (fs/create-temp-dir {:prefix "mkr-lock"}) "l.lock"))
+        release (try-lock path)]
+    (is (fn? release))
+    (is (nil? (try-lock path)) "a second holder is refused")
+    (release)
+    (let [again (try-lock path)]
+      (is (fn? again) "the lock is reusable after release")
+      (again))))
+
 (deftest mutants-are-protected-from-solvers-test
   (testing "every mutant file is under a directory encrypt-challenges protects"
     (let [root (make-fixture-root)
