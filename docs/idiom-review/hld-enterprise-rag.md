@@ -53,9 +53,11 @@ reference.
   consumed with `(<<subsource *action (case> ProfileEvent ...) ...)` in both
   its stream topology (`:200-251`) and its microbatch topology (`:280-390`).
   Using `PutDoc`/`DeleteDoc`/`PutAcl`/`PutMembership` records with
-  `<<subsource` would flatten the three-deep `<<if` nest. It would also stop
-  the code from reading fields like `:groups` and `:chunks` that only exist
-  on some event kinds (`module.clj:58`).
+  `<<subsource` would flatten the three-deep `<<if` nest. It would also give
+  each branch only its own fields. Today `module.clj:55-58` reads `:kind`,
+  `:key`, `:revision`, and `:groups` from every event before dispatching, so
+  `:groups` is read (as `nil`) even for put and delete events. `:chunks` is
+  read only inside the put branch (`module.clj:73-74`).
 - Separate depots are not required here. auction-module splits
   `*listing-depot` (hash by seller) from `*bid-depot` (hash by listing
   owner), then adds a separate `expirations` microbatch for its scheduler
@@ -76,9 +78,19 @@ reference.
   not help.
 - A microbatch topology is the right choice (SKILL.md:63). Writes are
   acknowledged with `:append-ack` (`module.clj:120`), and reads are gated by
-  `wait-for-microbatch-processed-count` (`module.clj:124-125`). Exactly-once
-  microbatch processing also makes the non-idempotent posting diff safe
-  under retries (SKILL.md:32).
+  `wait-for-microbatch-processed-count` (`module.clj:124-125`). Microbatch
+  is also required for retry safety (SKILL.md:32). One accepted content
+  write updates `$$docs` and `$$chunks` on the document's task
+  (`module.clj:80-82`), then `|hash` sends its posting ops to other tasks
+  (`module.clj:85-89`). In a stream topology each partitioner ends a
+  transaction
+  (`plugins/rama-skill/skills/rama/references/core-concepts.md:65`). If
+  processing failed after the document-side commit, the retried event would
+  be rejected because its revision is no longer strictly newer
+  (`module.clj:15-16, 72`), and any posting ops that were lost would never
+  be re-sent. A microbatch is one cross-partition transaction with
+  exactly-once PState updates (`core-concepts.md:11, 65`; SKILL.md:63), so
+  the document, chunk, and posting writes commit or retry together.
 
 ### 2. Content replacement and posting-index maintenance
 
@@ -270,7 +282,7 @@ one document inside one synchronization window.
   - `first-delete-recreate-and-current-payload`: `:67-110`
   - `fences-denial-and-tenant-isolation`: `:112-157`
   - `durable-after-module-update`: `:159-176`
-  - `rocks-cost`: `:178-188`
+  - `rocks-cost` (helper `defn`, not a test): `:178-188`
   - `unrelated-corpus-growth`: `:190-253`
 - `chat-app/module.clj:69-75` is the `PresenceStore` deftype, not the depot
   split. The depots are at `:159-160`, and their rationale is at `:26-30`.
