@@ -18,8 +18,10 @@ commands into depots by operation would make the ordering and replay/conflict
 decision cross-depot coordination problems.
 
 The comparison references show when multiple depots are useful, not a rule to
-split every command type. Auction has distinct listing and bid keys and thus
-separate depot partitioners (`challenges/auction-module/test-resources/auction_module/module.clj:69-72`).
+split every command type. Auction's listing and bid depots both route to the
+listing owner's user id (`challenges/auction-module/test-resources/auction_module/module.clj:69-72`),
+so its split is not about keys: listings have an extra consumer, the
+expirations microbatch, that bids do not (`.../module.clj:96-127`).
 Chat has a separate registration depot keyed by handle and a shared actions
 depot keyed by actor (`challenges/chat-app/test-resources/chat_app/module.clj:158-160`);
 that shared action depot uses record dispatch in `<<subsource` while keeping
