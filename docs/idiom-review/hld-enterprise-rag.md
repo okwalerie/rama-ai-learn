@@ -312,8 +312,8 @@ at both 2 and 4 tasks. The `unrelated-corpus-growth` cost output was:
 
 | Tasks | Query reads | ACL writes (reads/writes) |
 |---|---|---|
-| 2 | 5 / 5 / 5 | 1/1 each |
-| 4 | 4 / 4 / 4 | 1/1 each |
+| 2 | 4 / 4 / 4 | 1/1 each |
+| 4 | 5 / 5 / 5 | 1/1 each |
 
 The three columns are 256 documents, 2048 documents, and 2048 documents with
 a 32-chunk target. The costs stay flat, which confirms the query and ACL cost
