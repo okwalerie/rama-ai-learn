@@ -183,22 +183,43 @@ install_nrepl_tools() {
 
 prefetch_deps() {
   cd "$repo_root"
-  local fingerprint stamp
+  local fingerprint stamp inventory java_cmd missing path inventory_tmp stamp_tmp default_caches
   stamp="${HOME}/.cache/amp/deps-prefetched.sha256"
+  inventory="${HOME}/.cache/amp/deps-prefetched.files"
+  java_cmd="${JAVA_CMD:-$(command -v java)}"
   fingerprint="$(
-    clojure -Sdescribe
-    java -version 2>&1
+    set -e
+    local description
+    description="$(clojure -Sdescribe)"
+    printf '%s\n' "$description"
+    "$java_cmd" -version 2>&1
+    printf '%s\n' "$description" | bb -e '
+      (doseq [path (:config-files (clojure.edn/read-string (slurp *in*)))
+              :when (not= path "deps.edn")]
+        (println path))' | while IFS= read -r path; do
+          if [ -f "$path" ]; then sha256sum "$path"; else printf 'MISSING %s\n' "$path"; fi
+        done
+    sha256sum "$repo_root/.agents/setup"
     find "$repo_root/deps.edn" "$repo_root/lib" "$repo_root/challenges" -name deps.edn -type f -print0 |
       sort -z | xargs -0 sha256sum
-    if [ -f "${HOME}/.clojure/deps.edn" ]; then
-      sha256sum "${HOME}/.clojure/deps.edn"
-    fi
   )"
   fingerprint="$(printf '%s' "$fingerprint" | sha256sum | cut -d ' ' -f 1)"
-  if [ -d "${HOME}/.m2/repository" ] && [ -d "${HOME}/.gitlibs/libs" ] &&
+  default_caches=1
+  if [ -n "${GITLIBS:-}" ] || [ -n "${CLJ_CONFIG:-}" ] || [ -n "${XDG_CONFIG_HOME:-}" ] ||
+     rg -q -F -g deps.edn ':mvn/local-repo' "$repo_root/deps.edn" "$repo_root/lib" "$repo_root/challenges" \
+       "${HOME}/.clojure/deps.edn" /usr/local/lib/clojure/deps.edn; then
+    default_caches=0
+  fi
+  missing=0
+  if [ "$default_caches" -eq 1 ] && [ -f "$inventory" ] && [ -s "$inventory" ] &&
      [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$fingerprint" ]; then
-    echo 'Dependency manifests and caches unchanged; skipping prefetch.'
-    return
+    while IFS= read -r -d '' path; do
+      if [ ! -f "$path" ]; then missing=1; break; fi
+    done < "$inventory"
+    if [ "$missing" -eq 0 ]; then
+      echo 'Dependency manifests and caches unchanged; skipping prefetch.'
+      return
+    fi
   fi
   step 'Prepare root dependencies' clojure -P
   step 'Prepare root nREPL dependencies' clojure -P -A:nrepl
@@ -212,7 +233,25 @@ prefetch_deps() {
       cd "$challenge_dir"
       step "Prepare ${challenge_dir#"$repo_root"/} dependencies" clojure -P -A:test
     ' _
-  printf '%s\n' "$fingerprint" > "$stamp"
+  if [ "$default_caches" -eq 0 ]; then
+    echo 'Custom dependency cache settings; prefetch will run each time.'
+    return
+  fi
+  if [ "$missing" -eq 1 ]; then
+    while IFS= read -r -d '' path; do
+      if [ ! -f "$path" ]; then
+        echo "Dependency cache still incomplete after prefetch: $path" >&2
+        return 1
+      fi
+    done < "$inventory"
+  fi
+  inventory_tmp="$(mktemp "${inventory}.XXXXXX")"
+  stamp_tmp="$(mktemp "${stamp}.XXXXXX")"
+  find "${HOME}/.m2/repository" -type f \( -name '*.jar' -o -name '*.pom' \) -print0 > "$inventory_tmp"
+  find "${HOME}/.gitlibs/libs" -type f -print0 >> "$inventory_tmp"
+  mv "$inventory_tmp" "$inventory"
+  printf '%s\n' "$fingerprint" > "$stamp_tmp"
+  mv "$stamp_tmp" "$stamp"
 }
 
 step 'Install system packages' install_system_packages
