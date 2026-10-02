@@ -26,6 +26,7 @@ Transcript selection:
 
 Commands:
   summary              - Run result, cost, duration, turn count
+  models               - Runtime model fields (init event, message, payload) with counts
   events [index]       - Dump normalized JSONL, or one event by timeline line index
   plan                 - Show PLAN.md content
   validation           - Show PLAN_VALIDATION.md content
@@ -206,6 +207,38 @@ def cmd_summary(lines, args):
             for error in line.get('errors', []):
                 print(f"Error: {_error_message(error)}")
             break
+
+def _event_models(e):
+    """(source, model) pairs reported by one raw or normalized event."""
+    if not isinstance(e, dict):
+        return []
+    found = []
+    if e.get('type') == 'system' and e.get('model'):
+        found.append(('init', e['model']))
+    for source in ('message', 'payload'):
+        value = e.get(source)
+        if isinstance(value, dict) and value.get('model'):
+            found.append((source, value['model']))
+    return found
+
+def cmd_models(lines, args):
+    # One raw event can yield several normalized rows sharing its
+    # source_event; count each raw event once.
+    counts, seen = {}, set()
+    for line in lines:
+        pairs = _event_models(line)
+        source = line.get('source_event')
+        if not pairs and isinstance(source, dict) and id(source) not in seen:
+            seen.add(id(source))
+            pairs = _event_models(source)
+        for pair in pairs:
+            counts[pair] = counts.get(pair, 0) + 1
+    if not counts:
+        print('No model fields found')
+        return
+    for (source, model), n in sorted(counts.items()):
+        print(f'{model}\t{source}\t{n}')
+    print(f"Distinct models: {', '.join(sorted({m for _, m in counts}))}")
 
 def cmd_events(lines, args):
     selected = [lines[int(args[0])]] if args else lines
@@ -799,6 +832,7 @@ def cmd_run_overview(lines, args):
 
 COMMANDS = {
     'summary': cmd_summary,
+    'models': cmd_models,
     'events': cmd_events,
     'plan': cmd_plan,
     'validation': cmd_validation,

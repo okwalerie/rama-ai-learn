@@ -13,7 +13,9 @@
 (load-file (str (fs/parent (fs/absolutize *file*)) "/encrypt_challenges.bb"))
 
 (def cli-spec
-  {:filter     {:desc "Glob pattern to match challenge names (e.g. \"basic-*\")"
+  {:grader-timeout {:desc "Seconds before a private-test (grader) run is killed with its process tree (default 1800)"
+                    :coerce :long}
+   :filter     {:desc "Glob pattern to match challenge names (e.g. \"basic-*\")"
                 :alias :f}
    :batch      {:desc "Batch number from CHALLENGE_ORDER.md (5 requires a cluster)"
                 :alias :b
@@ -130,6 +132,7 @@
   (println "      --slow-effort E     Reasoning effort for the slow model (required)")
   (println "      --isolate           Linux public-only solver filesystem (bubblewrap required)")
   (println "      --isolate-network   Provider/docs-only network; implies --isolate")
+  (println "                          Scored runs require one; preflight rejects a run with neither")
   (println "  -v, --verbose           Stream agent output to console in real time")
   (println "  -h, --help              Show this help")
   (println)
@@ -649,6 +652,12 @@
             "Reference-bearing docs/atlas or review is present: solver launches require --isolate-network (Claude or OpenCode). Encryption and --isolate alone do not block reference Portals or upstream source downloads."
             {:reason :reference-isolation-required}))))
 
+;; Recorded per phase invocation (transcript metadata and run manifest).
+(defn isolation-mode []
+  (cond *isolate-network* "bubblewrap-provider-network"
+        *isolate* "bubblewrap-public-only"
+        :else "none"))
+
 (defn solver-command [cmd project-root challenge-name agent-name]
   (require-reference-isolation! project-root *isolate-network*)
   (if (or *isolate* *isolate-network*)
@@ -852,15 +861,992 @@
     (assoc result :duration-s duration-s
                   :started-at started-at :finished-at (str (java.time.Instant/now)))))
 
-;;; Challenge scoring
+;;; Outcome taxonomy and scoring (see docs/outcome-taxonomy.md)
+
+(def outcome-order
+  "Headline outcomes in report order."
+  [:private-pass :public-pass :private-fail :private-unavailable
+   :solver-fail :solver-no-implementation :timeout
+   :quota-or-provider-limit :user-stopped :infra-error])
+
+(def ^:private quota-error-re
+  ;; Quota / billing exhaustion. Not retried (retrying cannot help), but still a
+  ;; provider limit rather than a solver failure. Applied only to
+  ;; `agent-error-text`, never to raw stdout.
+  #"(?i)insufficient_quota|quota\s+(?:exceeded|exhausted|reached)|exceeded your (?:current )?quota|usage limit|credit balance (?:is )?too low|out of credits|payment required|billing (?:hard )?limit")
+
+(defn parse-test-counts
+  "Sum every clojure.test summary in `text`. Returns
+  {:tests n :assertions m :failures f :errors e}, or nil when no
+  `Ran N tests` line is present."
+  [text]
+  (let [text (or text "")
+        ran (re-seq #"Ran (\d+) tests? containing (\d+) assertions?" text)
+        fe  (re-seq #"(\d+) failures?, (\d+) errors?" text)]
+    (when (seq ran)
+      {:tests      (reduce + (map #(parse-long (nth % 1)) ran))
+       :assertions (reduce + (map #(parse-long (nth % 2)) ran))
+       :failures   (reduce + (map #(parse-long (nth % 1)) fe))
+       :errors     (reduce + (map #(parse-long (nth % 2)) fe))})))
+
+(defn sentinel-0-of-1?
+  "True for the `Private FAIL 0/1` sentinel: `Ran 1 tests`, 0 failures, and
+  every counted assertion is an error. The tests never ran; it is not an
+  implementation failure."
+  [{:keys [tests assertions failures errors]}]
+  (and (= 1 tests) (zero? failures) (pos? errors) (= assertions errors)))
+
+(defn classify-private-result
+  "Turn a private-test invocation into a verdict. `has-suite?` is whether the
+  challenge has test-private/; `private-result` is nil when the suite was not
+  started, else {:exit :out :err :timed-out? :timeout-s}. Sentinels (zero
+  tests, no summary, grader timeout) are :unavailable, never :fail, and name
+  themselves in :private-sentinel.
+  Returns {:private-status kw :private-counts map? :private-reason str?
+  :private-sentinel kw?}."
+  [has-suite? private-result]
+  (cond
+    (not has-suite?)
+    {:private-status :none}
+
+    (nil? private-result)
+    {:private-status :not-run :private-reason "private suite not started"}
+
+    (:timed-out? private-result)
+    {:private-status :unavailable :private-sentinel :grader-timeout
+     :private-reason (str "grader timeout after " (:timeout-s private-result) "s")}
+
+    :else
+    (let [counts (parse-test-counts (str (:out private-result) "\n" (:err private-result)))
+          bad (when counts (+ (:failures counts) (:errors counts)))]
+      (cond
+        (nil? counts)
+        {:private-status :unavailable :private-sentinel :no-summary
+         :private-reason (format "no test summary (exit %d): compile/load error or missing implementation namespace"
+                                 (:exit private-result))}
+
+        (zero? (:tests counts))
+        {:private-status :unavailable :private-counts counts :private-sentinel :ran-0
+         :private-reason "Ran 0 tests: suite did not load"}
+
+        ;; `FAIL 0/1`: one test whose only report is an uncaught error, with no
+        ;; assertion passing or failing. The suite errored before any check ran
+        ;; (load or launch failure), so no correctness evidence exists.
+        (sentinel-0-of-1? counts)
+        {:private-status :unavailable :private-counts counts :private-sentinel :zero-of-one
+         :private-reason "sentinel 0/1: suite errored before any assertion ran"}
+
+        (pos? bad)
+        {:private-status :fail :private-counts counts}
+
+        (zero? (:exit private-result))
+        {:private-status :pass :private-counts counts}
+
+        :else
+        {:private-status :unavailable :private-counts counts
+         :private-reason (format "exit %d with no failing assertions" (:exit private-result))}))))
+
+(defn classify-completion
+  "How the solver run ended, from phase-loop!'s {:status :phase-results}."
+  [{:keys [status phase-results]}]
+  (let [last-r (last phase-results)]
+    (cond
+      (= :pass status)          :completed
+      (:provider-limit? last-r) :quota-or-provider-limit
+      (:user-stopped? last-r)   :user-stopped
+      (= :timeout status)       :timeout
+      :else                     :solver-fail)))
+
+(defn classify-outcome
+  "Headline outcome. First match wins; the private verdict dominates the
+  runner's phase status."
+  [{:keys [infra-error? completion private-status has-implementation?]}]
+  (cond
+    infra-error?                                                     :infra-error
+    (= :pass private-status)                                         :private-pass
+    (= :fail private-status)                                         :private-fail
+    (#{:timeout :quota-or-provider-limit :user-stopped} completion)  completion
+    (false? has-implementation?)                                     :solver-no-implementation
+    (#{:unavailable :not-run} private-status)                        :private-unavailable
+    (and (= :none private-status) (= :completed completion))         :public-pass
+    :else                                                            :solver-fail))
+
+(defn count-semantic-retries
+  "Phase invocations that directly follow a FAIL / MAJOR_FAIL verdict in the
+  same subsystem. One build per subsystem is NOT a retry, and transient
+  provider retries inside a single invocation are infrastructure, not solver
+  behaviour."
+  [phase-results]
+  (count (filter (fn [[a b]]
+                   (and (#{:fail :major-fail} (:verdict a))
+                        (= (:subsystem a) (:subsystem b))))
+                 (partition 2 1 phase-results))))
 
 (defn compute-challenge-score
-  "Compute challenge score: 0 if failed, otherwise max(1, round(100 / 2^(iterations-1)))."
-  [status private-status iterations]
-  (if (or (not= :pass status)
-          (= :fail private-status))
-    0
-    (max 1 (Math/round (/ 100.0 (Math/pow 2 (dec iterations)))))))
+  "Score from the headline outcome and semantic retry count. Returns nil for
+  outcomes that carry no evidence about the solver (unscored, excluded from
+  averages)."
+  [outcome retries]
+  (case outcome
+    (:private-pass :public-pass) (max 1 (Math/round (/ 100.0 (Math/pow 2 (or retries 0)))))
+    (:private-unavailable :infra-error :quota-or-provider-limit :user-stopped) nil
+    0))
+
+(defn outcome-label [outcome]
+  (str/upper-case (name (or outcome :solver-fail))))
+
+(defn runner-label [status]
+  (case status :pass "PASS" :timeout "TIMEOUT" "FAIL"))
+
+(defn private-label [private-status]
+  (case private-status
+    :pass "PASS" :fail "FAIL" :unavailable "UNAVAIL" :not-run "not-run" "-"))
+
+(defn private-detail
+  "Private verdict plus counts or reason, e.g. `FAIL (2 failures, 0 errors / 10 tests)`."
+  [{:keys [private-status private-counts private-reason]}]
+  (str (private-label private-status)
+       (cond
+         (and private-counts (#{:pass :fail} private-status))
+         (format " (%d failures, %d errors / %d tests)"
+                 (:failures private-counts) (:errors private-counts) (:tests private-counts))
+         private-reason (str " (" private-reason ")")
+         :else "")))
+
+(defn challenge-headline
+  "Per-challenge console line. Leads with the outcome; the runner's phase
+  status is labelled as such and never stands alone."
+  [{:keys [outcome status challenge-score scoring duration-s retries builds] :as r}]
+  (let [scores (:scores scoring)]
+    (str (outcome-label outcome)
+         " | Private: " (private-detail r)
+         " | Runner: " (runner-label status)
+         " | Score: " (if (some? challenge-score) challenge-score "-")
+         (format " | Builds: %d Retries: %d" (or builds 0) (or retries 0))
+         (when-let [a (:alignment scores)] (str " | Align: " a "/5"))
+         (when-let [a (:test-alignment scores)] (str " | TestAlign: " a "/5"))
+         (format " (%ds)" (or duration-s 0)))))
+
+(defn outcome-counts-line
+  "Summary line counting results by headline outcome. Correctness (private
+  pass) leads; runner PASS is reported separately as completion only."
+  [results]
+  (let [by (frequencies (map :outcome results))
+        runner-pass (count (filter #(= :pass (:status %)) results))]
+    (str (format "Challenges: %d | " (count results))
+         (str/join " | " (for [o outcome-order
+                               :let [n (get by o 0)]
+                               :when (or (pos? n) (#{:private-pass :private-fail :private-unavailable} o))]
+                           (format "%s: %d" (outcome-label o) n)))
+         (format " | Runner PASS (completion only): %d" runner-pass))))
+
+(defn average-score-line
+  "Average over scored results only; unscored outcomes are counted, not zeroed."
+  [results]
+  (let [scored (keep :challenge-score results)
+        unscored (- (count results) (count scored))]
+    (if (seq scored)
+      (format "Average score: %.1f (n=%d scored, %d unscored)"
+              (/ (reduce + 0.0 scored) (count scored)) (count scored) unscored)
+      (format "Average score: - (n=0 scored, %d unscored)" unscored))))
+
+(defn result-outcome
+  "Headline outcome of a result map; derived for records that predate :outcome."
+  [{:keys [outcome status private-status]}]
+  (or outcome
+      (classify-outcome {:completion (case status :pass :completed :timeout :timeout :solver-fail)
+                         :private-status (if (#{:pass :fail :unavailable :not-run} private-status)
+                                           private-status
+                                           :none)})))
+
+(defn private-verdict-line
+  "Private verdict counts. Unavailable means not evaluated, never FAIL."
+  [results]
+  (let [by (frequencies (map :private-status results))]
+    (when (some by [:pass :fail :unavailable :not-run])
+      (format "Private verdicts: PASS %d | FAIL %d | UNAVAILABLE (not evaluated) %d | not-run %d"
+              (get by :pass 0) (get by :fail 0) (get by :unavailable 0) (get by :not-run 0)))))
+
+;;; Diagnostic scrubbing (docs/outcome-taxonomy.md, "Redaction")
+;;
+;; The manifest and bundle keep the private-suite output and the
+;; full-spec-review text line for line, minus credentials and anything that may
+;; carry runner-protected content. Redacted spans are replaced in place with
+;; [REDACTED:<kind>]; when protection cannot be verified, whole lines are.
+
+(def secret-env-name-re #"(?i)KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH")
+
+(def min-secret-env-length 8)
+
+(defn secret-env-values
+  "[name value] pairs for secret-named variables in env, longest value first."
+  [env]
+  (->> env
+       (keep (fn [[k v]]
+               (when (and (re-find secret-env-name-re (str k))
+                          (>= (count (str v)) min-secret-env-length))
+                 [(str k) (str v)])))
+       (sort-by (comp - count second))
+       vec))
+
+(def credential-patterns
+  "[regex replacement] pairs applied in order. Values already replaced by an
+  earlier rule are not matched again. Quantifiers next to a literal are
+  bounded so a long unbroken line cannot backtrack quadratically."
+  [[#"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----" "[REDACTED:private-key]"]
+   [#"\bsk-ant-[A-Za-z0-9_\-]{16,}" "[REDACTED:api-key]"]
+   [#"\bsk-(?:proj-|or-v1-)?[A-Za-z0-9_\-]{32,}" "[REDACTED:api-key]"]
+   [#"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})" "[REDACTED:github-token]"]
+   [#"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b" "[REDACTED:aws-key-id]"]
+   [#"\bxox[abposr]-[A-Za-z0-9-]{10,}" "[REDACTED:slack-token]"]
+   [#"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}" "[REDACTED:jwt]"]
+   [#"(?i)(\bauthorization\s*[:=]\s*(?:basic|bearer|token)?\s*)(?!\[REDACTED)[A-Za-z0-9._~+/=-]{8,}" "$1[REDACTED:authorization]"]
+   [#"(?i)(\bbearer\s+)(?!\[REDACTED)[A-Za-z0-9._~+/=-]{12,}" "$1[REDACTED:bearer]"]
+   [#"(?i)(\b[a-z][a-z0-9+.-]{0,30}://)[^/\s:@]{1,256}:[^/\s@]{1,256}@" "$1[REDACTED:url-credentials]@"]
+   [#"(?i)(\b[A-Za-z0-9_.-]{0,40}(?:api[_-]?key|secret|token|password|passwd|credential)s?[A-Za-z0-9_.-]{0,40}[\"']?[ \t]*[:=][ \t]*[\"']?)(?!\[REDACTED)[^\s\"',;}\]]{8,}" "$1[REDACTED:credential]"]])
+
+(def private-test-report-patterns
+  "clojure.test report lines that print private-test source or expected data:
+  the assertion form after `expected:`, and the evaluated comparison after
+  `actual: (not ...)`, which embeds the expected value. Exceptions printed
+  after `actual:` go through the private-test data rule."
+  [[#"(?m)^([ \t]*expected:[ \t]?)(?!\[REDACTED).+$" "$1[REDACTED:private-test-assertion]"]
+   [#"(?m)^([ \t]*actual:[ \t]?)\(not[ \t(].*$" "$1[REDACTED:private-test-comparison]"]])
+
+;; Protected content. Protected sources are every file of the challenge that
+;; the solver snapshot (scripts/isolate_solver.py) leaves out: test-private/,
+;; test-resources/, test/, test-harness/, test-named src files, notes, and so
+;; on. Public text is exactly what the snapshot copies, plus repository paths.
+;; Text is compared as case-folded words (runs of letters/digits): every run of
+;; 1..max-protected-ngram consecutive output words that occurs in a protected
+;; file and in no public text is redacted, however short. Protected files are
+;; streamed in full, whatever their size. If any protected file cannot be read
+;; (or only its .enc ciphertext is present) nothing is verifiable, so every
+;; non-blank line of every scrubbed field is redacted.
+
+(def snapshot-shared-allowlist
+  "Mirrors SHARED_ALLOWLIST in scripts/isolate_solver.py."
+  ["deps.edn" "lib/rama-deps" "lib/harness/deps.edn" "lib/harness/src"
+   "plugins/rama-skill/skills/rama" ".agents/skills/challenge-phase"
+   ".claude/commands/challenge-phase.md" "scripts/import-kondo-configs.sh"])
+
+(def snapshot-challenge-allowlist
+  "Mirrors CHALLENGE_ALLOWLIST in scripts/isolate_solver.py."
+  ["README.md" "deps.edn" "src" ".clj-kondo"])
+
+(def snapshot-protected-dirs
+  "Mirrors PROTECTED_DIRS in scripts/isolate_solver.py."
+  #{".git" "test-private" "test-resources" "test" "test-harness" "review" "atlas"})
+
+(def snapshot-secret-file-re
+  "Mirrors SECRET_FILE_RE in scripts/isolate_solver.py."
+  #"(?i)^(\.env(\..*)?|\.netrc|\.git-credentials|\.npmrc|\.pypirc|.*\.(pem|key|p12|pfx|jks|keystore)|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.?credentials(\.json)?|auth\.json)$")
+
+(def max-protected-ngram
+  "Longest run of consecutive words compared at once. Longer echoes are caught
+  through their runs of this length."
+  8)
+
+(def baseline-vocabulary
+  "Words of clojure.test, JVM and Clojure diagnostics. Treated as public, and
+  kept in private-test output even when no public file contains them."
+  (str/split (str "testing fail error errors failure failures ran tests test containing assertion assertions "
+                  "expected actual not nil true false caused by at in more common frames omitted unknown source "
+                  "native method uncaught exception exceptions throwable thrown throw stack trace message cause data "
+                  "info warning warn debug trace execution compiling compile compiler syntax unable to resolve symbol "
+                  "this context no such var namespace could locate init or on classpath file found java lang util io "
+                  "concurrent clojure core rama com rpl invoke invokestatic apply applyto call do eval main thread "
+                  "reflection wrong number of args passed fn the a an is was be and with for from into while when "
+                  "after before timed out timeout illegal argument state null pointer class cast arithmetic divide "
+                  "by zero index bounds unsupported operation interrupted runtime assert failed exceptioninfo "
+                  "runtimeexception illegalargumentexception illegalstateexception nullpointerexception "
+                  "classcastexception arithmeticexception indexoutofboundsexception unsupportedoperationexception "
+                  "timeoutexception executionexception interruptedexception filenotfoundexception compilerexception "
+                  "assertionerror stackoverflowerror outofmemoryerror authorization bearer clj cljc edn")
+             #"\s+"))
+
+(defn- snapshot-denied?
+  "True when isolate_solver.py's `denied` refuses a component of the file's
+  relative path parts. `source-tree?` adds the test-named src file rule."
+  [parts source-tree?]
+  (boolean (or (some #(or (snapshot-protected-dirs %) (str/ends-with? % ".enc")
+                          (re-matches snapshot-secret-file-re %))
+                     parts)
+               (and source-tree? (str/includes? (peek parts) "test")))))
+
+(defn- walk-tree
+  "{:files regular files, :other symlinks and special files} under dir.
+  Links are never followed."
+  [dir]
+  (let [files (volatile! []) other (volatile! [])]
+    (letfn [(walk [d]
+              (doseq [p (sort (fs/list-dir d))]
+                (cond (fs/sym-link? p) (vswap! other conj p)
+                      (fs/directory? p {:nofollow-links true}) (walk p)
+                      (fs/regular-file? p {:nofollow-links true}) (vswap! files conj p)
+                      :else (vswap! other conj p))))]
+      (when (and (not (fs/sym-link? dir)) (fs/directory? dir {:nofollow-links true}))
+        (walk dir)))
+    {:files @files :other @other}))
+
+(defn- rel-parts [base path]
+  (mapv str (fs/relativize base path)))
+
+(defn scrub-corpus
+  "Protected and public files for one challenge. :unavailable names why the
+  protected set cannot be verified (scrubbing then fails closed)."
+  [project-root challenge-name]
+  (let [root (fs/path project-root)
+        cdir (fs/path root "challenges" challenge-name)
+        {:keys [files other]} (walk-tree cdir)
+        build-cache? #(= ".cpcache" (first (rel-parts cdir %)))
+        files (remove build-cache? files)
+        other (remove build-cache? other)
+        public? #(let [ps (rel-parts cdir %)]
+                   (and (some #{(first ps)} snapshot-challenge-allowlist)
+                        (not (snapshot-denied? ps (= "src" (first ps))))))
+        shared (mapcat (fn [rel]
+                         (let [p (fs/path root rel)]
+                           (cond (fs/sym-link? p) []
+                                 (fs/regular-file? p {:nofollow-links true}) [p]
+                                 :else (remove #(snapshot-denied? (rel-parts root %) false)
+                                               (:files (walk-tree p))))))
+                       snapshot-shared-allowlist)
+        protected (vec (remove public? files))]
+    {:protected protected
+     :public (vec (concat (filter public? files) shared))
+     :implementation (:files (walk-tree (fs/path root "implementations" challenge-name "src")))
+     :paths (mapv #(str (fs/relativize root %)) (concat files other))
+     :unavailable (cond (not (fs/directory? cdir {:nofollow-links true})) "challenge directory missing"
+                        (seq other) "symlink or special file in the challenge directory"
+                        (some #(str/ends-with? (str %) ".enc") protected) "encrypted protected file")}))
+
+(def ^:private word-re #"[\p{L}\p{N}]+")
+
+(defn- lower ^String [^String s] (.toLowerCase s java.util.Locale/ROOT))
+
+(defn- words [s] (map lower (re-seq word-re s)))
+
+(defn- each-word!
+  "Call (f word) for each case-folded word of the file, in order. Reads 1 MiB
+  chunks, so a file of any size is scanned completely."
+  [path f]
+  (with-open [^java.io.Reader r (io/reader (str path) :encoding "UTF-8")]
+    (let [buf (char-array (* 1024 1024))]
+      (loop [carry ""]
+        (let [n (.read r buf)]
+          (if (neg? n)
+            (when (seq carry) (f (lower carry)))
+            (let [s (str carry (String. buf 0 n))
+                  m (re-matcher word-re s)
+                  len (count s)]
+              ;; A word touching the chunk end may continue in the next chunk.
+              (recur (loop []
+                       (if (.find m)
+                         (if (= (.end m) len)
+                           (.group m)
+                           (do (f (lower (.group m))) (recur)))
+                         ""))))))))))
+
+(defn- ngram-scanner
+  "Word callback adding to `found` each run of up to max-protected-ngram words
+  (space-joined) ending at the current word that is in `target`. `steps` must
+  contain every suffix of every target run."
+  [^java.util.Set steps ^java.util.Set target ^java.util.Set found]
+  (let [win (java.util.ArrayDeque.)]
+    (fn [w]
+      (if-not (.contains steps w)
+        (.clear win)
+        (do (.addFirst win w)
+            (when (> (.size win) max-protected-ngram) (.removeLast win))
+            (loop [it (.iterator win) k nil]
+              (when (.hasNext it)
+                (let [k (if k (str (.next it) " " k) (.next it))]
+                  (when (.contains steps k)
+                    (when (.contains target k) (.add found k))
+                    (recur it k))))))))))
+
+(defn- word-runs-ngrams
+  "Every run of up to max-protected-ngram consecutive words of the word
+  vectors, space-joined (closed under suffixes)."
+  [word-vectors]
+  (into #{} (mapcat (fn [ws]
+                      (let [n (count ws)]
+                        (for [i (range n) k (range 1 (inc (min max-protected-ngram (- n i))))]
+                          (str/join " " (subvec ws i (+ i k)))))))
+        word-vectors))
+
+(defn- protected-only-keys
+  "The word runs of `word-vectors` (output lines split at markers) that occur
+  in a protected file and in no public text. A first pass finds which output
+  words occur in protected files at all; only runs of those are compared.
+  Throws when a protected file cannot be read; the caller then fails closed."
+  [corpus word-vectors]
+  (let [out-words (java.util.HashSet. ^java.util.Collection (into #{} cat word-vectors))
+        present (java.util.HashSet.)]
+    (doseq [p (:protected corpus)]
+      (each-word! p #(when (.contains out-words %) (.add present %))))
+    (let [runs (into #{} (comp (mapcat #(partition-by (fn [w] (.contains present w)) %))
+                               (filter #(.contains present (first %)))
+                               (map vec))
+                     word-vectors)
+          steps (java.util.HashSet. ^java.util.Collection (word-runs-ngrams runs))
+          found (java.util.HashSet.)]
+      (when-not (.isEmpty steps)
+        (doseq [p (:protected corpus)]
+          (each-word! p (ngram-scanner steps steps found))))
+      (when-not (.isEmpty found)
+        (let [public (java.util.HashSet.)]
+          (doseq [p (:public corpus)]
+            ;; An unreadable public file only widens redaction.
+            (try (each-word! p (ngram-scanner steps found public)) (catch Exception _ nil)))
+          (doseq [t (concat (:paths corpus) baseline-vocabulary)]
+            (run! (ngram-scanner steps found public) (words t)))
+          (.removeAll found public)))
+      found)))
+
+(defn- vocabulary
+  "Case-folded words a solver could know: public files, the implementation's
+  own source, repository paths and baseline-vocabulary."
+  [corpus]
+  (let [v (java.util.HashSet.)]
+    (doseq [p (concat (:public corpus) (:implementation corpus))]
+      (try (each-word! p #(.add v %)) (catch Exception _ nil)))
+    (doseq [t (concat (:paths corpus) baseline-vocabulary)]
+      (run! #(.add v %) (words t)))
+    v))
+
+(defn scrub-context
+  "Redaction inputs for one challenge: secret env values and the protected
+  and public corpus. Scrub while the protected files are plaintext."
+  [project-root challenge-name env]
+  (let [corpus (scrub-corpus project-root challenge-name)]
+    {:env-secrets (secret-env-values env)
+     :corpus corpus
+     :vocabulary (delay (vocabulary corpus))}))
+
+(def redaction-kinds
+  [:secret-env :credential :private-test-assertion :protected-plaintext :private-test-data
+   :protected-index-unavailable])
+
+(defn- replace-counting [text re replacement]
+  (let [n (count (re-seq re text))]
+    [(if (pos? n) (str/replace text re replacement) text) n]))
+
+(def ^:private marker-re #"\[REDACTED:[^\]\n]*\]")
+
+(def ^:private location-number-re
+  "Line/column numbers of a file:line location; never compared or redacted."
+  #"(?<=\.(?:clj|cljc|cljs|edn|bb|java|py|kt|scala):)\d+(?::\d+)?")
+
+(def ^:private count-line-re
+  #"^(?:Ran \d+ tests containing \d+ assertions\.|\d+ failures, \d+ errors\.|\s*\.\.\. \d+ (?:more|common frames omitted))$")
+
+(def private-test-template-res
+  "Private-test output lines kept verbatim apart from protected word runs:
+  clojure.test headers and summaries, stack frames and redacted assertions."
+  [#"^\s*$"
+   #"^Testing \S+$"
+   #"^(?:FAIL|ERROR) in \([^()]*\) \([^()\s]+\)$"
+   #"^Ran \d+ tests containing \d+ assertions\.$"
+   #"^\d+ failures, \d+ errors\.$"
+   #"^\s*at [^\s()]+ ?\((?:[^\s()]+|Unknown Source|Native Method)\)$"
+   #"^\s*\.\.\. \d+ (?:more|common frames omitted)$"
+   #"^\s*(?:expected|actual):\s*\[REDACTED:[^\]]+\]$"])
+
+(defn- re-spans [re s]
+  (let [m (re-matcher re s)]
+    (loop [acc []] (if (.find m) (recur (conj acc [(.start m) (.end m)])) acc))))
+
+(defn- overlaps? [spans s e]
+  (some (fn [[a b]] (and (< s b) (< a e))) spans))
+
+(defn- line-segments
+  "Runs of comparable words of a line, as vectors of {:s :e :w}. Redaction
+  markers and location numbers split runs; count summary lines have none."
+  [^String line]
+  (if (re-matches count-line-re line)
+    []
+    (let [blocked (into (re-spans marker-re line) (re-spans location-number-re line))
+          m (re-matcher word-re line)]
+      (loop [segs [] cur [] prev-end 0]
+        (if (.find m)
+          (let [s (.start m) e (.end m)
+                w {:s s :e e :w (lower (.group m))}
+                flushed (cond-> segs (seq cur) (conj cur))]
+            (cond (overlaps? blocked s e) (recur flushed [] e)
+                  (overlaps? blocked prev-end s) (recur flushed [w] e)
+                  :else (recur segs (conj cur w) e)))
+          (cond-> segs (seq cur) (conj cur)))))))
+
+(defn- segment-ngrams
+  "[start-index length key] for every run of up to max-protected-ngram words."
+  [seg]
+  (let [ws (mapv :w seg) n (count ws)]
+    (for [i (range n) k (range 1 (inc (min max-protected-ngram (- n i))))]
+      [i k (str/join " " (subvec ws i (+ i k)))])))
+
+(defn- merge-spans
+  "Sort spans and merge those overlapping or separated only by non-word text."
+  [^String line spans]
+  (reduce (fn [acc [s e]]
+            (let [[ps pe] (peek acc)]
+              (if (and pe (or (<= s pe) (not (re-find #"[\p{L}\p{N}]" (subs line pe s)))))
+                (conj (pop acc) [ps (max pe e)])
+                (conj acc [s e]))))
+          [] (sort spans)))
+
+(defn- replace-spans [^String line spans marker]
+  (let [sb (StringBuilder.)]
+    (loop [i 0 ss spans]
+      (if-let [[s e] (first ss)]
+        (do (.append sb (subs line i s)) (.append sb ^String marker) (recur e (rest ss)))
+        (str (.append sb (subs line i)))))))
+
+(defn- protected-spans [line segs ^java.util.Set protected]
+  (merge-spans line
+               (for [seg segs
+                     [i k key] (segment-ngrams seg)
+                     :when (.contains protected key)]
+                 [(:s (seg i)) (:e (seg (+ i k -1)))])))
+
+(def ^:private quoted-re #"\"(?:[^\"\\]++|\\.)*+\"?")
+
+(defn- collection-spans
+  "Printed collection literals ({...}, [...], #{...}) outside blocked spans.
+  An unclosed literal runs to the end of the line."
+  [^String line blocked]
+  (let [n (count line)
+        skip (into {} blocked)]
+    (loop [i 0 acc []]
+      (if (>= i n)
+        acc
+        (let [c (.charAt line i)]
+          (cond (skip i) (recur (skip i) acc)
+                (or (= c \{) (= c \[))
+                (let [end (loop [j (inc i) depth 1]
+                            (cond (zero? depth) j
+                                  (>= j n) n
+                                  (skip j) (recur (skip j) depth)
+                                  :else (case (.charAt line j)
+                                          (\{ \[ \() (recur (inc j) (inc depth))
+                                          (\} \] \)) (recur (inc j) (dec depth))
+                                          (recur (inc j) depth))))
+                      start (if (and (pos? i) (= \# (.charAt line (dec i)))) (dec i) i)]
+                  (recur end (conj acc [start end])))
+                :else (recur (inc i) acc)))))))
+
+(defn- private-test-data-spans
+  "Spans of a non-template private-test line that may carry test data: quoted
+  strings, collection literals, numbers outside file:line locations, and
+  words outside the vocabulary."
+  [^String line ^java.util.Set vocab]
+  (let [markers (re-spans marker-re line)
+        quoted (re-spans quoted-re line)
+        colls (if (re-find #"\{|\[(?!REDACTED:)" line)
+                (collection-spans line (into markers quoted))
+                [])
+        literals (into quoted colls)
+        exempt (into markers (re-spans location-number-re line))
+        m (re-matcher word-re line)
+        loose (loop [acc []]
+                (if (.find m)
+                  (let [s (.start m) e (.end m) w (.group m)]
+                    (recur (if (or (overlaps? exempt s e) (overlaps? literals s e)
+                                   (and (not (re-matches #"\p{N}+" w)) (.contains vocab (lower w))))
+                             acc
+                             (conj acc [s e]))))
+                  acc))]
+    (merge-spans line (concat literals loose))))
+
+(defn- pre-scrub
+  "Secret env values, credentials and (private-test output) clojure.test
+  assertion lines. Returns [text counts]."
+  [text {:keys [env-secrets private-test?]}]
+  (let [counts (volatile! (zipmap redaction-kinds (repeat 0)))
+        tally! (fn [kind n] (vswap! counts update kind + n))
+        text (reduce (fn [t [k v]]
+                       (let [n (count (re-seq (re-pattern (java.util.regex.Pattern/quote v)) t))]
+                         (tally! :secret-env n)
+                         (if (pos? n) (str/replace t v (str "[REDACTED:env:" k "]")) t)))
+                     (str text) env-secrets)
+        text (reduce (fn [t [re r]] (let [[t n] (replace-counting t re r)] (tally! :credential n) t))
+                     text credential-patterns)
+        text (if private-test?
+               (reduce (fn [t [re r]] (let [[t n] (replace-counting t re r)] (tally! :private-test-assertion n) t))
+                       text private-test-report-patterns)
+               text)]
+    [text @counts]))
+
+(defn scrub-texts
+  "Scrub diagnostic texts together (one pass over the protected files).
+  Returns one {:text str :redactions {kind count}} per text, nil for nil.
+  `private-test?` adds the clojure.test assertion and private-test data rules.
+  Fails closed: without a verifiable corpus every non-blank line is redacted."
+  [texts {:keys [private-test? corpus] :as ctx}]
+  (let [pre (mapv #(some-> % (pre-scrub ctx)) texts)
+        lines (mapv #(some-> % first (str/split #"\n" -1)) pre)
+        segs (mapv #(some->> % (mapv line-segments)) lines)
+        protected (when (and corpus (not (:unavailable corpus)))
+                    (try (protected-only-keys corpus (into #{} (comp cat cat (map #(mapv :w %)))
+                                                           (remove nil? segs)))
+                         (catch Exception _ nil)))
+        vocab (when (and protected private-test?)
+                (or (some-> (:vocabulary ctx) force) (vocabulary corpus)))]
+    (mapv (fn [p ls ss]
+            (when p
+              (let [counts (volatile! (second p))
+                    tally! (fn [kind n] (vswap! counts update kind + n))
+                    scrub-line
+                    (fn [line segs]
+                      (cond
+                        (nil? protected)
+                        (if (str/blank? line)
+                          line
+                          (do (tally! :protected-index-unavailable 1) "[REDACTED:protected-index-unavailable]"))
+
+                        :else
+                        (let [spans (protected-spans line segs protected)
+                              line (replace-spans line spans "[REDACTED:protected-plaintext]")]
+                          (tally! :protected-plaintext (count spans))
+                          (if (and private-test? (not-any? #(re-matches % line) private-test-template-res))
+                            (let [spans (private-test-data-spans line vocab)]
+                              (tally! :private-test-data (count spans))
+                              (replace-spans line spans "[REDACTED:private-test-data]"))
+                            line))))]
+                {:text (str/join "\n" (map scrub-line ls ss)) :redactions @counts})))
+          pre lines segs)))
+
+(defn scrub-text
+  "Scrub one diagnostic text; see scrub-texts."
+  [text ctx]
+  (first (scrub-texts [text] ctx)))
+
+(defn- sum-redactions [& scrubbed]
+  (apply merge-with + (zipmap redaction-kinds (repeat 0)) (keep :redactions scrubbed)))
+
+(defn private-test-diagnostic
+  "Complete, scrubbed private-suite output for the manifest; nil when the
+  suite was not started. A sentinel is reported, never counted as a failure."
+  [private-result private-verdict ctx]
+  (when private-result
+    (let [[out err] (scrub-texts [(:out private-result) (:err private-result)]
+                                 (assoc ctx :private-test? true))]
+      {:exit (:exit private-result)
+       :timed-out (boolean (:timed-out? private-result))
+       :timeout-s (:timeout-s private-result)
+       :duration-s (:duration-s private-result)
+       :status (some-> (:private-status private-verdict) name)
+       :sentinel (some-> (:private-sentinel private-verdict) name)
+       :counted-as-failure (= :fail (:private-status private-verdict))
+       :stdout (:text out)
+       :stderr (:text err)
+       :redactions (sum-redactions out err)})))
+
+(defn- full-spec-review-sources
+  "The last full-spec-review phase result and its FULL_SPEC_REVIEW.md text.
+  A symlinked report is never followed (it could point at host-only files)."
+  [project-root challenge-name phase-results]
+  (let [rel (str "implementations/" challenge-name "/FULL_SPEC_REVIEW.md")
+        path (fs/path project-root rel)
+        symlink? (fs/sym-link? path)]
+    {:r (last (filter #(= :full-spec-review (:phase-id %)) phase-results))
+     :rel rel
+     :symlink? symlink?
+     :report (when (and (not symlink?) (fs/regular-file? path {:nofollow-links true}))
+               (slurp (str path)))}))
+
+(defn full-spec-review-diagnostic
+  "Complete, scrubbed full-spec-review findings: the FULL_SPEC_REVIEW.md
+  report and the session's final message. nil when neither exists. A
+  symlinked report is never followed (it could point at host-only files)."
+  [project-root challenge-name phase-results ctx]
+  (let [{:keys [r rel symlink? report]} (full-spec-review-sources project-root challenge-name phase-results)
+        [report' message] (scrub-texts [report (:result-text r)] ctx)]
+    (when (or r report symlink?)
+      {:ran (boolean r)
+       :verdict (some-> (:verdict r) name)
+       :exit (:exit r)
+       :report-path rel
+       :report-present (some? report)
+       :report-skipped (when symlink? "symlink")
+       :report-text (:text report')
+       :final-message (:text message)
+       :redactions (sum-redactions report' message)})))
+
+;;; Integrity hashes and run manifest
+
+(defn sha256-hex [^bytes bs]
+  (let [md (java.security.MessageDigest/getInstance "SHA-256")]
+    (apply str (map #(format "%02x" (bit-and % 0xff)) (.digest md bs)))))
+
+(defn file-sha256 [path]
+  (when (and path (fs/regular-file? path))
+    (sha256-hex (fs/read-all-bytes path))))
+
+(defn tree-sha256
+  "SHA-256 over sorted relative paths and contents of every file under dir;
+  nil when dir is missing."
+  [dir]
+  (when (and dir (fs/directory? dir))
+    (let [files (sort-by str (filter fs/regular-file? (fs/glob dir "**")))
+          entries (map #(str (fs/relativize dir %) "\u0000" (file-sha256 %)) files)]
+      (sha256-hex (.getBytes (str/join "\n" entries) "UTF-8")))))
+
+(defn git-out
+  "Trimmed stdout of a git command in dir, or nil on failure."
+  [dir & args]
+  (try
+    (let [{:keys [exit out]} (apply p/shell {:dir (str dir) :out :string :err :string :continue true}
+                                    "git" args)]
+      (when (zero? exit) (str/trim out)))
+    (catch Exception _ nil)))
+
+(defn phase-manifest [r]
+  {:phase-id (let [id (:phase-id r)] (if (keyword? id) (name id) id))
+   :attempt (:attempt r)
+   :subsystem (:subsystem r)
+   :exit (:exit r)
+   :verdict (some-> (:verdict r) name)
+   :timed-out (boolean (:timed-out? r))
+   :provider-limit (boolean (:provider-limit? r))
+   :user-stopped (boolean (:user-stopped? r))
+   :isolation (:isolation r)
+   :transient-retries (:retries r)
+   :duration-s (:duration-s r)
+   :transcript-path (:transcript-path r)
+   :transcript-sha256 (file-sha256 (:transcript-path r))
+   :cost-reported (:cost-reported r)
+   :cost-estimated (:cost-estimated r)})
+
+(defn challenge-manifest [r]
+  {:name (:name r)
+   :outcome (name (result-outcome r))
+   :completion (some-> (:completion r) name)
+   :runner-status (some-> (:status r) name)
+   :private-suite-available (boolean (:has-private-suite? r))
+   :private-status (some-> (:private-status r) name)
+   :private-counts (:private-counts r)
+   :private-reason (:private-reason r)
+   :score (:challenge-score r)
+   :scored (some? (:challenge-score r))
+   :builds (:builds r)
+   :retries (:retries r)
+   :implementation-sha256 (:implementation-sha256 r)
+   :challenge-tree-sha (:challenge-tree-sha r)
+   :cost-reported (:cost-reported r)
+   :cost-estimated (:cost-estimated r)
+   :private-test (:private-test r)
+   :full-spec-review (:full-spec-review r)
+   :phases (mapv phase-manifest (:phase-results r))})
+
+(def redaction-policy
+  "Recorded in every manifest and bundle; docs/outcome-taxonomy.md explains it."
+  {:version 2
+   :scrubbed-fields ["challenges[].private-test.stdout" "challenges[].private-test.stderr"
+                     "challenges[].full-spec-review.report-text"
+                     "challenges[].full-spec-review.final-message"]
+   :replacements
+   {:secret-env (str "value of each set env var whose name matches " secret-env-name-re
+                     " and is >= " min-secret-env-length " chars -> [REDACTED:env:<NAME>]")
+    :credential "PEM private keys, sk-ant-/sk- API keys, GitHub, AWS key id, Slack and JWT tokens, Authorization/Bearer values, URL user:password@, and <key|secret|token|password|credential>=/: values of >= 8 chars -> [REDACTED:<kind>]"
+    :private-test-assertion "private-test output only: text after clojure.test `expected:`, and `actual: (not ...)` comparisons -> [REDACTED:private-test-assertion|comparison]"
+    :protected-plaintext (str "every run of 1-" max-protected-ngram " consecutive case-folded words (letters/digits, any length) "
+                              "that occurs in a protected file and in no public text -> [REDACTED:protected-plaintext]. "
+                              "Protected files: every file of the challenge directory outside the solver snapshot allowlist "
+                              "(test-private/, test-resources/, test/, test-harness/, test-named src files, ...; .cpcache/ excluded), "
+                              "streamed in full at any size. Public text: files the snapshot copies, repository paths, "
+                              "and a fixed diagnostic vocabulary. file:line numbers and clojure.test count lines are not compared.")
+    :private-test-data "private-test output only, on lines other than clojure.test headers/summaries, stack frames and redacted assertions: quoted strings, {...}/[...]/#{...} literals, numbers outside file:line locations, and words absent from public text, the implementation's src/ and the diagnostic vocabulary -> [REDACTED:private-test-data]"
+    :protected-index-unavailable "every non-blank line of every scrubbed field, when a protected file cannot be read, only its .enc ciphertext is present, or the challenge directory is missing or holds a symlink/special file -> [REDACTED:protected-index-unavailable]"}
+   :kept ["line count (redaction never drops lines)" "file:line locations" "clojure.test headers, counts and stack frames, minus protected word runs" "exception class names and messages built from public words" "all other review text without protected word runs"]
+   :limitations ["values computed at run time from protected inputs are recognized only in private-test output, by the private-test data rule; in review text only words that literally occur in protected files are redacted"
+                 "a run of words that also occurs, consecutively, in public text is kept"
+                 "only the challenge's own non-snapshot files are protected sources; repository docs/, review/ and .amp/ and other challenges are not"
+                 "credential patterns are heuristic"]})
+
+;;; Evaluator-only private log (docs/outcome-taxonomy.md, "Evaluator log")
+;;
+;; The manifest and bundle keep only the scrubbed diagnostics above. The
+;; complete private-test output and full-spec-review findings go to
+;; <report>.private.log next to the report (../reports, outside the repository
+;; and every solver snapshot), with only secret env values and credentials
+;; scrubbed. The manifest pins the log by path and SHA-256; no bundle holds it.
+
+(def evaluator-log-scrubbing ["secret-env" "credential"])
+
+(defn evaluator-diagnostics
+  "[{:section :text}] for the evaluator log: complete private-test stdout and
+  stderr, FULL_SPEC_REVIEW.md and the review's final message, with secret env
+  values and credential patterns scrubbed and nothing else."
+  [project-root challenge-name private-result phase-results env-secrets]
+  (let [{:keys [r report]} (full-spec-review-sources project-root challenge-name phase-results)]
+    (into []
+          (keep (fn [[section text]]
+                  (when text
+                    {:section section :text (first (pre-scrub text {:env-secrets env-secrets}))})))
+          [["private-test stdout" (:out private-result)]
+           ["private-test stderr" (:err private-result)]
+           ["full-spec-review FULL_SPEC_REVIEW.md" report]
+           ["full-spec-review final message" (:result-text r)]])))
+
+(defn evaluator-log-text
+  "Evaluator log content. Each section header gives its exact UTF-8 byte
+  length, so section text is recoverable verbatim whatever it contains."
+  [run-id results]
+  (str "# rama-ai-learn evaluator-only private diagnostics\n"
+       "# run-id: " run-id "\n"
+       "# EVALUATOR ONLY: never give this file to a solver; never bundle or publish it.\n"
+       "# Scrubbed: set secret env values and credential patterns only. "
+       "Protected and private-test text is NOT redacted.\n"
+       (apply str (for [{:keys [name evaluator-diagnostics]} results
+                        {:keys [section text]} evaluator-diagnostics]
+                    (str "\n===== " name " | " section " | "
+                         (alength (.getBytes ^String text "UTF-8")) " bytes =====\n"
+                         text "\n===== end " name " | " section " =====\n")))))
+
+(defn evaluator-log-path [report-path]
+  (str (str/replace (str report-path) #"\.md$" "") ".private.log"))
+
+(defn- solver-writable-dir? [project-root dir]
+  (let [impl (fs/path project-root "implementations")]
+    (and (fs/exists? impl)
+         (fs/starts-with? (fs/canonicalize dir) (fs/canonicalize impl)))))
+
+(defn write-evaluator-log!
+  "Create <report>.private.log (owner-only, never overwriting), sync it and
+  read it back. Returns the manifest reference. Throws, leaving no file
+  behind, when the log cannot be written completely."
+  [report-path project-root text]
+  (let [path (fs/absolutize (evaluator-log-path report-path))
+        bs (.getBytes ^String text "UTF-8")
+        sha (sha256-hex bs)
+        fail (fn [msg & [cause]]
+               (throw (ex-info (str "Evaluator log not written; no manifest or bundle emitted: " msg)
+                               {:reason :evaluator-log-failed :path (str path)} cause)))]
+    (when (solver-writable-dir? project-root (fs/parent path))
+      (fail "the reports directory is inside a solver-writable implementation directory"))
+    (try
+      (fs/create-file path {:posix-file-permissions "rw-------"})
+      (catch Exception e (fail "cannot create the file (it may already exist)" e)))
+    (try
+      (with-open [ch (java.nio.channels.FileChannel/open
+                      path (into-array java.nio.file.OpenOption [java.nio.file.StandardOpenOption/WRITE
+                                                                 java.nio.file.LinkOption/NOFOLLOW_LINKS]))]
+        (let [buf (java.nio.ByteBuffer/wrap bs)]
+          (while (.hasRemaining buf) (.write ch buf)))
+        (.force ch true))
+      (let [back (fs/read-all-bytes path)]
+        (when-not (and (= (alength bs) (alength back)) (= sha (sha256-hex back)))
+          (fail "read-back length or SHA-256 differs")))
+      (catch Exception e
+        (fs/delete-if-exists path)
+        (if (= :evaluator-log-failed (:reason (ex-data e))) (throw e) (fail "write failed" e))))
+    {:path (str (fs/file-name path))
+     :path-relative-to "manifest-directory"
+     :sha256 sha
+     :bytes (alength bs)
+     :audience "evaluator-only"
+     :in-bundle false
+     :scrubbed evaluator-log-scrubbing}))
+
+(defn evaluator-log-intact?
+  "True when the log a manifest references exists next to the report as a
+  regular file with the referenced length and SHA-256."
+  [report-path {:keys [path sha256 bytes]}]
+  (let [f (some->> path (fs/path (fs/parent (fs/absolutize report-path))))]
+    (boolean (and f (= path (str (fs/file-name f)))
+                  (fs/regular-file? f {:nofollow-links true})
+                  (let [back (fs/read-all-bytes f)]
+                    (and (= bytes (alength back)) (= sha256 (sha256-hex back))))))))
+
+(defn build-run-manifest
+  "Pure: run metadata map plus results -> JSON-ready manifest map."
+  [{:keys [run-id started-at finished-at args repo-sha repo-dirty? agent requested
+           grader-timeout-s isolation evaluator-log]} results]
+  (when-not (seq isolation)
+    (throw (ex-info "A scored run manifest requires the solver isolation record" {:run-id run-id})))
+  (when-not (and (string? (:path evaluator-log)) (re-matches #"[0-9a-f]{64}" (str (:sha256 evaluator-log))))
+    (throw (ex-info "A run manifest requires the written evaluator log reference" {:run-id run-id})))
+  {:schema-version 3
+   :run-id run-id
+   :started-at started-at
+   :finished-at finished-at
+   :args args
+   :repo {:head-sha repo-sha :dirty repo-dirty?}
+   :requested (merge {:agent agent} requested)
+   :grader-timeout-s grader-timeout-s
+   :isolation isolation
+   :redaction-policy redaction-policy
+   :evaluator-log evaluator-log
+   :challenges (mapv challenge-manifest results)})
+
+(defn manifest-path [report-path]
+  (str (str/replace (str report-path) #"\.md$" "") ".manifest.json"))
+
+(defn manifest-json [manifest]
+  (json/generate-string manifest {:pretty true}))
+
+(defn write-run-manifest!
+  "Write the manifest next to the report. Never overwrites an existing file.
+  Returns the path written, or nil when one already existed. Throws instead
+  of claiming an evaluator log that is missing or differs from its reference."
+  [report-path manifest]
+  (let [path (manifest-path report-path)]
+    (when-not (fs/exists? path)
+      (when-not (evaluator-log-intact? report-path (:evaluator-log manifest))
+        (throw (ex-info "Manifest not written: its evaluator log is missing or incomplete"
+                        {:reason :evaluator-log-mismatch})))
+      (spit path (manifest-json manifest))
+      path)))
+
+(defn bundle-path [report-path]
+  (str (str/replace (str report-path) #"\.md$" "") ".bundle.tar.gz"))
+
+(defn build-bundle
+  "BUNDLE.json content: the manifest (with its scrubbed diagnostics) plus the
+  SHA-256 of the manifest file's exact JSON. The markdown report is left out:
+  its alignment justifications come from a scorer that reads the reference."
+  [manifest created-at]
+  {:schema-version 1
+   :kind "rama-ai-learn-run-bundle"
+   :run-id (:run-id manifest)
+   :created-at created-at
+   :manifest-sha256 (sha256-hex (.getBytes ^String (manifest-json manifest) "UTF-8"))
+   :redaction-policy (:redaction-policy manifest)
+   :manifest manifest})
+
+(defn write-run-bundle!
+  "Write <report>.bundle.tar.gz holding <run-id>/BUNDLE.json. Never
+  overwrites. Returns the path written, or nil when one already existed."
+  [report-path manifest]
+  (let [path (bundle-path report-path)]
+    (when-not (fs/exists? path)
+      (let [staging (fs/create-temp-dir {:prefix "run-bundle-"})
+            dir (str/replace (str (or (:run-id manifest) "run")) #"[^A-Za-z0-9._-]" "_")]
+        (try
+          (fs/create-dirs (fs/path staging dir))
+          (spit (str (fs/path staging dir "BUNDLE.json"))
+                (json/generate-string (build-bundle manifest (str (java.time.Instant/now))) {:pretty true}))
+          (let [{:keys [exit err]} (p/shell {:out :string :err :string :continue true}
+                                            "tar" "-czf" (str path) "-C" (str staging) dir)]
+            (when-not (zero? exit)
+              (fs/delete-if-exists path)
+              (throw (ex-info (str "Bundle tar failed: " err) {:exit exit}))))
+          path
+          (finally (fs/delete-tree staging)))))))
+
+(defn emit-run-artifacts!
+  "Evaluator log, then the manifest that references it, then the bundle.
+  Nothing is emitted after a step fails. Returns the paths written."
+  [report-path project-root run-meta results]
+  (let [log-ref (write-evaluator-log! report-path project-root
+                                      (evaluator-log-text (:run-id run-meta) results))
+        manifest (build-run-manifest (assoc run-meta :evaluator-log log-ref) results)
+        mpath (write-run-manifest! report-path manifest)]
+    {:evaluator-log (evaluator-log-path report-path)
+     :manifest mpath
+     :bundle (when mpath (write-run-bundle! report-path manifest))}))
 
 ;;; Alignment scoring
 
@@ -878,10 +1864,19 @@
     (when (fs/exists? ref-dir)
       (vec (filter #(str/ends-with? (str %) ".clj") (fs/glob ref-dir "**"))))))
 
+(defn alignment-rubric
+  "The structural-alignment section of SCORING_RUBRIC.md, up to the next `## `
+  heading. The scorer needs only its anchors, not the headline or judge
+  sections. Falls back to the whole text when no such section exists."
+  [rubric]
+  (or (some #(when (re-find #"^## [^\n]*[Ss]tructural alignment" %) %)
+            (str/split rubric #"(?m)^(?=## )"))
+      rubric))
+
 (defn build-alignment-prompt
   "Build the prompt for alignment scoring."
   [project-root challenge-name]
-  (let [rubric    (slurp (str (fs/path project-root "SCORING_RUBRIC.md")))
+  (let [rubric    (alignment-rubric (slurp (str (fs/path project-root "SCORING_RUBRIC.md"))))
         impl-files (find-impl-files project-root challenge-name)
         ref-files  (find-ref-files project-root challenge-name)]
     (when (seq impl-files)
@@ -1088,20 +2083,58 @@
   [project-root challenge-name]
   (run-hidden-script! project-root challenge-name "teardown.sh"))
 
+(def ^:dynamic *grader-timeout-s*
+  "Wall-clock cap for one private-test (grader) invocation, in seconds."
+  1800)
+
+(def ^:dynamic *private-test-cmd*
+  "Command that runs a challenge's private suite from the challenge dir."
+  ["clojure" "-X:test-private"])
+
+(def ^:private setsid-path (delay (some-> (fs/which "setsid") str)))
+
+(defn kill-process-tree!
+  "Kill a process started through `setsid` (its own process group), plus any
+  descendants still visible through ProcessHandle. Safe to call after the
+  process exited: leftover grandchildren in the group are still reaped.
+  Returns the number of descendant handles signalled."
+  [^Process proc group?]
+  (let [kids (try (vec (iterator-seq (.iterator (.descendants (.toHandle proc)))))
+                  (catch Exception _ []))]
+    (when group?
+      (try (p/shell {:out :string :err :string :continue true}
+                    "kill" "-KILL" "--" (str "-" (.pid proc)))
+           (catch Exception _ nil)))
+    (doseq [^java.lang.ProcessHandle k kids] (try (.destroyForcibly k) (catch Exception _ nil)))
+    (try (.destroyForcibly proc) (catch Exception _ nil))
+    (count kids)))
+
 (defn run-private-tests!
-  "Run private tests for a challenge. Returns {:exit int, :out str, :err str, :duration-s int}."
+  "Run private tests for a challenge under *grader-timeout-s*. The grader runs
+  in its own session (setsid) so the whole process tree is killed on timeout
+  and cleaned up after a normal exit. Returns {:exit int, :out str, :err str,
+  :duration-s int, :timed-out? bool, :timeout-s int}."
   [project-root challenge-name]
   (let [challenge-dir (str (fs/path project-root "challenges" challenge-name))
-        cmd ["clojure" "-X:test-private"]
+        group? (boolean @setsid-path)
+        cmd (if group? (into [@setsid-path] *private-test-cmd*) *private-test-cmd*)
+        timeout-s *grader-timeout-s*
         start (System/currentTimeMillis)
         proc (p/process cmd {:dir challenge-dir :in ""})
         out-fut (future (slurp (:out proc)))
         err-fut (future (slurp (:err proc)))
-        done @proc
+        done (deref proc (* 1000 timeout-s) ::timeout)
+        timed-out? (= ::timeout done)
+        _ (kill-process-tree! (:proc proc) group?)
+        ;; A stray child holding the pipes open must not hang the runner.
+        out (deref out-fut 10000 "")
+        err (deref err-fut 10000 "")
         duration-s (quot (- (System/currentTimeMillis) start) 1000)]
-    {:exit (:exit done)
-     :out @out-fut
-     :err @err-fut
+    {:exit (if timed-out? 124 (:exit done))
+     :out out
+     :err (if timed-out? (str "Grader timeout after " timeout-s "s\n" err) err)
+     :timed-out? timed-out?
+     :timeout-s timeout-s
      :duration-s duration-s}))
 
 (defn- challenge-dir?
@@ -1272,9 +2305,7 @@
                     (invoke-command! cmd project-root))
                 transcript (str (json/generate-string
                                   {:type "run_metadata" :timestamp (:started-at r)
-                                   :isolation (cond *isolate-network* "bubblewrap-provider-network"
-                                                    *isolate* "bubblewrap-public-only"
-                                                    :else "none")
+                                   :isolation (isolation-mode)
                                    :model model :effort reasoning :agent agent-name}) "\n"
                                 (:out r) "\n"
                                 (json/generate-string
@@ -1302,9 +2333,17 @@
         combined (str out "\n" err)
         verdict (parse-phase-verdict combined)
         token-usage (parse-token-usage canonical)
-        cost (or (:total_cost_usd summary)
-                 (when (contains? #{"claude" "codex"} agent-name)
-                   (compute-cost token-usage (model->pricing model))))
+        cost-reported (:total_cost_usd summary)
+        cost-estimated (when (contains? #{"claude" "codex"} agent-name)
+                         (compute-cost token-usage (model->pricing model)))
+        cost (or cost-reported cost-estimated)
+        final-exit (if (and (zero? exit) (:is_error summary)) 1 exit)
+        error-text (agent-error-text out err)
+        provider-limit? (boolean (and (not= 0 final-exit)
+                                      (not timed-out?)
+                                      (or (re-find transient-error-re error-text)
+                                          (re-find quota-error-re error-text))))
+        user-stopped? (boolean (and (not timed-out?) (contains? #{130 143} exit)))
         tool-uses (parse-tool-uses canonical)
         skills-used (parse-skills-used canonical)
         skill-refs-used (parse-skill-refs-used canonical)]
@@ -1316,13 +2355,20 @@
      :attempt attempt
      :retries retries
      :subsystem subsystem
-     :exit (if (and (zero? exit) (:is_error summary)) 1 exit)
+     :exit final-exit
      :timed-out? (boolean timed-out?)
+     :provider-limit? provider-limit?
+     :user-stopped? user-stopped?
      :duration-s duration-s
      :verdict verdict
+     :isolation (isolation-mode)
+     ;; Final assistant message; the manifest keeps it for full-spec-review.
+     :result-text (let [t (:result summary)] (when (string? t) t))
      :transcript-path transcript-path
      :token-usage token-usage
      :cost cost
+     :cost-reported cost-reported
+     :cost-estimated cost-estimated
      :tool-uses tool-uses
      :skills-used skills-used
      :skill-refs-used skill-refs-used}))
@@ -1338,6 +2384,10 @@
         all-skill-refs (vec (sort (into #{} (mapcat :skill-refs-used phase-results))))]
     {:token-usage     total-tokens
      :cost            total-cost
+     :cost-reported   (when (some :cost-reported phase-results)
+                        (reduce + 0 (keep :cost-reported phase-results)))
+     :cost-estimated  (when (some :cost-estimated phase-results)
+                        (reduce + 0 (keep :cost-estimated phase-results)))
      :duration-s      total-duration
      :tool-uses       total-tool-uses
      :skills-used     all-skills
@@ -1783,29 +2833,34 @@
                           (println (str/trim (:err result))))))
                     result))
 
-                ;; cognitect-test-runner can exit 0 with "Ran 0 tests" when the
-                ;; impl namespace is missing or tests fail to load. Treat that
-                ;; as :skip, not :pass.
-                tests-actually-ran?
-                (when private-result
-                  (let [combined (str (:out private-result) "\n" (:err private-result))]
-                    (if-let [m (re-find #"Ran (\d+) tests" combined)]
-                      (pos? (parse-long (second m)))
-                      ;; No "Ran N tests" line at all — tests didn't reach that point.
-                      false)))
+                ;; Sentinels (Ran 0 tests, no summary, grader timeout) are
+                ;; :unavailable, never :fail. See docs/outcome-taxonomy.md.
+                has-suite? (has-private-tests? project-root challenge-name)
+                private-verdict (classify-private-result has-suite? private-result)
+                private-status (:private-status private-verdict)
+                ;; Complete, scrubbed diagnostics for the manifest and bundle.
+                ;; Built here, while the protected files are plaintext.
+                scrub-ctx (scrub-context project-root challenge-name (System/getenv))
+                private-test (private-test-diagnostic private-result private-verdict scrub-ctx)
+                full-spec-review (full-spec-review-diagnostic project-root challenge-name
+                                                              (:phase-results phase-result) scrub-ctx)
+                ;; Complete text for the evaluator-only log; secrets scrubbed only.
+                evaluator-diagnostics (evaluator-diagnostics project-root challenge-name private-result
+                                                             (:phase-results phase-result)
+                                                             (:env-secrets scrub-ctx))
+                has-implementation? (boolean (seq (find-impl-files project-root challenge-name)))
+                completion (classify-completion phase-result)
+                outcome (classify-outcome {:completion completion
+                                           :private-status private-status
+                                           :has-implementation? has-implementation?})
+                phase-results (:phase-results phase-result)
+                builds (count (filter #(= :build (:phase-id %)) phase-results))
+                retries (count-semantic-retries phase-results)
 
-                private-status (cond
-                                 (nil? private-result)           nil
-                                 (not tests-actually-ran?)       nil
-                                 (zero? (:exit private-result))  :pass
-                                 :else                           :fail)
-
-                private-output (when (= :fail private-status)
-                                 (str (:out private-result) "\n" (:err private-result)))
-
-                ;; Run alignment scoring for passing challenges
+                ;; Alignment is a separate dimension from correctness: score it
+                ;; whenever there is a finished or correct implementation.
                 scoring
-                (when (= :pass status)
+                (when (or (= :pass status) (= :private-pass outcome))
                   (let [impl-scores (do (when *verbose*
                                           (println (format "Scoring alignment for %s..." challenge-name)))
                                         (run-alignment-scoring! project-root challenge-name model agent-fns))
@@ -1817,50 +2872,53 @@
                       {:scores scores :composite (:alignment scores)})))]
 
 
-              (let [status-str (case status :pass "PASS" :timeout "TIMEOUT" "FAIL")
-                    private-str (case private-status
-                                  :pass " | Private: PASS"
-                                  :fail " | Private: FAIL"
-                                  "")
-                    align-str (if-let [a (get-in scoring [:scores :alignment])]
-                                (str " | Align: " a "/5")
-                                "")
-                    test-align-str (if-let [a (get-in scoring [:scores :test-alignment])]
-                                     (str " | TestAlign: " a "/5")
-                                     "")]
-                (println (format "%s%s%s%s (%ds)" status-str private-str align-str test-align-str duration-s)))
-
-              (when (#{:fail :timeout} status)
-                (binding [*out* *err*]
-                  (println (str "--- " (if (= status :timeout) "TIMEOUT" "FAILED") ": " challenge-name " ---"))
-                  (when (seq (str/trim out))
-                    (println "stdout:")
-                    (println (str/trim out)))
-                  (when (seq (str/trim err))
-                    (println "stderr:")
-                    (println (str/trim err)))
-                  (println (str "exit code: " exit))
-                  (println "---")))
-
-              (let [priv (or private-status :skip)
-                    score (compute-challenge-score status priv iterations)]
-                (merge {:name challenge-name
-                        :status status
-                        :private-status priv
-                        :challenge-score score
-                        :iterations iterations
-                        :duration-s duration-s
-                        :cost cost
-                        :tool-uses tool-uses
-                        :skills-used skills-used
-                        :skill-refs-used skill-refs-used
-                        :scoring scoring
-                        :transcript-path transcript-path
-                        :error (when (#{:fail :timeout} status)
-                                 (let [err-str (str/trim err)]
-                                   (when (seq err-str)
-                                     err-str)))}
-                       token-usage)))
+              (let [score (compute-challenge-score outcome retries)
+                    result (merge {:name challenge-name
+                                   :outcome outcome
+                                   :completion completion
+                                   :status status
+                                   :private-status private-status
+                                   :private-counts (:private-counts private-verdict)
+                                   :private-reason (:private-reason private-verdict)
+                                   :private-test private-test
+                                   :full-spec-review full-spec-review
+                                   :evaluator-diagnostics evaluator-diagnostics
+                                   :has-private-suite? has-suite?
+                                   :has-implementation? has-implementation?
+                                   :implementation-sha256 (tree-sha256 (fs/path project-root "implementations" challenge-name))
+                                   :challenge-tree-sha (git-out project-root "rev-parse" (str "HEAD:challenges/" challenge-name))
+                                   :challenge-score score
+                                   :builds builds
+                                   :retries retries
+                                   :iterations iterations
+                                   :duration-s duration-s
+                                   :cost cost
+                                   :cost-reported (:cost-reported agg)
+                                   :cost-estimated (:cost-estimated agg)
+                                   :tool-uses tool-uses
+                                   :skills-used skills-used
+                                   :skill-refs-used skill-refs-used
+                                   :scoring scoring
+                                   :transcript-path transcript-path
+                                   :phase-results phase-results
+                                   :error (when (#{:fail :timeout} status)
+                                            (let [err-str (str/trim err)]
+                                              (when (seq err-str)
+                                                err-str)))}
+                                  token-usage)]
+                (println (challenge-headline result))
+                (when (#{:fail :timeout} status)
+                  (binding [*out* *err*]
+                    (println (str "--- " (if (= status :timeout) "TIMEOUT" "FAILED") ": " challenge-name " ---"))
+                    (when (seq (str/trim out))
+                      (println "stdout:")
+                      (println (str/trim out)))
+                    (when (seq (str/trim err))
+                      (println "stderr:")
+                      (println (str/trim err)))
+                    (println (str "exit code: " exit))
+                    (println "---")))
+                result))
           (finally
             (when (has-hidden-teardown? project-root challenge-name)
               (when *verbose*
@@ -1883,11 +2941,16 @@
           (when (has-hidden-teardown? project-root challenge-name)
             (run-hidden-teardown! project-root challenge-name))
           (catch Exception _))
-        (println (format "FAIL (error: %s)" (.getMessage e)))
+        (println (format "INFRA-ERROR (not scored): %s" (.getMessage e)))
         {:name challenge-name
+         :outcome :infra-error
+         :completion :infra-error
          :status :fail
-         :private-status :skip
-         :challenge-score 0
+         :private-status :not-run
+         :private-reason "runner error before private suite"
+         :challenge-score nil
+         :builds 0
+         :retries 0
          :iterations 0
          :duration-s 0
          :input-tokens 0
@@ -1979,27 +3042,29 @@
     (let [max-name   (max 9 (apply max (map #(count (:name %)) results)))
           max-skills (max 6 (apply max (map #(count (str/join ", " (:skills-used % []))) results)))
           max-refs   (max 10 (apply max (map #(count (str/join ", " (:skill-refs-used % []))) results)))]
-      {:header (format (str "| %-" max-name "s | %-7s | %-7s | %-5s | %-10s | %-8s | %-9s | %-10s | %-12s | %-10s | %-9s | %-10s | %-" max-skills "s | %-" max-refs "s | %-5s | %-9s |")
-                       "Challenge" "Status" "Private" "Score" "Iterations" "Duration"
+      {:header (format (str "| %-" max-name "s | %-24s | %-7s | %-7s | %-5s | %-6s | %-7s | %-8s | %-9s | %-10s | %-12s | %-10s | %-9s | %-10s | %-" max-skills "s | %-" max-refs "s | %-5s | %-9s |")
+                       "Challenge" "Outcome" "Private" "Runner" "Score" "Builds" "Retries" "Duration"
                        "In Tokens" "Out Tokens" "Cache Create" "Cache Read" "Tool Uses" "Cost" "Skills" "Skill Refs"
                        "Align" "TestAlign")
        :separator (str "|" (str/join (repeat (+ max-name 2) "-"))
-                       "|---------|---------|-------|------------|----------|-----------|------------|--------------|------------|-----------|------------|"
+                       "|--------------------------|---------|---------|-------|--------|---------|----------|-----------|------------|--------------|------------|-----------|------------|"
                        (str/join (repeat (+ max-skills 2) "-"))
                        "|"
                        (str/join (repeat (+ max-refs 2) "-"))
                        "|-------|-----------|")
-       :rows (mapv (fn [{:keys [name status private-status challenge-score iterations duration-s
+       :rows (mapv (fn [{:keys [name status private-status challenge-score iterations builds retries duration-s
                                 input-tokens output-tokens
                                 cache-creation-tokens cache-read-tokens tool-uses cost
-                                skills-used skill-refs-used scoring]}]
+                                skills-used skill-refs-used scoring] :as r}]
                      (let [scores (:scores scoring)]
-                       (format (str "| %-" max-name "s | %-7s | %-7s | %-5d | %-10d | %-7ds | %-9d | %-10d | %-12d | %-10d | %-9d | %-10s | %-" max-skills "s | %-" max-refs "s | %-5s | %-9s |")
+                       (format (str "| %-" max-name "s | %-24s | %-7s | %-7s | %-5s | %-6d | %-7d | %-7ds | %-9d | %-10d | %-12d | %-10d | %-9d | %-10s | %-" max-skills "s | %-" max-refs "s | %-5s | %-9s |")
                                name
-                               (case status :pass "PASS" :timeout "TIMEOUT" "FAIL")
-                               (case private-status :pass "PASS" :fail "FAIL" :skip "-" "-")
-                               (or challenge-score 0)
-                               iterations
+                               (outcome-label (result-outcome r))
+                               (private-label private-status)
+                               (runner-label status)
+                               (if (some? challenge-score) (str challenge-score) "-")
+                               (or builds iterations 0)
+                               (or retries 0)
                                duration-s
                                input-tokens
                                output-tokens
@@ -2020,13 +3085,7 @@
   ([results] (print-summary-table results nil))
   ([results total-elapsed-s]
    (when-let [{:keys [header separator rows]} (result-table-rows results)]
-     (let [passed   (count (filterv #(= :pass (:status %)) results))
-           timed-out (count (filterv #(= :timeout (:status %)) results))
-           failed   (count (filterv #(= :fail (:status %)) results))
-           priv-passed (count (filterv #(= :pass (:private-status %)) results))
-           priv-failed (count (filterv #(= :fail (:private-status %)) results))
-           priv-total  (+ priv-passed priv-failed)
-           {:keys [input-tokens output-tokens
+     (let [{:keys [input-tokens output-tokens
                    cache-creation-tokens cache-read-tokens]} (token-totals results)]
        (println)
        (println header)
@@ -2036,23 +3095,21 @@
        (println)
        (let [total-cost      (when (some :cost results) (reduce + 0 (keep :cost results)))
              total-tool-uses (reduce + 0 (map #(or (:tool-uses %) 0) results))
-             avg-score       (/ (reduce + 0.0 (map #(or (:challenge-score %) 0) results))
-                                (count results))
              align-vals      (keep #(get-in % [:scoring :scores :alignment]) results)
              avg-align       (when (seq align-vals)
                                (/ (reduce + 0.0 align-vals) (count align-vals)))
              test-align-vals (keep #(get-in % [:scoring :scores :test-alignment]) results)
              avg-test-align  (when (seq test-align-vals)
-                               (/ (reduce + 0.0 test-align-vals) (count test-align-vals)))]
-         (println (format "Challenges: %d | Passed: %d | Failed: %d | Timed out: %d"
-                          (count results) passed failed timed-out))
-         (when (pos? priv-total)
-           (println (format "Private tests: %d/%d passed" priv-passed priv-total)))
-         (println (format "Average score: %.1f" avg-score))
+                               (/ (reduce + 0.0 test-align-vals) (count test-align-vals)))
+             results'        (mapv #(assoc % :outcome (result-outcome %)) results)]
+         (println (outcome-counts-line results'))
+         (when-let [line (private-verdict-line results)]
+           (println line))
+         (println (average-score-line results))
          (when avg-align
-           (println (format "Average alignment: %.1f/5 (n=%d)" avg-align (count align-vals))))
+           (println (format "Average alignment: %.1f/5 (n=%d, informational)" avg-align (count align-vals))))
          (when avg-test-align
-           (println (format "Average test alignment: %.1f/5 (n=%d)" avg-test-align (count test-align-vals))))
+           (println (format "Average test alignment: %.1f/5 (n=%d, informational)" avg-test-align (count test-align-vals))))
          (println (format "Tokens: In: %d | Out: %d | Cache Create: %d | Cache Read: %d | Tool Uses: %d | Cost: %s"
                           input-tokens output-tokens cache-creation-tokens cache-read-tokens
                           total-tool-uses (format-cost total-cost))))
@@ -2080,9 +3137,7 @@
                     model                 (format "%s-%s-%s-%s.md" date-str time-str agent-name (str/replace model #"[/\\\\]" "_"))
                     :else                 (format "%s-%s-%s.md" date-str time-str agent-name))
          report-path (fs/path reports-dir filename)
-         passed    (count (filterv #(= :pass (:status %)) results))
-         timed-out (count (filterv #(= :timeout (:status %)) results))
-         failed    (count (filterv #(= :fail (:status %)) results))
+         results' (mapv #(assoc % :outcome (result-outcome %)) results)
          sb (StringBuilder.)]
      (fs/create-dirs reports-dir)
      (.append sb (format "# Challenge Run Report - %s\n" timestamp))
@@ -2091,21 +3146,25 @@
        (.append sb (format "Model: %s\n" model)))
      (when reasoning
        (.append sb (format "Reasoning: %s\n" reasoning)))
-     (.append sb (format "Challenges: %d | Passed: %d | Failed: %d | Timed out: %d\n\n"
-                         (count results) passed failed timed-out))
-     (.append sb "| Challenge | Status | Private | Score | Iterations | Duration | In Tokens | Out Tokens | Cache Create | Cache Read | Tool Uses | Cost | Skills | Skill Refs | Align | TestAlign |\n")
-     (.append sb "|-----------|--------|---------|-------|------------|----------|-----------|------------|--------------|------------|-----------|------|--------|------------|-------|----------|\n")
-     (doseq [{:keys [name status private-status challenge-score iterations duration-s
+     (.append sb (str (outcome-counts-line results') "\n"))
+     (when-let [line (private-verdict-line results)]
+       (.append sb (str line "\n")))
+     (.append sb "\n")
+     (.append sb "| Challenge | Outcome | Private | Runner | Score | Builds | Retries | Duration | In Tokens | Out Tokens | Cache Create | Cache Read | Tool Uses | Cost | Skills | Skill Refs | Align | TestAlign |\n")
+     (.append sb "|-----------|---------|---------|--------|-------|--------|---------|----------|-----------|------------|--------------|------------|-----------|------|--------|------------|-------|----------|\n")
+     (doseq [{:keys [name status challenge-score iterations builds retries duration-s
                      input-tokens output-tokens
                      cache-creation-tokens cache-read-tokens tool-uses cost
-                     skills-used skill-refs-used scoring]} results]
+                     skills-used skill-refs-used scoring] :as r} results']
        (let [scores (:scores scoring)]
-         (.append sb (format "| %s | %s | %s | %d | %d | %ds | %d | %d | %d | %d | %d | %s | %s | %s | %s | %s |\n"
+         (.append sb (format "| %s | %s | %s | %s | %s | %d | %d | %ds | %d | %d | %d | %d | %d | %s | %s | %s | %s | %s |\n"
                              name
-                             (case status :pass "PASS" :timeout "TIMEOUT" "FAIL")
-                             (case private-status :pass "PASS" :fail "FAIL" :skip "-" "-")
-                             (or challenge-score 0)
-                             iterations
+                             (outcome-label (:outcome r))
+                             (private-detail r)
+                             (runner-label status)
+                             (if (some? challenge-score) (str challenge-score) "-")
+                             (or builds iterations 0)
+                             (or retries 0)
                              duration-s
                              input-tokens
                              output-tokens
@@ -2121,19 +3180,17 @@
                    cache-creation-tokens cache-read-tokens]} (token-totals results)
            total-cost      (when (some :cost results) (reduce + 0 (keep :cost results)))
            total-tool-uses (reduce + 0 (map #(or (:tool-uses %) 0) results))
-           avg-score       (/ (reduce + 0.0 (map #(or (:challenge-score %) 0) results))
-                              (count results))
            align-vals      (keep #(get-in % [:scoring :scores :alignment]) results)
            avg-align       (when (seq align-vals)
                              (/ (reduce + 0.0 align-vals) (count align-vals)))
            test-align-vals (keep #(get-in % [:scoring :scores :test-alignment]) results)
            avg-test-align  (when (seq test-align-vals)
                              (/ (reduce + 0.0 test-align-vals) (count test-align-vals)))]
-       (.append sb (format "\n**Average score:** %.1f\n" avg-score))
+       (.append sb (str "\n**" (str/replace-first (average-score-line results) ":" ":**") "\n"))
        (when avg-align
-         (.append sb (format "**Average alignment:** %.1f/5 (n=%d)\n" avg-align (count align-vals))))
+         (.append sb (format "**Average alignment (informational):** %.1f/5 (n=%d)\n" avg-align (count align-vals))))
        (when avg-test-align
-         (.append sb (format "**Average test alignment:** %.1f/5 (n=%d)\n" avg-test-align (count test-align-vals))))
+         (.append sb (format "**Average test alignment (informational):** %.1f/5 (n=%d)\n" avg-test-align (count test-align-vals))))
        (.append sb (format "**Tokens:** In: %d | Out: %d | Cache Create: %d | Cache Read: %d | Tool Uses: %d | Cost: %s\n"
                            input-tokens output-tokens cache-creation-tokens cache-read-tokens
                            total-tool-uses (format-cost total-cost))))
@@ -2153,6 +3210,33 @@
        (.append sb (format "\n**Total elapsed:** %s\n" (format-duration total-elapsed-s))))
      (spit (str report-path) (str sb))
      (str report-path))))
+
+;;; Scored-run isolation preflight
+
+(defn require-scored-run-isolation!
+  "Every run-challenges run is scored, so every solver phase must launch in
+  the bubblewrap public snapshot. Probe bubblewrap and audit each selected
+  challenge's snapshot now, before spending tokens. Returns the isolation
+  record for the manifest; throws when isolation is absent or broken."
+  [project-root opts agent-name challenge-names]
+  (when-not (or (:isolate opts) (:isolate-network opts))
+    (throw (ex-info (str "Scored runs require solver isolation: pass --isolate-network (or --isolate). "
+                         "Without it the solver can read private tests, reference docs and host credentials.")
+                    {:reason :isolation-required})))
+  (let [strict? (boolean (:isolate-network opts))
+        {:keys [exit out err]}
+        (invoke-command! (into ["python3" (str (fs/path project-root "scripts/isolate_solver.py"))
+                                "--repo" (str project-root) "--agent" agent-name
+                                "--network" (if strict? "strict" "shared") "--preflight"]
+                               (mapcat #(vector "--audit-challenge" %) challenge-names))
+                         project-root)]
+    (when-not (zero? exit)
+      (throw (ex-info (str "Isolation preflight failed: " (str/trim (str err "\n" out)))
+                      {:reason :isolation-preflight-failed :exit exit})))
+    (assoc (json/parse-string out true)
+           :mode (if strict? "bubblewrap-provider-network" "bubblewrap-public-only")
+           :launcher "scripts/isolate_solver.py"
+           :preflight "passed")))
 
 ;;; Main
 
@@ -2241,8 +3325,11 @@
                          fast-model (resolve-effort fast-effort)
                          slow-model (resolve-effort slow-effort)))
 
-        (let [enc-key       (challenge-encryption-key)
+        (let [isolation     (require-scored-run-isolation!
+                             project-root opts agent-name (mapv :name valid))
+              enc-key       (challenge-encryption-key)
               start-ms      (System/currentTimeMillis)
+              started-at    (str (java.time.Instant/now))
               results       (binding [*verbose* (or (:verbose opts) (:pretty opts))
                                       *pretty* (boolean (:pretty opts))
                                       *isolate* (boolean (or (:isolate opts) (:isolate-network opts)))
@@ -2250,16 +3337,42 @@
                                       *fast-model* fast-model
                                       *fast-reasoning* fast-effort
                                       *slow-model* slow-model
-                                      *slow-reasoning* slow-effort]
+                                      *slow-reasoning* slow-effort
+                                      *grader-timeout-s* (or (:grader-timeout opts) *grader-timeout-s*)]
                               (run-challenges valid agent-key agent-name project-root model reasoning enc-key))
-              total-elapsed-s (/ (- (System/currentTimeMillis) start-ms) 1000.0)]
+              total-elapsed-s (/ (- (System/currentTimeMillis) start-ms) 1000.0)
+              artifact-error (volatile! nil)]
           (print-summary-table results total-elapsed-s)
           (let [report-path (generate-report results agent-name project-root
                                              {:total-elapsed-s total-elapsed-s
                                               :model model
                                               :reasoning reasoning})]
             (println)
-            (println (str "Report saved: " report-path)))
+            (println (str "Report saved: " report-path))
+            (let [run-meta {:run-id (str (fs/strip-ext (fs/file-name report-path)) "-" (subs (str (random-uuid)) 0 8))
+                            :started-at started-at
+                            :finished-at (str (java.time.Instant/now))
+                            :args (vec args)
+                            :repo-sha (git-out project-root "rev-parse" "HEAD")
+                            :repo-dirty? (boolean (seq (git-out project-root "status" "--porcelain")))
+                            :agent agent-name
+                            :requested {:model model :effort reasoning
+                                        :fast-model fast-model :fast-effort fast-effort
+                                        :slow-model slow-model :slow-effort slow-effort}
+                            :grader-timeout-s (or (:grader-timeout opts) *grader-timeout-s*)
+                            :isolation isolation}]
+              ;; A failed evaluator log stops the manifest and bundle; the
+              ;; results database is still appended before the run fails.
+              (try
+                (let [{:keys [evaluator-log manifest bundle]}
+                      (emit-run-artifacts! report-path project-root run-meta results)]
+                  (println (str "Evaluator-only private log saved: " evaluator-log))
+                  (some->> manifest (str "Manifest saved: ") println)
+                  (some->> bundle (str "Bundle saved: ") println))
+                (catch Exception e
+                  (vreset! artifact-error e)
+                  (binding [*out* *err*]
+                    (println (str "ERROR: " (ex-message e))))))))
 
           ;; Append to results database
           (let [db-path (str (fs/path project-root ".." "reports" "results.edn"))
@@ -2267,15 +3380,22 @@
                 records (mapv (fn [{:keys [name status private-status challenge-score iterations duration-s
                                            input-tokens output-tokens
                                            cache-creation-tokens cache-read-tokens
-                                           tool-uses cost scoring]}]
+                                           tool-uses cost scoring
+                                           completion private-counts private-reason builds retries] :as r}]
                                 {:timestamp            timestamp
                                  :agent                agent-name
                                  :model                model
                                  :reasoning            reasoning
                                  :challenge             name
                                  :status               status
+                                 :outcome              (result-outcome r)
+                                 :completion           completion
                                  :private-status       private-status
-                                 :challenge-score      (or challenge-score 0)
+                                 :private-counts       private-counts
+                                 :private-reason       private-reason
+                                 :challenge-score      challenge-score
+                                 :builds               builds
+                                 :retries              retries
                                  :iterations           iterations
                                  :duration-s           duration-s
                                  :input-tokens         (or input-tokens 0)
@@ -2291,6 +3411,7 @@
                   (str (str/join "\n" (map pr-str records)) "\n")
                   :append true))
 
+          (some-> @artifact-error throw)
           results)))))
 
 (when (= *file* (System/getProperty "babashka.file"))

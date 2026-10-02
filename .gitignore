@@ -2,6 +2,8 @@
 OBSERVATIONS.md
 /implementations
 /reports
+# Evaluator-only private diagnostics (scripts/run_challenges.bb); never commit
+*.private.log
 target/
 /challenges/*/target/
 implementations/**/.clj-kondo/

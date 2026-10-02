@@ -1,6 +1,6 @@
 #!/usr/bin/env bb
 
-(require '[clojure.test :refer [deftest testing is run-tests]])
+(require '[clojure.test :refer [are deftest testing is run-tests]])
 
 ;; Load the runner script to get access to its functions
 (load-file "scripts/run_challenges.bb")
@@ -359,7 +359,7 @@
           (let [path (generate-report sample-results "test" project-dir)
                 content (slurp path)]
             (is (re-find #"\*\*Average score:\*\*" content))
-            (is (re-find #"\*\*Average alignment:\*\* 5\.0/5" content))))
+            (is (re-find #"\*\*Average alignment \(informational\):\*\* 5\.0/5" content))))
         (testing "when model is specified"
           (let [path (generate-report sample-results "claude" project-dir {:total-elapsed-s 100 :model "sonnet"})
                 content (slurp path)]
@@ -1170,6 +1170,710 @@
                     agent-tests-use-harness? (constantly false)]
         (is (= 4 (:alignment (run-alignment-scoring! "." "demo" "provider/model" adapter))))
         (is (= 3 (:test-alignment (run-test-alignment-scoring! "." "demo" "provider/model" adapter))))))))
+
+;;; Outcome taxonomy regressions (docs/outcome-taxonomy.md)
+
+(def private-real-fail {:exit 1 :out "Ran 12 tests containing 40 assertions.\n3 failures, 0 errors.\n"})
+(def private-sentinel-0-of-1 {:exit 1 :out "Ran 1 tests containing 1 assertions.\n0 failures, 1 errors.\n"})
+(def private-real-pass {:exit 0 :out "Ran 12 tests containing 40 assertions.\n0 failures, 0 errors.\n"})
+
+(defn phase [phase-id subsystem verdict]
+  {:phase-id phase-id :subsystem subsystem :verdict verdict :exit 0})
+
+(defn scored-result
+  "Mirror run-challenge's outcome/score derivation for fixture data."
+  [phase-result has-suite? private-result]
+  (let [pv (classify-private-result has-suite? private-result)
+        completion (classify-completion phase-result)
+        outcome (classify-outcome {:completion completion
+                                   :private-status (:private-status pv)
+                                   :has-implementation? true})
+        prs (:phase-results phase-result)
+        retries (count-semantic-retries prs)]
+    (merge pv {:name "fixture" :status (:status phase-result) :outcome outcome
+               :completion completion :has-private-suite? has-suite?
+               :builds (count (filter #(= :build (:phase-id %)) prs))
+               :retries retries :iterations (:iterations phase-result)
+               :challenge-score (compute-challenge-score outcome retries)
+               :duration-s 1 :input-tokens 0 :output-tokens 0
+               :cache-creation-tokens 0 :cache-read-tokens 0 :phase-results prs})))
+
+(def auction-runner-pass
+  {:status :pass :iterations 1
+   :phase-results [(phase 1 nil :pass) (phase 2 nil :pass) (phase :build nil :pass)
+                   (phase :full-spec-review nil :pass)]})
+
+(deftest private-verdict-sentinels-test
+  (testing "real failures are FAIL; sentinels are UNAVAILABLE, never FAIL"
+    (is (= :fail (:private-status (classify-private-result true private-real-fail))))
+    (is (= :pass (:private-status (classify-private-result true private-real-pass))))
+    (doseq [r [private-sentinel-0-of-1
+               {:exit 0 :out "Ran 0 tests containing 0 assertions.\n0 failures, 0 errors.\n"}
+               {:exit 1 :out "" :err "Syntax error compiling at (module.clj:1:1)"}
+               {:exit 124 :out "" :timed-out? true :timeout-s 5}
+               {:exit 1 :out "Ran 3 tests containing 3 assertions.\n0 failures, 0 errors.\n"}]]
+      (is (= :unavailable (:private-status (classify-private-result true r))) (pr-str r))))
+  (testing "0/1 sentinel is named in the reason"
+    (is (re-find #"sentinel 0/1" (:private-reason (classify-private-result true private-sentinel-0-of-1)))))
+  (testing "a genuine single-test assertion failure stays FAIL"
+    (is (= :fail (:private-status (classify-private-result
+                                   true {:exit 1 :out "Ran 1 tests containing 2 assertions.\n1 failures, 0 errors.\n"}))))))
+
+(deftest outcome-enum-test
+  (testing "every required outcome value exists"
+    (is (every? (set outcome-order)
+                [:private-pass :private-fail :private-unavailable :solver-no-implementation
+                 :infra-error :quota-or-provider-limit :user-stopped :timeout])))
+  (testing "completion comes from the failing phase, not the runner status alone"
+    (is (= :completed (classify-completion {:status :pass})))
+    (is (= :quota-or-provider-limit
+           (classify-completion {:status :fail :phase-results [{:provider-limit? true}]})))
+    (is (= :user-stopped (classify-completion {:status :fail :phase-results [{:user-stopped? true}]})))
+    (is (= :timeout (classify-completion {:status :timeout :phase-results [{:timed-out? true}]})))
+    (is (= :solver-fail (classify-completion {:status :fail :phase-results [{:verdict :fail}]}))))
+  (testing "headline outcome for each path; the private verdict dominates"
+    (are [expected in] (= expected (classify-outcome in))
+      :infra-error              {:infra-error? true :private-status :pass}
+      :private-pass             {:completion :solver-fail :private-status :pass}
+      :private-fail             {:completion :completed :private-status :fail}
+      :timeout                  {:completion :timeout :private-status :not-run}
+      :quota-or-provider-limit  {:completion :quota-or-provider-limit :private-status :not-run}
+      :user-stopped             {:completion :user-stopped :private-status :unavailable}
+      :solver-no-implementation {:completion :solver-fail :private-status :unavailable
+                                 :has-implementation? false}
+      :private-unavailable      {:completion :completed :private-status :unavailable
+                                 :has-implementation? true}
+      :public-pass              {:completion :completed :private-status :none}
+      :solver-fail              {:completion :solver-fail :private-status :none}))
+  (testing "only correctness outcomes are scored; infrastructure outcomes are not"
+    (is (= [100 0 0 0 nil nil nil nil]
+           (mapv #(compute-challenge-score % 0)
+                 [:private-pass :private-fail :solver-no-implementation :timeout
+                  :private-unavailable :infra-error :quota-or-provider-limit :user-stopped])))))
+
+(deftest auction-runner-pass-private-fail-test
+  (testing "runner PASS + private FAIL headlines PRIVATE-FAIL with score 0"
+    (let [r (scored-result auction-runner-pass true private-real-fail)
+          out (with-out-str (print-summary-table [r]))]
+      (is (= :completed (:completion r)))
+      (is (= :private-fail (:outcome r)))
+      (is (= 0 (:challenge-score r)))
+      (is (re-find #"^PRIVATE-FAIL \| Private: FAIL \(3 failures" (challenge-headline r)))
+      (is (re-find #"Runner: PASS" (challenge-headline r)) "runner status is labelled, not the headline")
+      (is (re-find #"\| PRIVATE-FAIL +\| FAIL +\| PASS " out))
+      (is (re-find #"PRIVATE-PASS: 0 \| PRIVATE-FAIL: 1" out))
+      (is (not (re-find #"Private tests: \d+/\d+ passed" out)))))
+  (testing "runner PASS + `Private FAIL 0/1` sentinel is PRIVATE-UNAVAILABLE, unscored, not FAIL"
+    (let [r (scored-result auction-runner-pass true private-sentinel-0-of-1)
+          out (with-out-str (print-summary-table [r]))]
+      (is (= :private-unavailable (:outcome r)))
+      (is (= :unavailable (:private-status r)))
+      (is (nil? (:challenge-score r)))
+      (is (re-find #"^PRIVATE-UNAVAILABLE \| Private: UNAVAIL \(sentinel 0/1" (challenge-headline r)))
+      (is (re-find #"Private verdicts: PASS 0 \| FAIL 0 \| UNAVAILABLE \(not evaluated\) 1" out))
+      (is (re-find #"Average score: - \(n=0 scored, 1 unscored\)" out))))
+  (testing "headline never leads with PASS unless the private suite passed"
+    (doseq [pr [private-real-fail private-sentinel-0-of-1 nil]]
+      (let [r (scored-result auction-runner-pass true pr)]
+        (is (not (re-find #"^(PASS|PRIVATE-PASS|PUBLIC-PASS)" (challenge-headline r))) (pr-str pr)))))
+  (testing "private PASS is the only correctness PASS"
+    (is (= :private-pass (:outcome (scored-result auction-runner-pass true private-real-pass))))))
+
+(def social-three-subsystems
+  {:status :pass :iterations 3
+   :phase-results (vec (for [s ["follows" "fanout" "timeline"]
+                             p [(phase 1 s :pass) (phase :build s :pass) (phase 3 s :pass)]]
+                         p))})
+
+(deftest social-three-subsystem-builds-not-penalized-test
+  (testing "three independent subsystem builds are 3 builds and 0 retries"
+    (let [r (scored-result social-three-subsystems true private-real-pass)]
+      (is (= 3 (:builds r)))
+      (is (= 0 (:retries r)))
+      (is (= 100 (:challenge-score r)) "old formula scored 100/2^(3-1) = 25")))
+  (testing "only a phase that follows a failed verdict in the same subsystem is a retry"
+    (let [prs [(phase :build "follows" :fail) (phase :build "follows" :pass)
+               (phase 3 "fanout" :major-fail) (phase :build "timeline" :pass)]]
+      (is (= 1 (count-semantic-retries prs)))
+      (is (= 50 (compute-challenge-score :private-pass 1)))))
+  (testing "plan-validation MINOR_FAIL then build is normal progression, not a retry"
+    (is (= 0 (count-semantic-retries [(phase 1 "follows" nil) (phase 2 "follows" :minor-fail)
+                                      (phase :build "follows" :pass)]))))
+  (testing "plan-validation MAJOR_FAIL sends the subsystem back to planning: one retry"
+    (is (= 1 (count-semantic-retries [(phase 1 "fanout" nil) (phase 2 "fanout" :major-fail)
+                                      (phase 1 "fanout" nil) (phase 2 "fanout" :pass)
+                                      (phase :build "fanout" :pass)]))))
+  (testing "retries never rescue a private failure"
+    (is (= 0 (compute-challenge-score :private-fail 0)))))
+
+(def isolation-fixture
+  {:mode "bubblewrap-provider-network" :filesystem "bubblewrap" :network "strict"
+   :probe "passed" :preflight "passed" :launcher "scripts/isolate_solver.py"
+   :snapshot {:kind "allowlisted-public-copy" :audits {:fixture {:files 3 :violations 0}}}})
+
+(def run-meta-fixture
+  {:run-id "run-1" :started-at "t0" :finished-at "t1"
+   :repo-sha "deadbeef" :repo-dirty? false :agent "claude"
+   :requested {:model "m" :effort "high"} :grader-timeout-s 1800
+   :isolation isolation-fixture
+   :evaluator-log {:path "run.private.log" :path-relative-to "manifest-directory"
+                   :sha256 (apply str (repeat 64 "0")) :bytes 0 :audience "evaluator-only"
+                   :in-bundle false :scrubbed ["secret-env" "credential"]}})
+
+(deftest run-manifest-test
+  (let [r (assoc (scored-result auction-runner-pass true private-sentinel-0-of-1)
+                 :implementation-sha256 "abc" :cost-reported 1.5 :cost-estimated 1.2)
+        m (build-run-manifest run-meta-fixture [r])
+        c (first (:challenges m))]
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"requires the solver isolation record"
+          (build-run-manifest (dissoc run-meta-fixture :isolation) [r])))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"requires the written evaluator log reference"
+          (build-run-manifest (dissoc run-meta-fixture :evaluator-log) [r])))
+    (is (= 3 (:schema-version m)))
+    (is (= (:evaluator-log run-meta-fixture) (:evaluator-log m)))
+    (is (= isolation-fixture (:isolation m)))
+    (is (= redaction-policy (:redaction-policy m)))
+    (is (= "run-1" (:run-id m)))
+    (is (= {:head-sha "deadbeef" :dirty false} (:repo m)))
+    (is (= "claude" (get-in m [:requested :agent])))
+    (is (= "private-unavailable" (:outcome c)))
+    (is (true? (:private-suite-available c)))
+    (is (false? (:scored c)))
+    (is (= [1.5 1.2] [(:cost-reported c) (:cost-estimated c)]))
+    (is (= 4 (count (:phases c))))
+    (is (= [1 "build"] [(:phase-id (first (:phases c))) (:phase-id (nth (:phases c) 2))]))
+    (is (string? (json/generate-string m)))
+    (let [dir (fs/create-temp-dir)
+          report (str (fs/path dir "r.md"))]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"evaluator log is missing or incomplete"
+            (write-run-manifest! report m)))
+      (is (not (fs/exists? (manifest-path report))) "no manifest claims a missing log")
+      (let [m (build-run-manifest (assoc run-meta-fixture :evaluator-log
+                                         (write-evaluator-log! report (str dir) "log\n"))
+                                  [r])]
+        (is (= (str (fs/path dir "r.manifest.json")) (write-run-manifest! report m)))
+        (is (nil? (write-run-manifest! report {:run-id "other"})) "never overwrites")
+        (is (= "run-1" (get (json/parse-string (slurp (manifest-path report))) "run-id"))))
+      (fs/delete-tree dir))))
+
+;;; Scrubbed diagnostics in the manifest and BUNDLE.json
+
+(defn bundle-entries [bundle]
+  (let [{:keys [exit out]} (p/shell {:out :string :err :string :continue true} "tar" "-tzf" bundle)]
+    (when (zero? exit) (str/split-lines (str/trim out)))))
+
+(defn read-bundle-json [bundle]
+  (let [dir (fs/create-temp-dir {:prefix "bundle-extract-"})]
+    (try
+      (p/shell {:out :string :err :string} "tar" "-xzf" bundle "-C" (str dir))
+      (let [[f] (fs/glob dir "*/BUNDLE.json")]
+        (json/parse-string (slurp (str f)) true))
+      (finally (fs/delete-tree dir)))))
+
+(defn diagnostics-fixture
+  "Project with protected and public challenge files and a solver review.
+  Strings are assembled so this test file itself holds no fixture secret."
+  []
+  (let [root (fs/create-temp-dir {:prefix "diag-"})
+        protected-line (str "(is (= 4711 (withdraw! client " "\"acct-overdraft-fixture\" 99999)))")
+        protected-msg (str "overdraft beyond balance " "must be rejected with 4711")
+        ref-line (str "(defn- hidden-ledger-invariant " "[ledger] (reduce + (vals ledger)))")
+        secret (str "fixture-" "env-secret-" "value-42")
+        api-key (str "sk-ant-" (apply str (repeat 30 "q")))]
+    (doseq [[rel text] {"challenges/demo/README.md" "Withdrawals beyond balance are rejected.\n"
+                        "challenges/demo/src/demo/protocol.clj" "(defprotocol Bank (withdraw! [c a n]))\n"
+                        "challenges/demo/test-private/demo/private_test.clj"
+                        (str "(deftest withdraw-test\n  (testing \"" protected-msg "\"\n    " protected-line "))\n")
+                        "challenges/demo/test-resources/demo/module.clj" (str ref-line "\n")
+                        "implementations/demo/src/demo/module.clj"
+                        "(throw (ex-info \"depot append timed out\" {}))\n"
+                        "implementations/demo/FULL_SPEC_REVIEW.md"
+                        (str "# Full-spec review\n\n## Finding 1: withdraw! allowed negative balances\n"
+                             "Spec says withdrawals beyond balance are rejected; fixed in withdraw!.\n\n"
+                             "## Finding 2: depot partitioning\nRe-partitioned by account id.\n\n"
+                             "## Finding 3\nOPENAI_API_KEY=" secret " was echoed by a tool; " api-key "\n\n"
+                             "## Finding 4: private suite\nwithdraw-test said: " protected-msg "\n\n"
+                             "Verdict: all findings fixed; suite green.\n")}]
+      (fs/create-dirs (fs/parent (fs/path root rel)))
+      (spit (str (fs/path root rel)) text))
+    {:root (str root) :protected-line protected-line :protected-msg protected-msg
+     :ref-line ref-line :secret secret :api-key api-key
+     :env {"OPENAI_API_KEY" secret "PATH" "/usr/bin" "SHORT_TOKEN" "abc"}}))
+
+(def review-phase
+  (assoc (phase :full-spec-review nil :pass)
+         :isolation "bubblewrap-provider-network"
+         :result-text "Reviewed the whole spec: 3 findings, all fixed.\nPHASE_VALIDATION:pass"))
+
+(defn diagnosed-result
+  "scored-result plus the diagnostics run-challenge attaches."
+  [{:keys [root env]} private-result]
+  (let [r (scored-result (update auction-runner-pass :phase-results #(conj (pop %) review-phase))
+                         true private-result)
+        ctx (scrub-context root "demo" env)]
+    (assoc r :private-test (private-test-diagnostic private-result
+                                                    (classify-private-result true private-result) ctx)
+           :full-spec-review (full-spec-review-diagnostic root "demo" (:phase-results r) ctx)
+           :evaluator-diagnostics (evaluator-diagnostics root "demo" private-result (:phase-results r)
+                                                         (:env-secrets ctx)))))
+
+(def empty-corpus
+  "A verified corpus with no protected and no public files."
+  {:protected [] :public [] :implementation [] :paths []})
+
+(deftest scrub-text-test
+  (let [ctx {:env-secrets (secret-env-values {"MY_TOKEN" "abcdefgh12345" "HOME" "/home/x" "X_KEY" "short"})
+             :corpus empty-corpus}
+        gh (str "ghp_" (apply str (repeat 36 "a")))
+        {:keys [text redactions]}
+        (scrub-text (str "token abcdefgh12345\nAuthorization: Bearer abcdefghijklmnop\n"
+                         "push https://user:hunter2pass@example.com/repo " gh "\n"
+                         "password = hunter2hunter2\nexpected: (= 1 x)\nordinary line\n")
+                    ctx)]
+    (is (= [["MY_TOKEN" "abcdefgh12345"]] (:env-secrets ctx)) "short and non-secret names ignored")
+    (is (not-any? #(str/includes? text %) ["abcdefgh12345" "abcdefghijklmnop" "hunter2pass" gh "hunter2hunter2"]))
+    (is (str/includes? text "[REDACTED:env:MY_TOKEN]"))
+    (is (str/includes? text "https://[REDACTED:url-credentials]@example.com/repo"))
+    (is (str/includes? text "expected: (= 1 x)") "assertion lines are only redacted in private-test output")
+    (is (str/includes? text "ordinary line"))
+    (is (not (str/includes? text "]]")) "no double redaction")
+    (is (= 1 (:secret-env redactions)))
+    (is (= text (:text (scrub-text text ctx))) "idempotent")
+    (let [line (apply str (repeat 200000 "a"))
+          t0 (System/currentTimeMillis)]
+      (is (= line (:text (scrub-text line ctx))))
+      (is (= "[REDACTED:private-test-data]" (:text (scrub-text line (assoc ctx :private-test? true))))
+          "a word outside the public vocabulary is private-test data")
+      (is (< (- (System/currentTimeMillis) t0) 5000) "no quadratic backtracking on a 200 KB line"))))
+
+(deftest scrubbing-without-a-corpus-fails-closed-test
+  (doseq [ctx [{} {:corpus (assoc empty-corpus :unavailable "encrypted protected file")}]]
+    (is (= {:text "[REDACTED:protected-index-unavailable]\n\n[REDACTED:protected-index-unavailable]\n"
+            :redactions {:secret-env 0 :credential 0 :private-test-assertion 0 :protected-plaintext 0
+                         :private-test-data 0 :protected-index-unavailable 2}}
+           (scrub-text "Ran 1 tests containing 1 assertions.\n\nanything at all\n" ctx)))))
+
+(deftest private-output-and-review-survive-manifest-and-bundle-test
+  (let [{:keys [root protected-line protected-msg ref-line secret api-key] :as fx} (diagnostics-fixture)
+        stdout (str "\nTesting demo.private-test\n\nFAIL in (withdraw-test) (private_test.clj:3)\n"
+                    protected-msg "\n"
+                    "expected: (= 4711 (withdraw! client \"acct\" 99999))\n"
+                    "  actual: (not (= 4711 0))\n\n"
+                    "ERROR in (deposit-test) (private_test.clj:9)\n"
+                    "expected: (= 1 (deposit! client))\n"
+                    "  actual: clojure.lang.ExceptionInfo: depot append timed out {:depot \"*deposits\"}\n"
+                    " at demo.module$deposit_BANG_.invoke (module.clj:42)\n"
+                    "echo " protected-line "\n"
+                    "env leak " secret "\n"
+                    "Ran 12 tests containing 40 assertions.\n2 failures, 1 errors.\n")
+        stderr (str "WARNING: implementation emitted a reflection warning\n" ref-line "\n"
+                    "Authorization: Bearer abcdefghijklmnopqrstu\n")
+        private-result {:exit 1 :out stdout :err stderr :duration-s 7 :timeout-s 1800}
+        r (diagnosed-result fx private-result)
+        dir (fs/create-temp-dir {:prefix "bundle-"})
+        report (str (fs/path dir "run.md"))]
+    (try
+      (let [{mpath :manifest bpath :bundle lpath :evaluator-log}
+            (emit-run-artifacts! report root (dissoc run-meta-fixture :evaluator-log) [r])
+            manifest-text (slurp mpath)
+            from-file (json/parse-string manifest-text true)
+            bundle (read-bundle-json bpath)
+            log-bytes (fs/read-all-bytes lpath)
+            log (String. ^bytes log-bytes "UTF-8")
+            review (slurp (str (fs/path root "implementations/demo/FULL_SPEC_REVIEW.md")))]
+        (is (= [(str (fs/path dir "run.bundle.tar.gz"))] [bpath]))
+        (testing "evaluator log keeps complete private diagnostics, scrubbing only secrets"
+          (is (= (str (fs/path dir "run.private.log")) lpath))
+          (is (= {:path "run.private.log" :path-relative-to "manifest-directory"
+                  :sha256 (sha256-hex log-bytes) :bytes (alength ^bytes log-bytes)
+                  :audience "evaluator-only" :in-bundle false :scrubbed ["secret-env" "credential"]}
+                 (:evaluator-log from-file) (:evaluator-log (:manifest bundle)))
+              "manifest and bundle pin the log by path and SHA-256")
+          (is (= "rw-------" (fs/posix->str (fs/posix-file-permissions lpath))))
+          (is (str/includes? log "FAIL in (withdraw-test) (private_test.clj:3)\n"))
+          (doseq [kept [protected-msg protected-line ref-line
+                        "expected: (= 4711 (withdraw! client \"acct\" 99999))\n"
+                        "  actual: (not (= 4711 0))\n"
+                        "  actual: clojure.lang.ExceptionInfo: depot append timed out {:depot \"*deposits\"}\n"
+                        "## Finding 4: private suite\nwithdraw-test said: " (:result-text review-phase)]]
+            (is (str/includes? log kept) "evaluator log keeps protected and private-test text"))
+          (doseq [[section text] [["private-test stdout" stdout] ["private-test stderr" stderr]
+                                  ["full-spec-review FULL_SPEC_REVIEW.md" review]
+                                  ["full-spec-review final message" (:result-text review-phase)]]
+                  :let [text (-> text
+                                 (str/replace secret "[REDACTED:env:OPENAI_API_KEY]")
+                                 (str/replace api-key "[REDACTED:api-key]")
+                                 (str/replace "abcdefghijklmnopqrstu" "[REDACTED:authorization]"))]]
+            (is (str/includes? log (str "\n===== " (:name r) " | " section " | "
+                                        (alength (.getBytes ^String text "UTF-8")) " bytes =====\n"
+                                        text "\n===== end " (:name r) " | " section " =====\n"))
+                (str section " is complete, byte for byte, except scrubbed secrets")))
+          (doseq [leaked [secret api-key "abcdefghijklmnopqrstu"]]
+            (is (not (str/includes? log leaked)) "evaluator log leaks a secret/credential"))
+          (doseq [[label text] [["manifest" manifest-text] ["bundle" (json/generate-string bundle)]]
+                  private ["FAIL in (withdraw-test)" "withdraw-test said: overdraft"
+                           "depot append timed out {:depot" "=====" "EVALUATOR ONLY"]]
+            (is (not (str/includes? text private)) (str label " holds evaluator-only text"))))
+        (is (= ["run-1/" "run-1/BUNDLE.json"] (sort (bundle-entries bpath)))
+            "the bundle holds BUNDLE.json only, never the evaluator log")
+        (is (nil? (write-run-bundle! report {:run-id "other"})) "never overwrites")
+        (is (= (sha256-hex (.getBytes ^String manifest-text "UTF-8")) (:manifest-sha256 bundle))
+            "BUNDLE.json pins the exact manifest file")
+        (is (= from-file (:manifest bundle)) "bundle carries the same manifest")
+        (is (= "rama-ai-learn-run-bundle" (:kind bundle)))
+        (is (= (get-in from-file [:redaction-policy]) (:redaction-policy bundle)))
+        (doseq [[label doc] [["manifest" from-file] ["bundle" (:manifest bundle)]]]
+          (testing label
+            (let [c (first (:challenges doc))
+                  pt (:private-test c)
+                  fsr (:full-spec-review c)
+                  out (:stdout pt)]
+              (is (= "private-fail" (:outcome c)))
+              (is (true? (:counted-as-failure pt)))
+              (is (nil? (:sentinel pt)))
+              (is (= [1 false 1800 7] [(:exit pt) (:timed-out pt) (:timeout-s pt) (:duration-s pt)]))
+              (testing "line for line, protected runs and private-test data redacted in place"
+                (is (= (str "\nTesting demo.private-test\n\n"
+                            "FAIL in ([REDACTED:protected-plaintext]) (private_test.clj:3)\n"
+                            "[REDACTED:protected-plaintext]\n"
+                            "expected: [REDACTED:private-test-assertion]\n"
+                            "  actual: [REDACTED:private-test-comparison]\n\n"
+                            "ERROR in (deposit-test) (private_test.clj:9)\n"
+                            "expected: [REDACTED:private-test-assertion]\n"
+                            "  actual: clojure.lang.ExceptionInfo: depot append timed out [REDACTED:private-test-data]\n"
+                            " at demo.module$deposit_BANG_.invoke (module.clj:42)\n"
+                            "[REDACTED:private-test-data] ([REDACTED:protected-plaintext])))\n"
+                            "[REDACTED:private-test-data] [REDACTED:env:OPENAI_API_KEY]\n"
+                            "Ran 12 tests containing 40 assertions.\n2 failures, 1 errors.\n")
+                       out))
+                (is (= (count (str/split stdout #"\n" -1)) (count (str/split out #"\n" -1)))
+                    "line-for-line: redaction never drops lines")
+                (is (= (str "WARNING: [REDACTED:private-test-data] a reflection warning\n"
+                            "([REDACTED:protected-plaintext])))\n"
+                            "Authorization: Bearer [REDACTED:authorization]\n")
+                       (:stderr pt)))
+                (is (= {:secret-env 1 :credential 1 :private-test-assertion 3 :protected-plaintext 4
+                        :private-test-data 4 :protected-index-unavailable 0}
+                       (:redactions pt))))
+              (testing "complete full-spec-review findings survive"
+                (is (= {:ran true :verdict "pass" :exit 0 :report-present true :report-skipped nil
+                        :report-path "implementations/demo/FULL_SPEC_REVIEW.md"}
+                       (select-keys fsr [:ran :verdict :exit :report-present :report-skipped :report-path])))
+                (is (= (-> review
+                           (str/replace secret "[REDACTED:env:OPENAI_API_KEY]")
+                           (str/replace api-key "[REDACTED:api-key]")
+                           (str/replace (str "withdraw-test said: " protected-msg)
+                                        "[REDACTED:protected-plaintext] said: [REDACTED:protected-plaintext]"))
+                       (:report-text fsr))
+                    "byte-for-byte except the two redacted secrets and the protected echo")
+                (is (= (:result-text review-phase) (:final-message fsr)))
+                (is (= 1 (:secret-env (:redactions fsr)))))
+              (is (= "bubblewrap-provider-network" (:isolation (last (:phases c))))))))
+        (doseq [[label text] [["manifest" manifest-text] ["bundle" (json/generate-string bundle)]]
+                leaked [secret api-key protected-line protected-msg ref-line "abcdefghijklmnopqrstu"
+                        "(withdraw! client \"acct\" 99999)" "(not (= 4711 0))"]]
+          (is (not (str/includes? text leaked)) (str label " leaks a fixture secret/protected value"))))
+      (finally (fs/delete-tree dir) (fs/delete-tree root)))))
+
+(defn short-literal-fixture
+  "Challenge whose protected files hold short literals and a > 8 MiB data
+  file with a token near its end. Literals are assembled at run time."
+  []
+  (let [root (fs/create-temp-dir {:prefix "scrub-"})
+        short-a (str "z" "q")
+        short-b (str "k" "9")
+        big-token (str "qx7" "wplm")
+        filler (apply str (repeat (* 9 1024 1024) "."))]
+    (doseq [[rel text] {"challenges/demo/README.md" "Accounts have scores. Unknown accounts are rejected.\n"
+                        "challenges/demo/src/demo/protocol.clj" "(defprotocol Scores (score! [c account k]))\n"
+                        "challenges/demo/test-private/demo/private_test.clj"
+                        (str "(deftest scores-short-literals\n  (is (= 7 (score! c \"" short-a "\" :" short-b ")))\n"
+                             "  (is (= 6 (reduce + [3 1 2]))))\n")
+                        "challenges/demo/test-private/demo/big_data.edn" (str "[" filler " " big-token "]\n")
+                        "challenges/demo/test/demo/runner.clj" "(def hidden-runner-flag :qv4)\n"
+                        "implementations/demo/src/demo/module.clj"
+                        (str "(throw (ex-info \"unknown account\" {}))\n"
+                             "(throw (IllegalArgumentException. (str \"bad input \" x)))\n"
+                             "(println \"processing\" user)\n")}]
+      (fs/create-dirs (fs/parent (fs/path root rel)))
+      (spit (str (fs/path root rel)) text))
+    {:root (str root) :short-a short-a :short-b short-b :big-token big-token}))
+
+(deftest fail-closed-protected-matching-test
+  (let [{:keys [root short-a short-b big-token]} (short-literal-fixture)
+        ctx (scrub-context root "demo" {})
+        leaked? (fn [text] (some #(re-find (re-pattern (str "(?i)(?<![\\p{L}\\p{N}])" % "(?![\\p{L}\\p{N}])")) text)
+                                 [short-a short-b big-token "qv4" "3 1 2" "58213" "scores-short-literals"]))]
+    (try
+      (is (> (fs/size (fs/path root "challenges/demo/test-private/demo/big_data.edn")) (* 8 1024 1024)))
+      (is (nil? (:unavailable (:corpus ctx))))
+      (is (= ["challenges/demo/README.md" "challenges/demo/src/demo/protocol.clj"]
+             (map #(str (fs/relativize root %)) (filter #(str/includes? (str %) "challenges/") (:public (:corpus ctx))))))
+      (is (= 3 (count (:protected (:corpus ctx)))) "test/ is outside the snapshot, so protected")
+      (testing "review text: short literals, an oversized file's token and a short run of public words"
+        (let [review (str "Finding: score! returned 0 for " short-a " with :" short-b ".\n"
+                          "Inputs 3 1 2 were summed; token " big-token " appeared; value " "qv4" ".\n"
+                          "Unknown accounts are rejected.\n")
+              {:keys [text redactions]} (scrub-text review ctx)]
+          (is (= (str "Finding: score! returned 0 for [REDACTED:protected-plaintext] with :[REDACTED:protected-plaintext].\n"
+                      "Inputs [REDACTED:protected-plaintext] were summed; token [REDACTED:protected-plaintext] appeared; "
+                      "value [REDACTED:protected-plaintext].\n"
+                      "Unknown accounts are rejected.\n")
+                 text))
+          (is (= 5 (:protected-plaintext redactions)))
+          (is (not (leaked? text)))))
+      (testing "private-test output: exception messages, ex-data and echoed inputs"
+        (let [stdout (str "\nTesting demo.private-test\n\n"
+                          "ERROR in (scores-short-literals) (private_test.clj:2)\n"
+                          "expected: (= 7 (score! c \"" short-a "\" :" short-b "))\n"
+                          "  actual: clojure.lang.ExceptionInfo: unknown account " short-a
+                          " {:account \"" short-a "\" :input [3 1 2]}\n"
+                          "Caused by: java.lang.IllegalArgumentException: bad input " big-token "\n"
+                          "\tat demo.module$score_BANG_.invoke(module.clj:17)\n"
+                          "processing user-58213 after 3 1 2\n"
+                          "Ran 1 tests containing 2 assertions.\n0 failures, 1 errors.\n")
+              [out err] (scrub-texts [stdout (str "bad input " big-token "\n")] (assoc ctx :private-test? true))]
+          (is (= (str "\nTesting demo.private-test\n\n"
+                      "ERROR in ([REDACTED:protected-plaintext]) (private_test.clj:2)\n"
+                      "expected: [REDACTED:private-test-assertion]\n"
+                      "  actual: clojure.lang.ExceptionInfo: unknown account [REDACTED:protected-plaintext] "
+                      "[REDACTED:private-test-data]\n"
+                      "Caused by: java.lang.IllegalArgumentException: bad input [REDACTED:protected-plaintext]\n"
+                      "\tat demo.module$score_BANG_.invoke(module.clj:17)\n"
+                      "processing user-[REDACTED:private-test-data] after [REDACTED:protected-plaintext]\n"
+                      "Ran 1 tests containing 2 assertions.\n0 failures, 1 errors.\n")
+                 (:text out)))
+          (is (= "bad input [REDACTED:protected-plaintext]\n" (:text err)))
+          (is (not-any? leaked? [(:text out) (:text err)]))))
+      (finally (fs/delete-tree root)))))
+
+(deftest unverifiable-protected-files-fail-closed-test
+  (let [text "Testing demo.private-test\n\nRan 1 tests containing 1 assertions.\n"
+        closed "[REDACTED:protected-index-unavailable]\n\n[REDACTED:protected-index-unavailable]\n"
+        private (fn [root rel] (fs/path root "challenges/demo/test-private/demo" rel))]
+    (doseq [[label break! reason]
+            [["ciphertext only" #(fs/move (private % "private_test.clj") (private % "private_test.clj.enc"))
+              "encrypted protected file"]
+             ["symlink" #(fs/create-sym-link (private % "link.clj") (fs/path % "challenges/demo/README.md"))
+              "symlink or special file in the challenge directory"]
+             ["unreadable" #(fs/set-posix-file-permissions (private % "private_test.clj") "---------") nil]
+             ["vanished after listing" nil nil]]]
+      (testing label
+        (let [{:keys [root]} (short-literal-fixture)]
+          (try
+            (when break! (break! root))
+            (let [ctx (scrub-context root "demo" {})]
+              (is (= reason (:unavailable (:corpus ctx))))
+              (when-not break! (fs/delete (private root "big_data.edn")))
+              (doseq [private-test? [false true]]
+                (let [{:keys [text redactions]} (scrub-text text (assoc ctx :private-test? private-test?))]
+                  (is (= closed text))
+                  (is (= 2 (:protected-index-unavailable redactions))))))
+            (finally (fs/delete-tree root))))))))
+
+(deftest scrub-corpus-mirrors-snapshot-allowlist-test
+  (let [py (slurp "scripts/isolate_solver.py")
+        strings (fn [re] (re-seq #"\"([^\"]+)\"" (second (re-find re py))))
+        shared (map second (strings #"(?s)SHARED_ALLOWLIST = \((.*?)\)\n"))
+        challenge (map second (strings #"CHALLENGE_ALLOWLIST = \((.*?)\)\n"))
+        dirs (set (map second (strings #"(?s)PROTECTED_DIRS = frozenset\(\{(.*?)\}\)")))]
+    (is (= shared snapshot-shared-allowlist))
+    (is (= challenge snapshot-challenge-allowlist))
+    (is (= dirs snapshot-protected-dirs))
+    (is (str/includes? py "auth\\.json)$\")") "SECRET_FILE_RE still ends where the mirror does")))
+
+(deftest sentinel-0-of-1-survives-bundle-as-unavailable-test
+  (let [fx (diagnostics-fixture)
+        sentinel (assoc private-sentinel-0-of-1
+                        :out (str "\nERROR in (demo.private-test) (Compiler.java:7)\n"
+                                  "Uncaught exception, not in assertion.\n"
+                                  "expected: nil\n  actual: java.io.FileNotFoundException: Could not locate demo/module__init.class\n"
+                                  (:out private-sentinel-0-of-1))
+                        :err "Execution error\n")
+        r (diagnosed-result fx sentinel)
+        genuine (diagnosed-result fx private-real-fail)
+        dir (fs/create-temp-dir {:prefix "bundle-"})
+        report (str (fs/path dir "run.md"))
+        m (build-run-manifest run-meta-fixture [r genuine])]
+    (try
+      (let [{:keys [bundle]} (emit-run-artifacts! report (:root fx) (dissoc run-meta-fixture :evaluator-log)
+                                                  [r genuine])
+            bundle (read-bundle-json bundle)]
+        (doseq [doc [m (json/parse-string (slurp (manifest-path report)) true) (:manifest bundle)]]
+          (let [[c g] (:challenges doc)
+                pt (:private-test c)]
+            (is (= ["private-unavailable" "unavailable" false nil]
+                   [(:outcome c) (:private-status c) (:scored c) (:score c)]))
+            (is (= ["zero-of-one" false] [(:sentinel pt) (:counted-as-failure pt)])
+                "0/1 sentinel is recorded, never counted as a private failure")
+            (is (str/includes? (:stdout pt) "Could not locate demo/module__init.class")
+                "the load error that caused the sentinel is preserved")
+            (is (str/includes? (:stdout pt) "Ran 1 tests containing 1 assertions.\n0 failures, 1 errors."))
+            (is (= "Execution error\n" (:stderr pt)))
+            (is (= ["private-fail" true 0] [(:outcome g) (:counted-as-failure (:private-test g)) (:score g)])
+                "a genuine failure next to it is still a failure"))))
+      (is (re-find #"Private verdicts: PASS 0 \| FAIL 1 \| UNAVAILABLE \(not evaluated\) 1"
+                   (private-verdict-line [r genuine])))
+      (finally (fs/delete-tree dir) (fs/delete-tree (:root fx))))))
+
+;;; Evaluator-only private log: fail closed, never in a solver-visible place
+
+(deftest evaluator-log-fails-closed-test
+  (let [{:keys [root] :as fx} (diagnostics-fixture)
+        r (diagnosed-result fx private-real-fail)
+        meta (dissoc run-meta-fixture :evaluator-log)
+        dir (fs/create-temp-dir {:prefix "evlog-"})
+        none-emitted (fn [report]
+                       (is (not-any? #(fs/exists? (% report)) [manifest-path bundle-path])
+                           "no manifest or bundle after a failed evaluator log"))]
+    (try
+      (testing "an existing log is never overwritten"
+        (let [report (str (fs/path dir "a.md"))]
+          (spit (evaluator-log-path report) "prior")
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Evaluator log not written"
+                (emit-run-artifacts! report root meta [r])))
+          (is (= "prior" (slurp (evaluator-log-path report))))
+          (none-emitted report)))
+      (testing "a missing reports directory"
+        (let [report (str (fs/path dir "missing" "b.md"))]
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Evaluator log not written"
+                (emit-run-artifacts! report root meta [r])))
+          (none-emitted report)))
+      (testing "an incomplete write is detected on read-back and removed"
+        (let [report (str (fs/path dir "c.md"))]
+          (with-redefs [fs/read-all-bytes (fn [_] (byte-array 1))]
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"read-back length or SHA-256 differs"
+                  (emit-run-artifacts! report root meta [r]))))
+          (is (not (fs/exists? (evaluator-log-path report))))
+          (none-emitted report)))
+      (testing "a log changed after it was referenced is not claimed"
+        (let [report (str (fs/path dir "d.md"))
+              ref (write-evaluator-log! report root "complete\n")]
+          (spit (evaluator-log-path report) "trunc")
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"evaluator log is missing or incomplete"
+                (write-run-manifest! report (build-run-manifest (assoc meta :evaluator-log ref) [r]))))
+          (none-emitted report)))
+      (testing "never inside a solver-writable implementation directory"
+        (let [report (str (fs/path root "implementations" "demo" "e.md"))]
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"solver-writable"
+                (emit-run-artifacts! report root meta [r])))
+          (is (not (fs/exists? (evaluator-log-path report))))
+          (none-emitted report)))
+      (finally (fs/delete-tree dir) (fs/delete-tree root)))))
+
+(defn- git-ignored-or-untracked?
+  "True when git can never commit path: it lies outside every worktree, or
+  the enclosing worktree ignores it."
+  [path]
+  (let [dir (first (filter fs/directory? (iterate fs/parent (fs/parent (fs/absolutize path)))))
+        top (git-out dir "rev-parse" "--show-toplevel")]
+    (or (nil? top)
+        (zero? (:exit (p/shell {:dir top :out :string :err :string :continue true}
+                               "git" "check-ignore" "-q" "--no-index" (str (fs/relativize top (fs/absolutize path))))))
+        false)))
+
+(deftest evaluator-log-path-is-gitignored-test
+  (let [repo (fs/canonicalize (fs/cwd))
+        ;; generate-report writes to <repo>/../reports; the log sits beside it.
+        log (fs/path (fs/normalize (fs/path repo ".." "reports")) (fs/file-name (evaluator-log-path "x.md")))]
+    (is (= "x.private.log" (str (fs/file-name log))))
+    (is (not (fs/starts-with? log repo)) "outside the repository, so outside every solver snapshot")
+    (is (git-ignored-or-untracked? log))
+    (doseq [rel ["reports/2026-10-02-run.private.log" "implementations/demo/run.private.log"
+                 "challenges/demo/run.private.log"]]
+      (is (git-ignored-or-untracked? (fs/path repo rel)) rel))
+    (is (not (git-ignored-or-untracked? (fs/path repo "scripts/run_challenges.bb")))
+        "the check itself distinguishes tracked paths")))
+
+(deftest symlinked-review-is-not-followed-test
+  (let [{:keys [root ref-line] :as fx} (diagnostics-fixture)
+        review (fs/path root "implementations/demo/FULL_SPEC_REVIEW.md")]
+    (try
+      (fs/delete review)
+      (fs/create-sym-link review (fs/path root "challenges/demo/test-resources/demo/module.clj"))
+      (let [d (full-spec-review-diagnostic root "demo" [review-phase] (scrub-context root "demo" {}))]
+        (is (= [false "symlink" nil] [(:report-present d) (:report-skipped d) (:report-text d)]))
+        (is (not (str/includes? (pr-str d) ref-line))))
+      (finally (fs/delete-tree root)))))
+
+(deftest no-private-run-has-no-private-diagnostic-test
+  (is (nil? (private-test-diagnostic nil {:private-status :not-run} {})))
+  (is (nil? (full-spec-review-diagnostic (str (fs/create-temp-dir)) "demo" [] {}))))
+
+;;; Scored-run isolation preflight
+
+(deftest scored-run-requires-isolation-test
+  (let [calls (atom [])]
+    (with-redefs [invoke-command! (fn [cmd _] (swap! calls conj cmd)
+                                    {:exit 0 :out (json/generate-string {:filesystem "bubblewrap" :probe "passed"})})]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Scored runs require solver isolation"
+            (require-scored-run-isolation! "/project" {} "claude" ["demo"])))
+      (is (empty? @calls) "rejected before any process starts")
+      (let [rec (require-scored-run-isolation! "/project" {:isolate-network true} "claude" ["demo" "other"])]
+        (is (= {:filesystem "bubblewrap" :probe "passed" :mode "bubblewrap-provider-network"
+                :launcher "scripts/isolate_solver.py" :preflight "passed"} rec))
+        (is (= ["python3" "/project/scripts/isolate_solver.py" "--repo" "/project" "--agent" "claude"
+                "--network" "strict" "--preflight" "--audit-challenge" "demo" "--audit-challenge" "other"]
+               (last @calls))))
+      (is (= "bubblewrap-public-only"
+             (:mode (require-scored-run-isolation! "/project" {:isolate true} "codex" ["demo"])))))
+    (with-redefs [invoke-command! (fn [_ _] {:exit 1 :out "" :err "isolation preflight failed: bubblewrap is required"})]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Isolation preflight failed: .*bubblewrap is required"
+            (require-scored-run-isolation! "/project" {:isolate true} "claude" ["demo"]))))))
+
+(deftest scored-run-isolation-real-preflight-test
+  (if-not (fs/which "bwrap")
+    (println "SKIP scored-run-isolation-real-preflight-test: bubblewrap not installed")
+    (let [rec (require-scored-run-isolation! (str (fs/cwd)) {:isolate-network true} "claude" ["fanout"])]
+      (is (= ["bubblewrap" "passed" "strict" "allowlisted-public-copy" 0]
+             [(:filesystem rec) (:probe rec) (:network rec) (get-in rec [:snapshot :kind])
+              (get-in rec [:snapshot :audits :fanout :violations])]))
+      (is (re-matches #"[0-9a-f]{64}" (:launcher-sha256 rec))))))
+
+(deftest alignment-rubric-test
+  (testing "the scorer gets only the alignment section, with the original anchors"
+    (let [section (alignment-rubric (slurp "SCORING_RUBRIC.md"))]
+      (is (re-find #"^## 4\. Structural alignment \(informational only\)" section))
+      (is (re-find #"\| 4 \| Minor structural difference" section))
+      (is (re-find #"\| 0 \| Reference implementation is not available" section))
+      (is (not (re-find #"## 1\. Headline|## 3\. Quality|private-pass" section)))))
+  (testing "falls back to the whole text without the section"
+    (is (= "# Rubric\nbody" (alignment-rubric "# Rubric\nbody"))))
+  (testing "build-alignment-prompt embeds the section, not the headline rubric"
+    (let [root (fs/create-temp-dir)]
+      (fs/copy "SCORING_RUBRIC.md" (fs/path root "SCORING_RUBRIC.md"))
+      (fs/create-dirs (fs/path root "implementations" "x" "src"))
+      (spit (str (fs/path root "implementations" "x" "src" "m.clj")) "(ns m)")
+      (let [prompt (build-alignment-prompt (str root) "x")]
+        (is (re-find #"ALIGNMENT_SCORE:<score>" prompt))
+        (is (re-find #"\| 5 \| Approach is structurally equivalent" prompt))
+        (is (not (re-find #"private-pass|Judge vector|judge vector" prompt))))
+      (fs/delete-tree root))))
+
+(deftest tree-sha256-test
+  (let [dir (fs/create-temp-dir)]
+    (spit (str (fs/path dir "a.clj")) "(ns a)")
+    (let [h1 (tree-sha256 dir)]
+      (is (= 64 (count h1)))
+      (spit (str (fs/path dir "a.clj")) "(ns a) ;; changed")
+      (is (not= h1 (tree-sha256 dir))))
+    (is (nil? (tree-sha256 (fs/path dir "missing"))))
+    (fs/delete-tree dir)))
+
+(deftest grader-timeout-kills-process-tree-test
+  (let [root (fs/create-temp-dir)
+        marker (str "sleep " (+ 7000 (rand-int 999)))]
+    (fs/create-dirs (fs/path root "challenges" "x"))
+    (let [r (binding [*grader-timeout-s* 1
+                      *private-test-cmd* ["bash" "-c" (str marker " & " marker " & wait")]]
+              (run-private-tests! (str root) "x"))]
+      (is (:timed-out? r))
+      (is (= 124 (:exit r)))
+      (is (= :unavailable (:private-status (classify-private-result true r))))
+      (Thread/sleep 300)
+      (is (not= 0 (:exit (p/shell {:out :string :err :string :continue true} "pgrep" "-f" marker)))
+          "no grandchild survives the grader"))
+    (fs/delete-tree root)))
 
 (let [{:keys [fail error]} (run-tests)]
   (System/exit (if (zero? (+ fail error)) 0 1)))

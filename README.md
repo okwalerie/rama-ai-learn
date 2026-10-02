@@ -40,11 +40,14 @@ elsewhere on disk. For uncontaminated challenge results, use a disposable checko
 whose Git history excludes private material and isolate it from other checkouts,
 backups, and the encryption key. Do not count a run that accessed hidden references.
 
-For Linux evaluation runs, pass **`--isolate`**. This is opt-in for compatibility
-with existing non-Linux workflows; encryption without it is **not isolation**.
-The runner launches each solver phase through `scripts/isolate_solver.py` using
-bubblewrap user, mount, PID, IPC, and UTS namespaces. Missing bubblewrap or denied
-namespace creation fails closed; there is no unisolated fallback.
+Every `bb run-challenges` run is scored and **requires** `--isolate-network`
+(or `--isolate`); encryption without it is **not isolation**. A preflight probes
+bubblewrap and audits each selected challenge's solver snapshot before any
+solver starts, and the result is recorded as `isolation` in the run manifest
+(see `docs/outcome-taxonomy.md`). The runner launches each solver phase through
+`scripts/isolate_solver.py` using bubblewrap user, mount, PID, IPC, and UTS
+namespaces. Missing bubblewrap, denied namespace creation, or a snapshot audit
+failure fails closed; there is no unisolated fallback.
 
 The solver sees only the selected README, public source (excluding test-support
 files), deps, kondo config, generic Rama skill, phase instructions, and shared

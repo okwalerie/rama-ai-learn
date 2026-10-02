@@ -222,6 +222,24 @@ class TranscriptTests(unittest.TestCase):
         events = normalize([{'type': 'thread.started'}, {'type': 'error', 'message': 'provider failed'}])
         self.assertEqual(events[-1]['errors'], ['provider failed'])
 
+    def test_models_command(self):
+        events = normalize([
+            {'type': 'system', 'subtype': 'init', 'model': 'claude-opus-5-5'},
+            {'type': 'assistant', 'message': {'role': 'assistant', 'model': 'claude-opus-5-5', 'content': []}},
+            {'type': 'assistant', 'message': {'role': 'assistant', 'model': 'claude-opus-5-5', 'content': []}},
+        ])
+        out = command(events, 'models')
+        self.assertIn('claude-opus-5-5\tinit\t1', out)
+        self.assertIn('claude-opus-5-5\tmessage\t2', out)
+        self.assertIn('Distinct models: claude-opus-5-5\n', out)
+        self.assertEqual(command(normalize([{'type': 'user'}]), 'models'), 'No model fields found\n')
+        pi = normalize([{'type': 'message_end', 'message': {
+            'role': 'assistant', 'model': 'pi-model', 'stopReason': 'stop',
+            'content': [{'type': 'text', 'text': 'a'}, {'type': 'toolCall', 'id': 't1',
+                                                       'name': 'bash', 'arguments': {'command': 'ls'}}]}}])
+        self.assertGreater(sum(1 for e in pi if e.get('source_event') is not None), 1)
+        self.assertIn('pi-model\tmessage\t1\n', command(pi, 'models'))
+
     def test_cli_file_selection(self):
         r = subprocess.run(['python3', str(HERE / 'analyze-latest-transcript.py'), '--file',
                             str(FIXTURES / 'pi.jsonl'), 'summary'], capture_output=True, text=True)
