@@ -183,13 +183,36 @@ install_nrepl_tools() {
 
 prefetch_deps() {
   cd "$repo_root"
+  local fingerprint stamp
+  stamp="${HOME}/.cache/amp/deps-prefetched.sha256"
+  fingerprint="$(
+    clojure -Sdescribe
+    java -version 2>&1
+    find "$repo_root/deps.edn" "$repo_root/lib" "$repo_root/challenges" -name deps.edn -type f -print0 |
+      sort -z | xargs -0 sha256sum
+    if [ -f "${HOME}/.clojure/deps.edn" ]; then
+      sha256sum "${HOME}/.clojure/deps.edn"
+    fi
+  )"
+  fingerprint="$(printf '%s' "$fingerprint" | sha256sum | cut -d ' ' -f 1)"
+  if [ -d "${HOME}/.m2/repository" ] && [ -d "${HOME}/.gitlibs/libs" ] &&
+     [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$fingerprint" ]; then
+    echo 'Dependency manifests and caches unchanged; skipping prefetch.'
+    return
+  fi
   step 'Prepare root dependencies' clojure -P
   step 'Prepare root nREPL dependencies' clojure -P -A:nrepl
-  while IFS= read -r -d '' deps_file; do
-    local challenge_dir
-    challenge_dir="$(dirname "$deps_file")"
-    (cd "$challenge_dir" && step "Prepare ${challenge_dir#"$repo_root"/} dependencies" clojure -P -A:test)
-  done < <(find "$repo_root/challenges" -name deps.edn -print0 | sort -z)
+  # Seed the shared Git dependency before concurrent challenge resolution.
+  step 'Prepare test runner dependencies' bash -c 'cd "$1" && clojure -P -A:test' _ "$repo_root/lib/harness"
+  export repo_root
+  export -f step
+  find "$repo_root/challenges" -name deps.edn -print0 | sort -z |
+    xargs -0 -r -n 1 -P 4 bash -e -c '
+      challenge_dir="$(dirname "$1")"
+      cd "$challenge_dir"
+      step "Prepare ${challenge_dir#"$repo_root"/} dependencies" clojure -P -A:test
+    ' _
+  printf '%s\n' "$fingerprint" > "$stamp"
 }
 
 step 'Install system packages' install_system_packages
