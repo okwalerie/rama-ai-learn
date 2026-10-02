@@ -97,17 +97,20 @@ public and connection made to the checked numeric address (no second DNS lookup)
 | Purpose | Exact CONNECT hosts |
 |---|---|
 | Claude first-party | `api.anthropic.com` |
-| OpenCode with OpenRouter | `openrouter.ai` |
+| OpenCode with OpenRouter (`openrouter/...` model) | `openrouter.ai` |
+| OpenCode Go (`opencode-go/...` model) | `opencode.ai` |
 | Official Rama documentation | `redplanetlabs.com` |
 | Dependency repositories | `nexus.redplanetlabs.com`, `repo.maven.apache.org`, `repo.clojars.org` |
 
 GitHub, raw GitHub, other public origins, private/link-local/loopback destinations,
 non-443 ports, plaintext HTTP proxying, and unlisted providers are denied. Each
-agent gets only its own provider host plus docs/dependency hosts. Redirects to
-unlisted hosts fail. OAuth refresh/custom providers/Bedrock/Vertex are not
-supported; provision a currently valid first-party token or OpenRouter API key
-before the run. This mode currently rejects Codex and Pi rather than broadening
-the allowlist. Cluster services outside the solver namespace are unavailable.
+OpenCode model namespace gets only its matching provider host plus docs and
+dependency hosts: Go runs cannot reach OpenRouter, and OpenRouter runs cannot
+reach OpenCode Go. Redirects to unlisted hosts fail. OAuth refresh, custom
+providers, Bedrock, and Vertex are not supported; provision the credential
+required by the selected provider before the run. This mode currently rejects
+Codex and Pi rather than broadening the allowlist. Cluster services outside the
+solver namespace are unavailable.
 
 Run `.agents/setup` first: it preseeds OpenCode's public models catalog, installs
 ripgrep, and warms Maven/Git/nREPL dependencies. Strict OpenCode loads only the
@@ -115,8 +118,7 @@ preseeded catalog and disables catalog refresh, auto-update, LSP downloads, and
 external/default plugins. Full user CLI configuration is not mounted. New Git
 dependencies cannot be fetched; read-only dependency caches must already contain
 everything needed. Missing prerequisites fail rather than enabling shared
-network access. Claude telemetry and OpenCode npm requests may appear as denied
-destinations; both tested CLIs still completed the logistics smoke requests.
+network access.
 
 ### OpenRouter credentials in project orbs
 
@@ -133,6 +135,19 @@ scripts/with-openrouter-key.bb bb run-challenges --agent opencode --batch 1
 The wrapper requires one exact-name match. Optional non-secret
 `OPENROUTER_BWS_PROJECT_ID` scopes discovery; `OPENROUTER_BWS_SECRET_ID` skips
 discovery when the UUID is known. Never log the consumer's environment.
+
+### OpenCode Go credentials
+
+Use the installed `agent-skills:fetching-project-secrets` workflow to provide
+the secret named `OPENCODE_API_KEY` from BWS to the run process. Do not copy
+`auth.json` or write the key to the repository. Strict isolation forwards this
+variable only when the selected model starts with `opencode-go/`; that route
+does not mount OpenCode's `auth.json` or forward OpenRouter, OpenAI, or
+Anthropic keys. It registers the provider through secret-free inline config
+using `https://opencode.ai/zen/go/v1` and an environment reference to the key.
+The pinned Go model tiers are `opencode-go/gpt-6-luna` with
+`xhigh` for slow phases and `opencode-go/glm-5.3-flash` with `high` for fast
+phases.
 
 **Residual guarantees:** this is CONNECT-authority and public TCP-endpoint
 enforcement, **not exact HTTP-authority or response-content enforcement**. TLS

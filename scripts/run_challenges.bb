@@ -3302,7 +3302,7 @@
         (require-reference-isolation! project-root (:isolate-network opts))
 
         (when (and (:isolate-network opts) (not (contains? #{"claude" "opencode"} agent-name)))
-          (throw (ex-info "--isolate-network supports Claude and OpenCode/OpenRouter only" {})))
+          (throw (ex-info "--isolate-network supports Claude and OpenCode with OpenRouter or OpenCode Go only" {})))
 
         (when (and (or (:isolate opts) (:isolate-network opts))
                    (contains? #{"claude" "opencode"} agent-name))

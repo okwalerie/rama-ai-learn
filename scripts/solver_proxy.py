@@ -19,14 +19,22 @@ PROVIDER_HOSTS = {
     "claude": {"api.anthropic.com"},
     "opencode": {"openrouter.ai"},
 }
+OPENCODE_GO_HOST = "opencode.ai"
 DOCUMENTATION_HOSTS = {"redplanetlabs.com"}
 DEPENDENCY_HOSTS = {"nexus.redplanetlabs.com", "repo.maven.apache.org", "repo.clojars.org"}
 
 
-def allowed_hosts(agent):
+def allowed_hosts(agent, *, model=None):
     if agent not in PROVIDER_HOSTS:
-        raise ValueError("Strict network mode currently supports Claude and OpenCode/OpenRouter only")
-    return PROVIDER_HOSTS[agent] | DOCUMENTATION_HOSTS | DEPENDENCY_HOSTS
+        raise ValueError("Strict network mode currently supports Claude and OpenCode providers only")
+    provider_hosts = PROVIDER_HOSTS[agent]
+    if agent == "opencode" and model:
+        provider, separator, _ = model.partition("/")
+        if not separator or provider not in {"openrouter", "opencode-go"}:
+            raise ValueError("Strict OpenCode networking supports OpenRouter and OpenCode Go models only")
+        provider_hosts = ({OPENCODE_GO_HOST} if provider == "opencode-go"
+                          else PROVIDER_HOSTS[agent])
+    return provider_hosts | DOCUMENTATION_HOSTS | DEPENDENCY_HOSTS
 
 
 def connect_public(host):
