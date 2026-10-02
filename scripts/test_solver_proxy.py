@@ -44,6 +44,17 @@ class ProxyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "supports Claude"):
             allowed_hosts("pi")
 
+    def test_opencode_provider_hosts_are_disjoint(self):
+        go_hosts = allowed_hosts("opencode", model="opencode-go/gpt-6-luna")
+        router_hosts = allowed_hosts("opencode", model="openrouter/z-ai/glm-5.3")
+        self.assertIn("opencode.ai", go_hosts)
+        self.assertNotIn("openrouter.ai", go_hosts)
+        self.assertIn("openrouter.ai", router_hosts)
+        self.assertNotIn("opencode.ai", router_hosts)
+        self.assertEqual(router_hosts, allowed_hosts("opencode"))
+        with self.assertRaisesRegex(ValueError, "OpenRouter and OpenCode Go"):
+            allowed_hosts("opencode", model="anthropic/claude")
+
     @unittest.skipUnless(shutil.which("bwrap"), "Linux bubblewrap required")
     def test_namespace_egress_and_real_proxy_requests(self):
         # A local echo fixture substitutes for an approved remote endpoint only
@@ -116,6 +127,90 @@ print('approved tunnel works; origin, private, metadata, host-loopback and direc
             self.assertIn("allowed destination: api.anthropic.com:443", audit.getvalue())
             self.assertIn("denied destination: 'github.com:443'", audit.getvalue())
             self.assertNotIn("do-not-log", audit.getvalue())
+
+    @unittest.skipUnless(shutil.which("bwrap"), "Linux bubblewrap required")
+    def test_opencode_go_namespace_allows_only_its_provider(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                socketserver.ThreadingTCPServer(("127.0.0.1", 0), Echo) as echo:
+            echo_thread = threading.Thread(target=echo.serve_forever, daemon=True)
+            echo_thread.start()
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "private-key").write_text("host-only")
+            home = root / "home"
+            catalog = home / ".cache/opencode/models.json"
+            catalog.parent.mkdir(parents=True)
+            catalog.write_text("{}")
+            staging = root / "staging"
+            staging.mkdir()
+            host_port = echo.server_address[1]
+            probe = r'''
+import os, socket, sys
+from pathlib import Path
+from urllib.parse import urlparse
+proxy=urlparse(os.environ['HTTPS_PROXY'])
+def connect_request(authority, method='CONNECT'):
+    s=socket.create_connection((proxy.hostname,proxy.port),timeout=2)
+    s.sendall((method+' '+authority+' HTTP/1.1\r\nHost: '+authority+'\r\n\r\n').encode())
+    header=b''
+    while not header.endswith(b'\r\n\r\n'):
+        part=s.recv(1)
+        assert part
+        header+=part
+    return s,header
+for authority, method in [('openrouter.ai:443','CONNECT'),('opencode.ai.evil.invalid:443','CONNECT'),
+ ('opencode.ai:80','CONNECT'),('github.com:443','CONNECT'),('169.254.169.254:443','CONNECT'),
+ ('http://opencode.ai/zen/go/v1','GET')]:
+    s,header=connect_request(authority,method)
+    assert b'403' in header,(authority,header)
+    s.close()
+s,header=connect_request('opencode.ai:443')
+assert b'200' in header,header
+s.sendall(b'approved-go-tunnel')
+assert s.recv(4096)==b'approved-go-tunnel'
+s.close()
+for address in [('127.0.0.1',int(sys.argv[1])),('1.1.1.1',443),('169.254.169.254',80)]:
+    try:
+        s=socket.create_connection(address,timeout=.3)
+    except OSError:
+        pass
+    else:
+        s.close()
+        raise AssertionError('direct egress succeeded: '+str(address))
+assert not Path('private-key').exists()
+assert 'OPENCODE_API_KEY' in os.environ
+assert 'OPENROUTER_API_KEY' not in os.environ
+print('OpenCode Go tunnel works; OpenRouter, unlisted hosts, non-443, private, direct and host-loopback egress blocked')
+'''
+            audit = io.StringIO()
+            with ProxyServer(staging / "provider.sock",
+                             allowed_hosts("opencode", model="opencode-go/gpt-6-luna")) as proxy, \
+                    patch("solver_proxy.connect_public", side_effect=lambda _: socket.create_connection(echo.server_address)), \
+                    patch("isolate_solver.Path.home", return_value=home), \
+                    patch.dict(os.environ, {"OPENCODE_API_KEY": "go-env-sentinel",
+                                            "OPENROUTER_API_KEY": "router-env-sentinel"}), \
+                    contextlib.redirect_stderr(audit):
+                proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+                proxy_thread.start()
+                try:
+                    args, env = isolated_command(repo, "smoke", "opencode",
+                        ["python3", "-c", probe, str(host_port), "--model", "opencode-go/gpt-6-luna"],
+                        staging, strict=True)
+                    self.assertNotIn("--share-net", args)
+                    self.assertEqual("go-env-sentinel", env["OPENCODE_API_KEY"])
+                    self.assertNotIn("OPENROUTER_API_KEY", env)
+                    result = subprocess.run(args, env=env, capture_output=True, text=True, timeout=15)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("OpenCode Go tunnel works", result.stdout)
+                    self.assertNotIn("go-env-sentinel", result.stdout + result.stderr)
+                finally:
+                    proxy.shutdown()
+                    echo.shutdown()
+            self.assertIn("allowed destination: opencode.ai:443", audit.getvalue())
+            self.assertIn("denied destination: 'openrouter.ai:443'", audit.getvalue())
+            self.assertIn("denied destination: 'opencode.ai.evil.invalid:443'", audit.getvalue())
+            self.assertNotIn("go-env-sentinel", audit.getvalue())
 
 
 if __name__ == "__main__":

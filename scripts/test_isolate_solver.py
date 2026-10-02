@@ -9,7 +9,8 @@ import unittest
 from unittest.mock import patch
 
 from isolate_solver import (CHALLENGE_ALLOWLIST, SHARED_ALLOWLIST, audit_snapshot,
-                            isolated_command, preflight, snapshot)
+                            allowed_hosts_for_command, isolated_command, preflight,
+                            selected_model, snapshot)
 
 REPO = Path(__file__).resolve().parent.parent
 # The runner writes <report>.private.log next to its reports, in ../reports.
@@ -73,6 +74,88 @@ class IsolationTests(unittest.TestCase):
         with patch("shutil.which", return_value=None):
             with self.assertRaisesRegex(RuntimeError, "refusing"):
                 isolated_command(self.repo, "demo", "claude", ["true"], self.root)
+
+    def test_selected_model_ignores_prompt_arguments(self):
+        self.assertEqual("opencode-go/gpt-6-luna", selected_model(
+            ["opencode", "run", "--model", "opencode-go/gpt-6-luna", "--", "prompt"]))
+        self.assertEqual("openrouter/z-ai/glm-5.3", selected_model(
+            ["opencode", "run", "--model=openrouter/z-ai/glm-5.3", "prompt"]))
+        self.assertIsNone(selected_model(["opencode", "run", "--", "--model=opencode-go/gpt-6-luna"]))
+
+    def test_proxy_server_hosts_follow_the_selected_model(self):
+        go_hosts = allowed_hosts_for_command("opencode", [
+            "opencode", "run", "--model", "opencode-go/gpt-6-luna"])
+        router_hosts = allowed_hosts_for_command("opencode", [
+            "opencode", "run", "--model=openrouter/z-ai/glm-5.3"])
+        self.assertIn("opencode.ai", go_hosts)
+        self.assertNotIn("openrouter.ai", go_hosts)
+        self.assertIn("openrouter.ai", router_hosts)
+        self.assertNotIn("opencode.ai", router_hosts)
+
+    def test_opencode_go_gets_only_its_environment_key_and_no_auth_file(self):
+        home = self.root / "home"
+        catalog = home / ".cache/opencode/models.json"
+        auth = home / ".local/share/opencode/auth.json"
+        catalog.parent.mkdir(parents=True)
+        auth.parent.mkdir(parents=True)
+        catalog.write_text("{}")
+        auth.write_text('{"must_not_be_mounted":true}')
+        command = ["opencode", "run", "--model", "opencode-go/gpt-6-luna", "--variant", "xhigh"]
+        secrets = {"OPENCODE_API_KEY": "go-only-sentinel",
+                   "OPENROUTER_API_KEY": "router-sentinel",
+                   "OPENAI_API_KEY": "openai-sentinel",
+                   "ANTHROPIC_API_KEY": "anthropic-sentinel"}
+        staging = self.root / "go-staging"
+        staging.mkdir()
+        with patch("isolate_solver.Path.home", return_value=home), patch.dict(os.environ, secrets):
+            args, env = isolated_command(self.repo, "demo", "opencode", command,
+                                         staging, strict=True)
+        self.assertEqual("go-only-sentinel", env["OPENCODE_API_KEY"])
+        provider = json.loads(env["OPENCODE_CONFIG_CONTENT"])["provider"]["opencode-go"]
+        self.assertEqual("@ai-sdk/openai-compatible", provider["npm"])
+        self.assertEqual("https://opencode.ai/zen/go/v1", provider["options"]["baseURL"])
+        self.assertEqual("{env:OPENCODE_API_KEY}", provider["options"]["apiKey"])
+        self.assertNotIn("go-only-sentinel", env["OPENCODE_CONFIG_CONTENT"])
+        for key in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+                    "BWS_API_KEY", "BWS_ACCESS_TOKEN"):
+            self.assertNotIn(key, env)
+        self.assertEqual("1", env["OPENCODE_DISABLE_MODELS_FETCH"])
+        self.assertEqual("1", env["OPENCODE_DISABLE_AUTOUPDATE"])
+        self.assertEqual("/run/opencode-models.json", env["OPENCODE_MODELS_PATH"])
+        self.assertNotIn(str(auth), args)
+        self.assertNotIn("go-only-sentinel", args)
+        public = staging / "public"
+        self.assertTrue(public.is_dir())
+        self.assertFalse(any(b"go-only-sentinel" in p.read_bytes()
+                             for p in public.rglob("*") if p.is_file()))
+
+    def test_opencode_go_fails_closed_without_its_key(self):
+        with patch.dict(os.environ, {"OPENCODE_API_KEY": ""}):
+            with self.assertRaisesRegex(RuntimeError, "required for OpenCode Go"):
+                isolated_command(self.repo, "demo", "opencode",
+                                 ["opencode", "run", "--model=opencode-go/glm-5.3-flash"],
+                                 self.root / "go-staging", strict=True)
+
+    def test_non_go_opencode_keeps_existing_key_and_auth_file_behavior(self):
+        home = self.root / "home"
+        catalog = home / ".cache/opencode/models.json"
+        auth = home / ".local/share/opencode/auth.json"
+        catalog.parent.mkdir(parents=True)
+        auth.parent.mkdir(parents=True)
+        catalog.write_text("{}")
+        auth.write_text('{"existing_opencode_auth":true}')
+        staging = self.root / "router-staging"
+        staging.mkdir()
+        with patch("isolate_solver.Path.home", return_value=home), patch.dict(
+                os.environ, {"OPENCODE_API_KEY": "must-not-forward",
+                             "OPENROUTER_API_KEY": "router-sentinel"}):
+            args, env = isolated_command(self.repo, "demo", "opencode",
+                ["opencode", "run", "--model", "openrouter/z-ai/glm-5.3"],
+                staging, strict=True)
+        self.assertEqual("router-sentinel", env["OPENROUTER_API_KEY"])
+        self.assertNotIn("OPENCODE_API_KEY", env)
+        self.assertNotIn("OPENCODE_CONFIG_CONTENT", env)
+        self.assertIn(str(auth), args)
 
     def test_snapshot_audit_is_clean_and_reports_no_contents(self):
         public = self.root / "public"

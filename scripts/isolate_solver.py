@@ -159,6 +159,38 @@ def require_clean_snapshot(repo, public, challenge):
             f"{v['path']} ({v['rule']})" for v in violations))
 
 
+def selected_model(command):
+    for index, arg in enumerate(command):
+        if arg == "--":
+            break
+        if arg == "--model" and index + 1 < len(command):
+            return command[index + 1]
+        if arg.startswith("--model="):
+            return arg.partition("=")[2]
+    return None
+
+
+def allowed_hosts_for_command(agent, command):
+    model = selected_model(command) if agent == "opencode" else None
+    return allowed_hosts(agent, model=model)
+
+
+def opencode_go_config():
+    return json.dumps({
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+            "opencode-go": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "OpenCode Go",
+                "options": {
+                    "baseURL": "https://opencode.ai/zen/go/v1",
+                    "apiKey": "{env:OPENCODE_API_KEY}",
+                },
+            },
+        },
+    })
+
+
 def system_binds():
     args = []
     for path in ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/opt/java/openjdk"):
@@ -214,6 +246,10 @@ def isolated_command(repo, challenge, agent, command, staging, *, strict=False):
         raise ValueError("Invalid challenge name")
     if not shutil.which("bwrap"):
         raise RuntimeError("bubblewrap is required; refusing an unisolated fallback")
+    model = selected_model(command) if agent == "opencode" else None
+    opencode_go = bool(model and model.startswith("opencode-go/"))
+    if opencode_go and not os.environ.get("OPENCODE_API_KEY"):
+        raise RuntimeError("OPENCODE_API_KEY is required for OpenCode Go models")
     home = Path.home()
     public = staging / "public"
     public.mkdir()
@@ -245,7 +281,8 @@ def isolated_command(repo, challenge, agent, command, staging, *, strict=False):
     credentials = {"claude": [".claude/.credentials.json"],
                    "opencode": [".local/share/opencode/auth.json"],
                    "codex": [".codex/auth.json"], "pi": [".pi/agent/auth.json"]}
-    for rel in credentials.get(agent, []):
+    credential_files = [] if opencode_go else credentials.get(agent, [])
+    for rel in credential_files:
         path = home / rel
         if path.exists():
             args += ["--ro-bind", str(path), str(path)]
@@ -259,11 +296,15 @@ def isolated_command(repo, challenge, agent, command, staging, *, strict=False):
             "opencode": ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"),
             "codex": ("OPENAI_API_KEY",),
             "pi": ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY")}
-    for key in keys.get(agent, ()):
-        if key in os.environ:
-            env[key] = os.environ[key]
+    if opencode_go:
+        env["OPENCODE_API_KEY"] = os.environ["OPENCODE_API_KEY"]
+        env["OPENCODE_CONFIG_CONTENT"] = opencode_go_config()
+    else:
+        for key in keys.get(agent, ()):
+            if key in os.environ:
+                env[key] = os.environ[key]
     if strict:
-        allowed_hosts(agent)  # Reject unsupported providers, never broaden policy.
+        allowed_hosts_for_command(agent, command)  # Reject unsupported providers, never broaden policy.
         args += ["--ro-bind", str(staging / "provider.sock"), "/run/provider.sock",
                  "--ro-bind", str(Path(__file__).with_name("solver_proxy.py")), "/run/solver_proxy.py"]
         command = ["python3", "/run/solver_proxy.py", "--bridge", "/run/provider.sock", *command]
@@ -273,7 +314,7 @@ def isolated_command(repo, challenge, agent, command, staging, *, strict=False):
                 raise RuntimeError("Preseed OpenCode models.json on the host before strict runs")
             args += ["--ro-bind", str(catalog), "/run/opencode-models.json"]
             env.update(OPENCODE_MODELS_PATH="/run/opencode-models.json",
-                       OPENCODE_DISABLE_MODELS_FETCH="true", OPENCODE_DISABLE_AUTOUPDATE="true",
+                       OPENCODE_DISABLE_MODELS_FETCH="1", OPENCODE_DISABLE_AUTOUPDATE="1",
                        OPENCODE_DISABLE_LSP_DOWNLOAD="true", OPENCODE_PURE="true",
                        OPENCODE_DISABLE_DEFAULT_PLUGINS="true")
             for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
@@ -320,7 +361,8 @@ def main():
                                      command, Path(tmp), strict=strict)
         if not strict:
             return subprocess.call(args, env=env, close_fds=True)
-        with ProxyServer(Path(tmp) / "provider.sock", allowed_hosts(opts.agent)) as proxy:
+        with ProxyServer(Path(tmp) / "provider.sock",
+                         allowed_hosts_for_command(opts.agent, command)) as proxy:
             thread = threading.Thread(target=proxy.serve_forever, daemon=True)
             thread.start()
             try:
