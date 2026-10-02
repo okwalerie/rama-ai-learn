@@ -77,20 +77,88 @@ count:
 
 ## Run manifest
 
-Each run writes `<report>.manifest.json` (JSON) next to the markdown report. The file
-is created once and never overwritten. It holds:
+Each run writes `<report>.manifest.json` (JSON, `schema-version` 2) next to the
+markdown report. The file is created once and never overwritten. It holds:
 
 - run id, start and end timestamps, command-line arguments
 - repository `HEAD` SHA, a dirty-tree flag, and the git tree SHA of each
   `challenges/<name>` directory
 - agent, and the requested fast and slow model and effort
 - grader timeout
+- `isolation`: the record returned by the scored-run preflight (below):
+  `mode` (`bubblewrap-provider-network` or `bubblewrap-public-only`),
+  `filesystem` (`bubblewrap`), `network` (`strict` or `shared`), `bwrap`
+  `{path, version}`, `probe`, `preflight`, `launcher`, `launcher-sha256`, and
+  `snapshot` `{kind: "allowlisted-public-copy", shared-allowlist,
+  challenge-allowlist, protected-dirs, audits: {<challenge>: {files,
+  categories, violations: 0}}}`. A manifest cannot be built without it.
+- `redaction-policy`: the rules below, `version` 1
 - per challenge: outcome, completion, private verdict with counts and reason,
   private-suite availability, score, builds, retries, a SHA-256 of the
-  implementation tree, reported cost and estimated cost kept separate
+  implementation tree, reported cost and estimated cost kept separate, and:
+  - `private-test` (`null` when the suite was not started): `exit`,
+    `timed-out`, `timeout-s`, `duration-s`, `status`, `sentinel`
+    (`zero-of-one`, `ran-0`, `no-summary`, `grader-timeout` or `null`),
+    `counted-as-failure` (true only for a genuine `:fail`), the complete
+    scrubbed `stdout` and `stderr`, and `redactions` (count per kind)
+  - `full-spec-review` (`null` when the stage never ran and wrote no
+    report): `ran`, `verdict`, `exit`, `report-path`
+    (`implementations/<name>/FULL_SPEC_REVIEW.md`), `report-present`,
+    `report-skipped` (`"symlink"` when the report was a symlink, which is
+    never followed), the complete scrubbed `report-text` and
+    `final-message` (the session's last assistant message), and `redactions`
 - per phase: id, attempt, subsystem, exit, verdict, timeout, provider-limit and
-  user-stop flags, transient retries, duration, transcript path and SHA-256,
-  reported cost and estimated cost
+  user-stop flags, `isolation` mode, transient retries, duration, transcript
+  path and SHA-256, reported cost and estimated cost
+
+## Run bundle
+
+Next to the manifest the runner writes `<report>.bundle.tar.gz`, also never
+overwritten. It contains one file, `<run-id>/BUNDLE.json`:
+
+```
+{"schema-version": 1, "kind": "rama-ai-learn-run-bundle", "run-id": ...,
+ "created-at": ..., "manifest-sha256": <SHA-256 of the manifest file>,
+ "redaction-policy": {...}, "manifest": {...the manifest above...}}
+```
+
+The markdown report and transcripts are not bundled: alignment
+justifications come from a scorer that reads the reference solution, and
+transcripts are unscrubbed.
+
+## Redaction
+
+`private-test.stdout`, `private-test.stderr`, `full-spec-review.report-text`
+and `full-spec-review.final-message` keep the complete text, line for line,
+except for these in-place replacements (counted per kind in `redactions`):
+
+| Kind | What is replaced | Replacement |
+|---|---|---|
+| `secret-env` | The value of every set environment variable whose name contains `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `CREDENTIAL` or `AUTH` (case-insensitive) and whose value is at least 8 characters. | `[REDACTED:env:<NAME>]` |
+| `credential` | PEM private-key blocks; `sk-ant-…` and `sk-…` API keys; GitHub `gh?_…`/`github_pat_…`, AWS access key ids, Slack and JWT tokens; `Authorization:` and `Bearer` values; `user:password@` in URLs; values of 8+ characters assigned with `=` or `:` to a name containing `api_key`, `secret`, `token`, `password`, `passwd` or `credential`. | `[REDACTED:<kind>]` |
+| `private-test-assertion` | Private-test output only: the form after a clojure.test `expected:`, and an `actual: (not …)` comparison, which embeds the expected value. | `[REDACTED:private-test-assertion]`, `[REDACTED:private-test-comparison]` |
+| `protected-plaintext` | The whole line, when it contains (after collapsing whitespace) a line or string literal of 20+ characters from the challenge's `test-private/` or `test-resources/` that does not also appear in the challenge's other files, the Rama skill, or `lib/harness/src`. Protected files over 8 MiB (bulk test data) are not indexed. | `[REDACTED:protected-plaintext]` |
+
+Kept: test names, `file:line` locations, exceptions and stack traces
+(including `actual:` exceptions), counts, and all other text. Residual
+exposure: protected fragments shorter than 20 characters, data from
+unindexed files over 8 MiB, and implementation exception messages that echo
+private inputs.
+
+## Scored-run isolation
+
+Every `bb run-challenges` run is scored, so the preflight rejects a run
+without `--isolate-network` or `--isolate` before any solver starts. It then
+runs `scripts/isolate_solver.py --preflight`, which fails unless bubblewrap
+launches a namespaced probe and every selected challenge's snapshot passes
+the audit: every file under the allowlist; no `.git`, `test-private`,
+`test-resources`, `test`, `test-harness`, `review` or `atlas` path, `.enc`
+file or credential-named file; no byte-identical copy of any file under
+`challenges/*/test-private`, `challenges/*/test-resources`, `docs/`,
+`review/` or `.amp/`; no private-key or token pattern; and no value of a
+secret-named environment variable. The launcher repeats the audit before
+every solver phase and refuses a failing snapshot. Audit output names paths,
+rules and variable names, never contents or values.
 
 ## Grader time limit
 

@@ -132,6 +132,7 @@
   (println "      --slow-effort E     Reasoning effort for the slow model (required)")
   (println "      --isolate           Linux public-only solver filesystem (bubblewrap required)")
   (println "      --isolate-network   Provider/docs-only network; implies --isolate")
+  (println "                          Scored runs require one; preflight rejects a run with neither")
   (println "  -v, --verbose           Stream agent output to console in real time")
   (println "  -h, --help              Show this help")
   (println)
@@ -651,6 +652,12 @@
             "Reference-bearing docs/atlas or review is present: solver launches require --isolate-network (Claude or OpenCode). Encryption and --isolate alone do not block reference Portals or upstream source downloads."
             {:reason :reference-isolation-required}))))
 
+;; Recorded per phase invocation (transcript metadata and run manifest).
+(defn isolation-mode []
+  (cond *isolate-network* "bubblewrap-provider-network"
+        *isolate* "bubblewrap-public-only"
+        :else "none"))
+
 (defn solver-command [cmd project-root challenge-name agent-name]
   (require-reference-isolation! project-root *isolate-network*)
   (if (or *isolate* *isolate-network*)
@@ -893,8 +900,10 @@
   "Turn a private-test invocation into a verdict. `has-suite?` is whether the
   challenge has test-private/; `private-result` is nil when the suite was not
   started, else {:exit :out :err :timed-out? :timeout-s}. Sentinels (zero
-  tests, no summary, grader timeout) are :unavailable, never :fail.
-  Returns {:private-status kw :private-counts map? :private-reason str?}."
+  tests, no summary, grader timeout) are :unavailable, never :fail, and name
+  themselves in :private-sentinel.
+  Returns {:private-status kw :private-counts map? :private-reason str?
+  :private-sentinel kw?}."
   [has-suite? private-result]
   (cond
     (not has-suite?)
@@ -904,7 +913,7 @@
     {:private-status :not-run :private-reason "private suite not started"}
 
     (:timed-out? private-result)
-    {:private-status :unavailable
+    {:private-status :unavailable :private-sentinel :grader-timeout
      :private-reason (str "grader timeout after " (:timeout-s private-result) "s")}
 
     :else
@@ -912,19 +921,19 @@
           bad (when counts (+ (:failures counts) (:errors counts)))]
       (cond
         (nil? counts)
-        {:private-status :unavailable
+        {:private-status :unavailable :private-sentinel :no-summary
          :private-reason (format "no test summary (exit %d): compile/load error or missing implementation namespace"
                                  (:exit private-result))}
 
         (zero? (:tests counts))
-        {:private-status :unavailable :private-counts counts
+        {:private-status :unavailable :private-counts counts :private-sentinel :ran-0
          :private-reason "Ran 0 tests: suite did not load"}
 
         ;; `FAIL 0/1`: one test whose only report is an uncaught error, with no
         ;; assertion passing or failing. The suite errored before any check ran
         ;; (load or launch failure), so no correctness evidence exists.
         (sentinel-0-of-1? counts)
-        {:private-status :unavailable :private-counts counts
+        {:private-status :unavailable :private-counts counts :private-sentinel :zero-of-one
          :private-reason "sentinel 0/1: suite errored before any assertion ran"}
 
         (pos? bad)
@@ -1058,6 +1067,198 @@
       (format "Private verdicts: PASS %d | FAIL %d | UNAVAILABLE (not evaluated) %d | not-run %d"
               (get by :pass 0) (get by :fail 0) (get by :unavailable 0) (get by :not-run 0)))))
 
+;;; Diagnostic scrubbing (docs/outcome-taxonomy.md, "Redaction")
+;;
+;; The manifest and bundle keep the complete private-suite output and the
+;; complete full-spec-review text, minus credentials and runner-protected
+;; plaintext. Redacted spans are replaced in place with [REDACTED:<kind>].
+
+(def secret-env-name-re #"(?i)KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH")
+
+(def min-secret-env-length 8)
+
+(defn secret-env-values
+  "[name value] pairs for secret-named variables in env, longest value first."
+  [env]
+  (->> env
+       (keep (fn [[k v]]
+               (when (and (re-find secret-env-name-re (str k))
+                          (>= (count (str v)) min-secret-env-length))
+                 [(str k) (str v)])))
+       (sort-by (comp - count second))
+       vec))
+
+(def credential-patterns
+  "[regex replacement] pairs applied in order. Values already replaced by an
+  earlier rule are not matched again. Quantifiers next to a literal are
+  bounded so a long unbroken line cannot backtrack quadratically."
+  [[#"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----" "[REDACTED:private-key]"]
+   [#"\bsk-ant-[A-Za-z0-9_\-]{16,}" "[REDACTED:api-key]"]
+   [#"\bsk-(?:proj-|or-v1-)?[A-Za-z0-9_\-]{32,}" "[REDACTED:api-key]"]
+   [#"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})" "[REDACTED:github-token]"]
+   [#"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b" "[REDACTED:aws-key-id]"]
+   [#"\bxox[abposr]-[A-Za-z0-9-]{10,}" "[REDACTED:slack-token]"]
+   [#"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}" "[REDACTED:jwt]"]
+   [#"(?i)(\bauthorization\s*[:=]\s*(?:basic|bearer|token)?\s*)(?!\[REDACTED)[A-Za-z0-9._~+/=-]{8,}" "$1[REDACTED:authorization]"]
+   [#"(?i)(\bbearer\s+)(?!\[REDACTED)[A-Za-z0-9._~+/=-]{12,}" "$1[REDACTED:bearer]"]
+   [#"(?i)(\b[a-z][a-z0-9+.-]{0,30}://)[^/\s:@]{1,256}:[^/\s@]{1,256}@" "$1[REDACTED:url-credentials]@"]
+   [#"(?i)(\b[A-Za-z0-9_.-]{0,40}(?:api[_-]?key|secret|token|password|passwd|credential)s?[A-Za-z0-9_.-]{0,40}[\"']?[ \t]*[:=][ \t]*[\"']?)(?!\[REDACTED)[^\s\"',;}\]]{8,}" "$1[REDACTED:credential]"]])
+
+(def private-test-report-patterns
+  "clojure.test report lines that print private-test source or expected data:
+  the assertion form after `expected:`, and the evaluated comparison after
+  `actual: (not ...)`, which embeds the expected value. Exceptions printed
+  after `actual:` are kept."
+  [[#"(?m)^([ \t]*expected:[ \t]?)(?!\[REDACTED).+$" "$1[REDACTED:private-test-assertion]"]
+   [#"(?m)^([ \t]*actual:[ \t]?)\(not[ \t(].*$" "$1[REDACTED:private-test-comparison]"]])
+
+(def min-protected-fragment
+  "Shortest protected line or string literal matched in output (characters,
+  after whitespace collapsing). Shorter fragments are too common to attribute."
+  20)
+
+(def max-indexed-protected-bytes
+  "Protected files larger than this are not line-indexed (bulk test data)."
+  (* 8 1024 1024))
+
+(defn- normalize-ws [s]
+  (str/trim (str/replace s #"\s+" " ")))
+
+(defn- text-fragments
+  "Normalized lines and string-literal bodies of text, at least
+  min-protected-fragment long."
+  [text]
+  (->> (concat (str/split-lines text)
+               (map second (re-seq #"\"([^\"\\]*+(?:\\.[^\"\\]*+)*+)\"" text)))
+       (map normalize-ws)
+       (filter #(>= (count %) min-protected-fragment))))
+
+(defn- tree-files [dir]
+  (when (fs/directory? dir)
+    (filter #(and (fs/regular-file? % {:nofollow-links true})
+                  (not (str/ends-with? (str %) ".enc")))
+            (fs/glob dir "**" {:hidden true}))))
+
+(defn- indexable-text [path]
+  (when (<= (fs/size path) max-indexed-protected-bytes)
+    (let [s (try (slurp (str path)) (catch Exception _ nil))]
+      (when (and s (not (str/includes? s "\u0000"))) s))))
+
+(defn protected-fragments
+  "Fragments of a challenge's runner-protected files (test-private/,
+  test-resources/) that occur nowhere solver-visible: not in the challenge's
+  other files, the Rama skill, or lib/harness/src. Needs plaintext files."
+  [project-root challenge-name]
+  (let [cdir (fs/path project-root "challenges" challenge-name)
+        protected? #(some (fn [d] (str/starts-with? (str (fs/relativize cdir %)) d))
+                          ["test-private/" "test-resources/"])
+        frags (fn [paths] (into #{} (comp (keep indexable-text) (mapcat text-fragments)) paths))
+        files (tree-files cdir)
+        public (frags (concat (remove protected? files)
+                              (tree-files (fs/path project-root "plugins/rama-skill/skills/rama"))
+                              (tree-files (fs/path project-root "lib/harness/src"))))]
+    (remove public (frags (filter protected? files)))))
+
+(defn fragment-index
+  "Index fragments by their first min-protected-fragment characters."
+  [fragments]
+  (group-by #(subs % 0 min-protected-fragment) fragments))
+
+(defn- contains-fragment? [index ^String norm]
+  (let [k min-protected-fragment
+        n (count norm)]
+    (loop [i 0]
+      (when (<= (+ i k) n)
+        (if (some #(.startsWith norm ^String % (int i)) (get index (subs norm i (+ i k))))
+          true
+          (recur (inc i)))))))
+
+(defn scrub-context
+  "Redaction inputs for one challenge: secret env values and the protected
+  fragment index. Build it while protected files are plaintext."
+  [project-root challenge-name env]
+  {:env-secrets (secret-env-values env)
+   :fragment-index (fragment-index (protected-fragments project-root challenge-name))})
+
+(def redaction-kinds
+  [:secret-env :credential :private-test-assertion :protected-plaintext])
+
+(defn- replace-counting [text re replacement]
+  (let [n (count (re-seq re text))]
+    [(if (pos? n) (str/replace text re replacement) text) n]))
+
+(defn scrub-text
+  "Scrub one diagnostic text. Returns {:text str :redactions {kind count}}.
+  `private-test?` also redacts clojure.test assertion/comparison lines."
+  [text {:keys [env-secrets fragment-index private-test?]}]
+  (let [counts (volatile! (zipmap redaction-kinds (repeat 0)))
+        tally! (fn [kind n] (vswap! counts update kind + n))
+        text (reduce (fn [t [k v]]
+                       (let [n (count (re-seq (re-pattern (java.util.regex.Pattern/quote v)) t))]
+                         (tally! :secret-env n)
+                         (if (pos? n) (str/replace t v (str "[REDACTED:env:" k "]")) t)))
+                     (str text) env-secrets)
+        text (reduce (fn [t [re r]] (let [[t n] (replace-counting t re r)] (tally! :credential n) t))
+                     text credential-patterns)
+        text (if private-test?
+               (reduce (fn [t [re r]] (let [[t n] (replace-counting t re r)] (tally! :private-test-assertion n) t))
+                       text private-test-report-patterns)
+               text)
+        text (if (seq fragment-index)
+               (str/join "\n" (map (fn [line]
+                                     (if (contains-fragment? fragment-index (normalize-ws line))
+                                       (do (tally! :protected-plaintext 1) "[REDACTED:protected-plaintext]")
+                                       line))
+                                   (str/split text #"\n" -1)))
+               text)]
+    {:text text :redactions @counts}))
+
+(defn- sum-redactions [& scrubbed]
+  (apply merge-with + (zipmap redaction-kinds (repeat 0)) (keep :redactions scrubbed)))
+
+(defn private-test-diagnostic
+  "Complete, scrubbed private-suite output for the manifest; nil when the
+  suite was not started. A sentinel is reported, never counted as a failure."
+  [private-result private-verdict ctx]
+  (when private-result
+    (let [ctx (assoc ctx :private-test? true)
+          out (scrub-text (:out private-result) ctx)
+          err (scrub-text (:err private-result) ctx)]
+      {:exit (:exit private-result)
+       :timed-out (boolean (:timed-out? private-result))
+       :timeout-s (:timeout-s private-result)
+       :duration-s (:duration-s private-result)
+       :status (some-> (:private-status private-verdict) name)
+       :sentinel (some-> (:private-sentinel private-verdict) name)
+       :counted-as-failure (= :fail (:private-status private-verdict))
+       :stdout (:text out)
+       :stderr (:text err)
+       :redactions (sum-redactions out err)})))
+
+(defn full-spec-review-diagnostic
+  "Complete, scrubbed full-spec-review findings: the FULL_SPEC_REVIEW.md
+  report and the session's final message. nil when neither exists. A
+  symlinked report is never followed (it could point at host-only files)."
+  [project-root challenge-name phase-results ctx]
+  (let [r (last (filter #(= :full-spec-review (:phase-id %)) phase-results))
+        rel (str "implementations/" challenge-name "/FULL_SPEC_REVIEW.md")
+        path (fs/path project-root rel)
+        symlink? (fs/sym-link? path)
+        report (when (and (not symlink?) (fs/regular-file? path {:nofollow-links true}))
+                 (slurp (str path)))
+        report' (some-> report (scrub-text ctx))
+        message (some-> (:result-text r) (scrub-text ctx))]
+    (when (or r report symlink?)
+      {:ran (boolean r)
+       :verdict (some-> (:verdict r) name)
+       :exit (:exit r)
+       :report-path rel
+       :report-present (some? report)
+       :report-skipped (when symlink? "symlink")
+       :report-text (:text report')
+       :final-message (:text message)
+       :redactions (sum-redactions report' message)})))
+
 ;;; Integrity hashes and run manifest
 
 (defn sha256-hex [^bytes bs]
@@ -1095,6 +1296,7 @@
    :timed-out (boolean (:timed-out? r))
    :provider-limit (boolean (:provider-limit? r))
    :user-stopped (boolean (:user-stopped? r))
+   :isolation (:isolation r)
    :transient-retries (:retries r)
    :duration-s (:duration-s r)
    :transcript-path (:transcript-path r)
@@ -1119,13 +1321,33 @@
    :challenge-tree-sha (:challenge-tree-sha r)
    :cost-reported (:cost-reported r)
    :cost-estimated (:cost-estimated r)
+   :private-test (:private-test r)
+   :full-spec-review (:full-spec-review r)
    :phases (mapv phase-manifest (:phase-results r))})
+
+(def redaction-policy
+  "Recorded in every manifest and bundle; docs/outcome-taxonomy.md explains it."
+  {:version 1
+   :scrubbed-fields ["challenges[].private-test.stdout" "challenges[].private-test.stderr"
+                     "challenges[].full-spec-review.report-text"
+                     "challenges[].full-spec-review.final-message"]
+   :replacements
+   {:secret-env (str "value of each set env var whose name matches " secret-env-name-re
+                     " and is >= " min-secret-env-length " chars -> [REDACTED:env:<NAME>]")
+    :credential "PEM private keys, sk-ant-/sk- API keys, GitHub, AWS key id, Slack and JWT tokens, Authorization/Bearer values, URL user:password@, and <key|secret|token|password|credential>=/: values of >= 8 chars -> [REDACTED:<kind>]"
+    :private-test-assertion "private-test output only: text after clojure.test `expected:`, and `actual: (not ...)` comparisons -> [REDACTED:private-test-assertion|comparison]"
+    :protected-plaintext (str "whole line containing a line or string literal (>= " min-protected-fragment
+                              " chars, whitespace-collapsed) of the challenge's test-private/ or test-resources/ files <= "
+                              max-indexed-protected-bytes " bytes that is absent from its public files, the Rama skill and lib/harness/src -> [REDACTED:protected-plaintext]")}
+   :kept ["test names" "file:line locations" "exceptions and stack traces" "test/assertion/failure counts" "all other text"]})
 
 (defn build-run-manifest
   "Pure: run metadata map plus results -> JSON-ready manifest map."
   [{:keys [run-id started-at finished-at args repo-sha repo-dirty? agent requested
-           grader-timeout-s]} results]
-  {:schema-version 1
+           grader-timeout-s isolation]} results]
+  (when-not (seq isolation)
+    (throw (ex-info "A scored run manifest requires the solver isolation record" {:run-id run-id})))
+  {:schema-version 2
    :run-id run-id
    :started-at started-at
    :finished-at finished-at
@@ -1133,10 +1355,15 @@
    :repo {:head-sha repo-sha :dirty repo-dirty?}
    :requested (merge {:agent agent} requested)
    :grader-timeout-s grader-timeout-s
+   :isolation isolation
+   :redaction-policy redaction-policy
    :challenges (mapv challenge-manifest results)})
 
 (defn manifest-path [report-path]
   (str (str/replace (str report-path) #"\.md$" "") ".manifest.json"))
+
+(defn manifest-json [manifest]
+  (json/generate-string manifest {:pretty true}))
 
 (defn write-run-manifest!
   "Write the manifest next to the report. Never overwrites an existing file.
@@ -1144,8 +1371,44 @@
   [report-path manifest]
   (let [path (manifest-path report-path)]
     (when-not (fs/exists? path)
-      (spit path (json/generate-string manifest {:pretty true}))
+      (spit path (manifest-json manifest))
       path)))
+
+(defn bundle-path [report-path]
+  (str (str/replace (str report-path) #"\.md$" "") ".bundle.tar.gz"))
+
+(defn build-bundle
+  "BUNDLE.json content: the manifest (with its scrubbed diagnostics) plus the
+  SHA-256 of the manifest file's exact JSON. The markdown report is left out:
+  its alignment justifications come from a scorer that reads the reference."
+  [manifest created-at]
+  {:schema-version 1
+   :kind "rama-ai-learn-run-bundle"
+   :run-id (:run-id manifest)
+   :created-at created-at
+   :manifest-sha256 (sha256-hex (.getBytes ^String (manifest-json manifest) "UTF-8"))
+   :redaction-policy (:redaction-policy manifest)
+   :manifest manifest})
+
+(defn write-run-bundle!
+  "Write <report>.bundle.tar.gz holding <run-id>/BUNDLE.json. Never
+  overwrites. Returns the path written, or nil when one already existed."
+  [report-path manifest]
+  (let [path (bundle-path report-path)]
+    (when-not (fs/exists? path)
+      (let [staging (fs/create-temp-dir {:prefix "run-bundle-"})
+            dir (str/replace (str (or (:run-id manifest) "run")) #"[^A-Za-z0-9._-]" "_")]
+        (try
+          (fs/create-dirs (fs/path staging dir))
+          (spit (str (fs/path staging dir "BUNDLE.json"))
+                (json/generate-string (build-bundle manifest (str (java.time.Instant/now))) {:pretty true}))
+          (let [{:keys [exit err]} (p/shell {:out :string :err :string :continue true}
+                                            "tar" "-czf" (str path) "-C" (str staging) dir)]
+            (when-not (zero? exit)
+              (fs/delete-if-exists path)
+              (throw (ex-info (str "Bundle tar failed: " err) {:exit exit}))))
+          path
+          (finally (fs/delete-tree staging)))))))
 
 ;;; Alignment scoring
 
@@ -1604,9 +1867,7 @@
                     (invoke-command! cmd project-root))
                 transcript (str (json/generate-string
                                   {:type "run_metadata" :timestamp (:started-at r)
-                                   :isolation (cond *isolate-network* "bubblewrap-provider-network"
-                                                    *isolate* "bubblewrap-public-only"
-                                                    :else "none")
+                                   :isolation (isolation-mode)
                                    :model model :effort reasoning :agent agent-name}) "\n"
                                 (:out r) "\n"
                                 (json/generate-string
@@ -1662,6 +1923,9 @@
      :user-stopped? user-stopped?
      :duration-s duration-s
      :verdict verdict
+     :isolation (isolation-mode)
+     ;; Final assistant message; the manifest keeps it for full-spec-review.
+     :result-text (let [t (:result summary)] (when (string? t) t))
      :transcript-path transcript-path
      :token-usage token-usage
      :cost cost
@@ -2136,6 +2400,12 @@
                 has-suite? (has-private-tests? project-root challenge-name)
                 private-verdict (classify-private-result has-suite? private-result)
                 private-status (:private-status private-verdict)
+                ;; Complete, scrubbed diagnostics for the manifest and bundle.
+                ;; Built here, while the protected files are plaintext.
+                scrub-ctx (scrub-context project-root challenge-name (System/getenv))
+                private-test (private-test-diagnostic private-result private-verdict scrub-ctx)
+                full-spec-review (full-spec-review-diagnostic project-root challenge-name
+                                                              (:phase-results phase-result) scrub-ctx)
                 has-implementation? (boolean (seq (find-impl-files project-root challenge-name)))
                 completion (classify-completion phase-result)
                 outcome (classify-outcome {:completion completion
@@ -2168,6 +2438,8 @@
                                    :private-status private-status
                                    :private-counts (:private-counts private-verdict)
                                    :private-reason (:private-reason private-verdict)
+                                   :private-test private-test
+                                   :full-spec-review full-spec-review
                                    :has-private-suite? has-suite?
                                    :has-implementation? has-implementation?
                                    :implementation-sha256 (tree-sha256 (fs/path project-root "implementations" challenge-name))
@@ -2496,6 +2768,33 @@
      (spit (str report-path) (str sb))
      (str report-path))))
 
+;;; Scored-run isolation preflight
+
+(defn require-scored-run-isolation!
+  "Every run-challenges run is scored, so every solver phase must launch in
+  the bubblewrap public snapshot. Probe bubblewrap and audit each selected
+  challenge's snapshot now, before spending tokens. Returns the isolation
+  record for the manifest; throws when isolation is absent or broken."
+  [project-root opts agent-name challenge-names]
+  (when-not (or (:isolate opts) (:isolate-network opts))
+    (throw (ex-info (str "Scored runs require solver isolation: pass --isolate-network (or --isolate). "
+                         "Without it the solver can read private tests, reference docs and host credentials.")
+                    {:reason :isolation-required})))
+  (let [strict? (boolean (:isolate-network opts))
+        {:keys [exit out err]}
+        (invoke-command! (into ["python3" (str (fs/path project-root "scripts/isolate_solver.py"))
+                                "--repo" (str project-root) "--agent" agent-name
+                                "--network" (if strict? "strict" "shared") "--preflight"]
+                               (mapcat #(vector "--audit-challenge" %) challenge-names))
+                         project-root)]
+    (when-not (zero? exit)
+      (throw (ex-info (str "Isolation preflight failed: " (str/trim (str err "\n" out)))
+                      {:reason :isolation-preflight-failed :exit exit})))
+    (assoc (json/parse-string out true)
+           :mode (if strict? "bubblewrap-provider-network" "bubblewrap-public-only")
+           :launcher "scripts/isolate_solver.py"
+           :preflight "passed")))
+
 ;;; Main
 
 (defn -main [args]
@@ -2583,7 +2882,9 @@
                          fast-model (resolve-effort fast-effort)
                          slow-model (resolve-effort slow-effort)))
 
-        (let [enc-key       (challenge-encryption-key)
+        (let [isolation     (require-scored-run-isolation!
+                             project-root opts agent-name (mapv :name valid))
+              enc-key       (challenge-encryption-key)
               start-ms      (System/currentTimeMillis)
               started-at    (str (java.time.Instant/now))
               results       (binding [*verbose* (or (:verbose opts) (:pretty opts))
@@ -2604,22 +2905,24 @@
                                               :reasoning reasoning})]
             (println)
             (println (str "Report saved: " report-path))
-            (when-let [mpath (write-run-manifest!
-                              report-path
-                              (build-run-manifest
-                               {:run-id (str (fs/strip-ext (fs/file-name report-path)) "-" (subs (str (random-uuid)) 0 8))
-                                :started-at started-at
-                                :finished-at (str (java.time.Instant/now))
-                                :args (vec args)
-                                :repo-sha (git-out project-root "rev-parse" "HEAD")
-                                :repo-dirty? (boolean (seq (git-out project-root "status" "--porcelain")))
-                                :agent agent-name
-                                :requested {:model model :effort reasoning
-                                            :fast-model fast-model :fast-effort fast-effort
-                                            :slow-model slow-model :slow-effort slow-effort}
-                                :grader-timeout-s (or (:grader-timeout opts) *grader-timeout-s*)}
-                               results))]
-              (println (str "Manifest saved: " mpath))))
+            (let [manifest (build-run-manifest
+                            {:run-id (str (fs/strip-ext (fs/file-name report-path)) "-" (subs (str (random-uuid)) 0 8))
+                             :started-at started-at
+                             :finished-at (str (java.time.Instant/now))
+                             :args (vec args)
+                             :repo-sha (git-out project-root "rev-parse" "HEAD")
+                             :repo-dirty? (boolean (seq (git-out project-root "status" "--porcelain")))
+                             :agent agent-name
+                             :requested {:model model :effort reasoning
+                                         :fast-model fast-model :fast-effort fast-effort
+                                         :slow-model slow-model :slow-effort slow-effort}
+                             :grader-timeout-s (or (:grader-timeout opts) *grader-timeout-s*)
+                             :isolation isolation}
+                            results)]
+              (when-let [mpath (write-run-manifest! report-path manifest)]
+                (println (str "Manifest saved: " mpath)))
+              (when-let [bpath (write-run-bundle! report-path manifest)]
+                (println (str "Bundle saved: " bpath)))))
 
           ;; Append to results database
           (let [db-path (str (fs/path project-root ".." "reports" "results.edn"))

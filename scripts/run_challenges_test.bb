@@ -1306,14 +1306,27 @@
   (testing "retries never rescue a private failure"
     (is (= 0 (compute-challenge-score :private-fail 0)))))
 
+(def isolation-fixture
+  {:mode "bubblewrap-provider-network" :filesystem "bubblewrap" :network "strict"
+   :probe "passed" :preflight "passed" :launcher "scripts/isolate_solver.py"
+   :snapshot {:kind "allowlisted-public-copy" :audits {:fixture {:files 3 :violations 0}}}})
+
+(def run-meta-fixture
+  {:run-id "run-1" :started-at "t0" :finished-at "t1"
+   :repo-sha "deadbeef" :repo-dirty? false :agent "claude"
+   :requested {:model "m" :effort "high"} :grader-timeout-s 1800
+   :isolation isolation-fixture})
+
 (deftest run-manifest-test
   (let [r (assoc (scored-result auction-runner-pass true private-sentinel-0-of-1)
                  :implementation-sha256 "abc" :cost-reported 1.5 :cost-estimated 1.2)
-        m (build-run-manifest {:run-id "run-1" :started-at "t0" :finished-at "t1"
-                               :repo-sha "deadbeef" :repo-dirty? false :agent "claude"
-                               :requested {:model "m" :effort "high"} :grader-timeout-s 1800}
-                              [r])
+        m (build-run-manifest run-meta-fixture [r])
         c (first (:challenges m))]
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"requires the solver isolation record"
+          (build-run-manifest (dissoc run-meta-fixture :isolation) [r])))
+    (is (= 2 (:schema-version m)))
+    (is (= isolation-fixture (:isolation m)))
+    (is (= redaction-policy (:redaction-policy m)))
     (is (= "run-1" (:run-id m)))
     (is (= {:head-sha "deadbeef" :dirty false} (:repo m)))
     (is (= "claude" (get-in m [:requested :agent])))
@@ -1330,6 +1343,241 @@
       (is (nil? (write-run-manifest! report {:run-id "other"})) "never overwrites")
       (is (= "run-1" (get (json/parse-string (slurp (manifest-path report))) "run-id")))
       (fs/delete-tree dir))))
+
+;;; Scrubbed diagnostics in the manifest and BUNDLE.json
+
+(defn bundle-entries [bundle]
+  (let [{:keys [exit out]} (p/shell {:out :string :err :string :continue true} "tar" "-tzf" bundle)]
+    (when (zero? exit) (str/split-lines (str/trim out)))))
+
+(defn read-bundle-json [bundle]
+  (let [dir (fs/create-temp-dir {:prefix "bundle-extract-"})]
+    (try
+      (p/shell {:out :string :err :string} "tar" "-xzf" bundle "-C" (str dir))
+      (let [[f] (fs/glob dir "*/BUNDLE.json")]
+        (json/parse-string (slurp (str f)) true))
+      (finally (fs/delete-tree dir)))))
+
+(defn diagnostics-fixture
+  "Project with protected and public challenge files and a solver review.
+  Strings are assembled so this test file itself holds no fixture secret."
+  []
+  (let [root (fs/create-temp-dir {:prefix "diag-"})
+        protected-line (str "(is (= 4711 (withdraw! client " "\"acct-overdraft-fixture\" 99999)))")
+        protected-msg (str "overdraft beyond balance " "must be rejected with 4711")
+        ref-line (str "(defn- hidden-ledger-invariant " "[ledger] (reduce + (vals ledger)))")
+        secret (str "fixture-" "env-secret-" "value-42")
+        api-key (str "sk-ant-" (apply str (repeat 30 "q")))]
+    (doseq [[rel text] {"challenges/demo/README.md" "Withdrawals beyond balance are rejected.\n"
+                        "challenges/demo/src/demo/protocol.clj" "(defprotocol Bank (withdraw! [c a n]))\n"
+                        "challenges/demo/test-private/demo/private_test.clj"
+                        (str "(deftest withdraw-test\n  (testing \"" protected-msg "\"\n    " protected-line "))\n")
+                        "challenges/demo/test-resources/demo/module.clj" (str ref-line "\n")
+                        "implementations/demo/FULL_SPEC_REVIEW.md"
+                        (str "# Full-spec review\n\n## Finding 1: withdraw! allowed overdraft\n"
+                             "Spec says withdrawals beyond balance are rejected; fixed in withdraw!.\n\n"
+                             "## Finding 2: depot partitioning\nRe-partitioned by account id.\n\n"
+                             "## Finding 3\nOPENAI_API_KEY=" secret " was echoed by a tool; " api-key "\n\n"
+                             "Verdict: all findings fixed; suite green.\n")}]
+      (fs/create-dirs (fs/parent (fs/path root rel)))
+      (spit (str (fs/path root rel)) text))
+    {:root (str root) :protected-line protected-line :protected-msg protected-msg
+     :ref-line ref-line :secret secret :api-key api-key
+     :env {"OPENAI_API_KEY" secret "PATH" "/usr/bin" "SHORT_TOKEN" "abc"}}))
+
+(def review-phase
+  (assoc (phase :full-spec-review nil :pass)
+         :isolation "bubblewrap-provider-network"
+         :result-text "Reviewed the whole spec: 3 findings, all fixed.\nPHASE_VALIDATION:pass"))
+
+(defn diagnosed-result
+  "scored-result plus the diagnostics run-challenge attaches."
+  [{:keys [root env]} private-result]
+  (let [r (scored-result (update auction-runner-pass :phase-results #(conj (pop %) review-phase))
+                         true private-result)
+        ctx (scrub-context root "demo" env)]
+    (assoc r :private-test (private-test-diagnostic private-result
+                                                    (classify-private-result true private-result) ctx)
+           :full-spec-review (full-spec-review-diagnostic root "demo" (:phase-results r) ctx))))
+
+(deftest scrub-text-test
+  (let [ctx {:env-secrets (secret-env-values {"MY_TOKEN" "abcdefgh12345" "HOME" "/home/x" "X_KEY" "short"})}
+        gh (str "ghp_" (apply str (repeat 36 "a")))
+        {:keys [text redactions]}
+        (scrub-text (str "token abcdefgh12345\nAuthorization: Bearer abcdefghijklmnop\n"
+                         "push https://user:hunter2pass@example.com/repo " gh "\n"
+                         "password = hunter2hunter2\nexpected: (= 1 x)\nordinary line\n")
+                    ctx)]
+    (is (= [["MY_TOKEN" "abcdefgh12345"]] (:env-secrets ctx)) "short and non-secret names ignored")
+    (is (not-any? #(str/includes? text %) ["abcdefgh12345" "abcdefghijklmnop" "hunter2pass" gh "hunter2hunter2"]))
+    (is (str/includes? text "[REDACTED:env:MY_TOKEN]"))
+    (is (str/includes? text "https://[REDACTED:url-credentials]@example.com/repo"))
+    (is (str/includes? text "expected: (= 1 x)") "assertion lines are only redacted in private-test output")
+    (is (str/includes? text "ordinary line"))
+    (is (not (str/includes? text "]]")) "no double redaction")
+    (is (= 1 (:secret-env redactions)))
+    (is (= text (:text (scrub-text text ctx))) "idempotent")
+    (let [line (apply str (repeat 200000 "a"))
+          t0 (System/currentTimeMillis)]
+      (is (= line (:text (scrub-text line {:private-test? true}))))
+      (is (< (- (System/currentTimeMillis) t0) 5000) "no quadratic backtracking on a 200 KB line"))))
+
+(deftest private-output-and-review-survive-manifest-and-bundle-test
+  (let [{:keys [root protected-line protected-msg ref-line secret api-key] :as fx} (diagnostics-fixture)
+        stdout (str "\nTesting demo.private-test\n\nFAIL in (withdraw-test) (private_test.clj:3)\n"
+                    protected-msg "\n"
+                    "expected: (= 4711 (withdraw! client \"acct\" 99999))\n"
+                    "  actual: (not (= 4711 0))\n\n"
+                    "ERROR in (deposit-test) (private_test.clj:9)\n"
+                    "expected: (= 1 (deposit! client))\n"
+                    "  actual: clojure.lang.ExceptionInfo: depot append timed out {:depot \"*deposits\"}\n"
+                    " at demo.module$deposit_BANG_.invoke (module.clj:42)\n"
+                    "echo " protected-line "\n"
+                    "env leak " secret "\n"
+                    "Ran 12 tests containing 40 assertions.\n2 failures, 1 errors.\n")
+        stderr (str "WARNING: implementation emitted a reflection warning\n" ref-line "\n"
+                    "Authorization: Bearer abcdefghijklmnopqrstu\n")
+        private-result {:exit 1 :out stdout :err stderr :duration-s 7 :timeout-s 1800}
+        r (diagnosed-result fx private-result)
+        m (build-run-manifest run-meta-fixture [r])
+        dir (fs/create-temp-dir {:prefix "bundle-"})
+        report (str (fs/path dir "run.md"))]
+    (try
+      (let [mpath (write-run-manifest! report m)
+            bpath (write-run-bundle! report m)
+            manifest-text (slurp mpath)
+            from-file (json/parse-string manifest-text true)
+            bundle (read-bundle-json bpath)]
+        (is (= [(str (fs/path dir "run.bundle.tar.gz"))] [bpath]))
+        (is (= ["run-1/" "run-1/BUNDLE.json"] (sort (bundle-entries bpath))))
+        (is (nil? (write-run-bundle! report {:run-id "other"})) "never overwrites")
+        (is (= (sha256-hex (.getBytes ^String manifest-text "UTF-8")) (:manifest-sha256 bundle))
+            "BUNDLE.json pins the exact manifest file")
+        (is (= from-file (:manifest bundle)) "bundle carries the same manifest")
+        (is (= "rama-ai-learn-run-bundle" (:kind bundle)))
+        (is (= (get-in from-file [:redaction-policy]) (:redaction-policy bundle)))
+        (doseq [[label doc] [["manifest" from-file] ["bundle" (:manifest bundle)]]]
+          (testing label
+            (let [c (first (:challenges doc))
+                  pt (:private-test c)
+                  fsr (:full-spec-review c)
+                  out (:stdout pt)]
+              (is (= "private-fail" (:outcome c)))
+              (is (true? (:counted-as-failure pt)))
+              (is (nil? (:sentinel pt)))
+              (is (= [1 false 1800 7] [(:exit pt) (:timed-out pt) (:timeout-s pt) (:duration-s pt)]))
+              (testing "complete stdout/stderr survive, minus redactions"
+                (doseq [kept ["Testing demo.private-test" "FAIL in (withdraw-test) (private_test.clj:3)"
+                              "ERROR in (deposit-test) (private_test.clj:9)"
+                              "  actual: clojure.lang.ExceptionInfo: depot append timed out {:depot \"*deposits\"}"
+                              " at demo.module$deposit_BANG_.invoke (module.clj:42)"
+                              "Ran 12 tests containing 40 assertions.\n2 failures, 1 errors.\n"]]
+                  (is (str/includes? out kept) kept))
+                (is (= (count (str/split stdout #"\n" -1)) (count (str/split out #"\n" -1)))
+                    "line-for-line: redaction never drops lines")
+                (is (str/includes? (:stderr pt) "WARNING: implementation emitted a reflection warning")))
+              (testing "assertions, comparisons, protected plaintext and secrets are redacted"
+                (is (= 2 (count (re-seq #"(?m)^expected: \[REDACTED:private-test-assertion\]$" out))))
+                (is (str/includes? out "  actual: [REDACTED:private-test-comparison]"))
+                (is (str/includes? out "[REDACTED:env:OPENAI_API_KEY]"))
+                (is (str/includes? (:stderr pt) "Authorization: Bearer [REDACTED:authorization]"))
+                (is (= {:secret-env 1 :credential 1 :private-test-assertion 3 :protected-plaintext 3}
+                       (:redactions pt))))
+              (testing "complete full-spec-review findings survive"
+                (is (= {:ran true :verdict "pass" :exit 0 :report-present true :report-skipped nil
+                        :report-path "implementations/demo/FULL_SPEC_REVIEW.md"}
+                       (select-keys fsr [:ran :verdict :exit :report-present :report-skipped :report-path])))
+                (is (= (-> (slurp (str (fs/path root "implementations/demo/FULL_SPEC_REVIEW.md")))
+                           (str/replace secret "[REDACTED:env:OPENAI_API_KEY]")
+                           (str/replace api-key "[REDACTED:api-key]"))
+                       (:report-text fsr))
+                    "byte-for-byte except the two redacted secrets")
+                (is (= (:result-text review-phase) (:final-message fsr)))
+                (is (= 1 (:secret-env (:redactions fsr)))))
+              (is (= "bubblewrap-provider-network" (:isolation (last (:phases c))))))))
+        (doseq [[label text] [["manifest" manifest-text] ["bundle" (json/generate-string bundle)]]
+                leaked [secret api-key protected-line protected-msg ref-line "abcdefghijklmnopqrstu"
+                        "(withdraw! client \"acct\" 99999)" "(not (= 4711 0))"]]
+          (is (not (str/includes? text leaked)) (str label " leaks a fixture secret/protected value"))))
+      (finally (fs/delete-tree dir) (fs/delete-tree root)))))
+
+(deftest sentinel-0-of-1-survives-bundle-as-unavailable-test
+  (let [fx (diagnostics-fixture)
+        sentinel (assoc private-sentinel-0-of-1
+                        :out (str "\nERROR in (demo.private-test) (Compiler.java:7)\n"
+                                  "Uncaught exception, not in assertion.\n"
+                                  "expected: nil\n  actual: java.io.FileNotFoundException: Could not locate demo/module__init.class\n"
+                                  (:out private-sentinel-0-of-1))
+                        :err "Execution error\n")
+        r (diagnosed-result fx sentinel)
+        genuine (diagnosed-result fx private-real-fail)
+        dir (fs/create-temp-dir {:prefix "bundle-"})
+        report (str (fs/path dir "run.md"))
+        m (build-run-manifest run-meta-fixture [r genuine])]
+    (try
+      (write-run-manifest! report m)
+      (let [bundle (read-bundle-json (write-run-bundle! report m))]
+        (doseq [doc [m (json/parse-string (slurp (manifest-path report)) true) (:manifest bundle)]]
+          (let [[c g] (:challenges doc)
+                pt (:private-test c)]
+            (is (= ["private-unavailable" "unavailable" false nil]
+                   [(:outcome c) (:private-status c) (:scored c) (:score c)]))
+            (is (= ["zero-of-one" false] [(:sentinel pt) (:counted-as-failure pt)])
+                "0/1 sentinel is recorded, never counted as a private failure")
+            (is (str/includes? (:stdout pt) "Could not locate demo/module__init.class")
+                "the load error that caused the sentinel is preserved")
+            (is (str/includes? (:stdout pt) "Ran 1 tests containing 1 assertions.\n0 failures, 1 errors."))
+            (is (= "Execution error\n" (:stderr pt)))
+            (is (= ["private-fail" true 0] [(:outcome g) (:counted-as-failure (:private-test g)) (:score g)])
+                "a genuine failure next to it is still a failure"))))
+      (is (re-find #"Private verdicts: PASS 0 \| FAIL 1 \| UNAVAILABLE \(not evaluated\) 1"
+                   (private-verdict-line [r genuine])))
+      (finally (fs/delete-tree dir) (fs/delete-tree (:root fx))))))
+
+(deftest symlinked-review-is-not-followed-test
+  (let [{:keys [root ref-line] :as fx} (diagnostics-fixture)
+        review (fs/path root "implementations/demo/FULL_SPEC_REVIEW.md")]
+    (try
+      (fs/delete review)
+      (fs/create-sym-link review (fs/path root "challenges/demo/test-resources/demo/module.clj"))
+      (let [d (full-spec-review-diagnostic root "demo" [review-phase] (scrub-context root "demo" {}))]
+        (is (= [false "symlink" nil] [(:report-present d) (:report-skipped d) (:report-text d)]))
+        (is (not (str/includes? (pr-str d) ref-line))))
+      (finally (fs/delete-tree root)))))
+
+(deftest no-private-run-has-no-private-diagnostic-test
+  (is (nil? (private-test-diagnostic nil {:private-status :not-run} {})))
+  (is (nil? (full-spec-review-diagnostic (str (fs/create-temp-dir)) "demo" [] {}))))
+
+;;; Scored-run isolation preflight
+
+(deftest scored-run-requires-isolation-test
+  (let [calls (atom [])]
+    (with-redefs [invoke-command! (fn [cmd _] (swap! calls conj cmd)
+                                    {:exit 0 :out (json/generate-string {:filesystem "bubblewrap" :probe "passed"})})]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Scored runs require solver isolation"
+            (require-scored-run-isolation! "/project" {} "claude" ["demo"])))
+      (is (empty? @calls) "rejected before any process starts")
+      (let [rec (require-scored-run-isolation! "/project" {:isolate-network true} "claude" ["demo" "other"])]
+        (is (= {:filesystem "bubblewrap" :probe "passed" :mode "bubblewrap-provider-network"
+                :launcher "scripts/isolate_solver.py" :preflight "passed"} rec))
+        (is (= ["python3" "/project/scripts/isolate_solver.py" "--repo" "/project" "--agent" "claude"
+                "--network" "strict" "--preflight" "--audit-challenge" "demo" "--audit-challenge" "other"]
+               (last @calls))))
+      (is (= "bubblewrap-public-only"
+             (:mode (require-scored-run-isolation! "/project" {:isolate true} "codex" ["demo"])))))
+    (with-redefs [invoke-command! (fn [_ _] {:exit 1 :out "" :err "isolation preflight failed: bubblewrap is required"})]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Isolation preflight failed: .*bubblewrap is required"
+            (require-scored-run-isolation! "/project" {:isolate true} "claude" ["demo"]))))))
+
+(deftest scored-run-isolation-real-preflight-test
+  (if-not (fs/which "bwrap")
+    (println "SKIP scored-run-isolation-real-preflight-test: bubblewrap not installed")
+    (let [rec (require-scored-run-isolation! (str (fs/cwd)) {:isolate-network true} "claude" ["fanout"])]
+      (is (= ["bubblewrap" "passed" "strict" "allowlisted-public-copy" 0]
+             [(:filesystem rec) (:probe rec) (:network rec) (get-in rec [:snapshot :kind])
+              (get-in rec [:snapshot :audits :fanout :violations])]))
+      (is (re-matches #"[0-9a-f]{64}" (:launcher-sha256 rec))))))
 
 (deftest alignment-rubric-test
   (testing "the scorer gets only the alignment section, with the original anchors"
