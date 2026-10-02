@@ -1543,17 +1543,25 @@
        :stderr (:text err)
        :redactions (sum-redactions out err)})))
 
+(defn- full-spec-review-sources
+  "The last full-spec-review phase result and its FULL_SPEC_REVIEW.md text.
+  A symlinked report is never followed (it could point at host-only files)."
+  [project-root challenge-name phase-results]
+  (let [rel (str "implementations/" challenge-name "/FULL_SPEC_REVIEW.md")
+        path (fs/path project-root rel)
+        symlink? (fs/sym-link? path)]
+    {:r (last (filter #(= :full-spec-review (:phase-id %)) phase-results))
+     :rel rel
+     :symlink? symlink?
+     :report (when (and (not symlink?) (fs/regular-file? path {:nofollow-links true}))
+               (slurp (str path)))}))
+
 (defn full-spec-review-diagnostic
   "Complete, scrubbed full-spec-review findings: the FULL_SPEC_REVIEW.md
   report and the session's final message. nil when neither exists. A
   symlinked report is never followed (it could point at host-only files)."
   [project-root challenge-name phase-results ctx]
-  (let [r (last (filter #(= :full-spec-review (:phase-id %)) phase-results))
-        rel (str "implementations/" challenge-name "/FULL_SPEC_REVIEW.md")
-        path (fs/path project-root rel)
-        symlink? (fs/sym-link? path)
-        report (when (and (not symlink?) (fs/regular-file? path {:nofollow-links true}))
-                 (slurp (str path)))
+  (let [{:keys [r rel symlink? report]} (full-spec-review-sources project-root challenge-name phase-results)
         [report' message] (scrub-texts [report (:result-text r)] ctx)]
     (when (or r report symlink?)
       {:ran (boolean r)
@@ -1657,13 +1665,110 @@
                  "only the challenge's own non-snapshot files are protected sources; repository docs/, review/ and .amp/ and other challenges are not"
                  "credential patterns are heuristic"]})
 
+;;; Evaluator-only private log (docs/outcome-taxonomy.md, "Evaluator log")
+;;
+;; The manifest and bundle keep only the scrubbed diagnostics above. The
+;; complete private-test output and full-spec-review findings go to
+;; <report>.private.log next to the report (../reports, outside the repository
+;; and every solver snapshot), with only secret env values and credentials
+;; scrubbed. The manifest pins the log by path and SHA-256; no bundle holds it.
+
+(def evaluator-log-scrubbing ["secret-env" "credential"])
+
+(defn evaluator-diagnostics
+  "[{:section :text}] for the evaluator log: complete private-test stdout and
+  stderr, FULL_SPEC_REVIEW.md and the review's final message, with secret env
+  values and credential patterns scrubbed and nothing else."
+  [project-root challenge-name private-result phase-results env-secrets]
+  (let [{:keys [r report]} (full-spec-review-sources project-root challenge-name phase-results)]
+    (into []
+          (keep (fn [[section text]]
+                  (when text
+                    {:section section :text (first (pre-scrub text {:env-secrets env-secrets}))})))
+          [["private-test stdout" (:out private-result)]
+           ["private-test stderr" (:err private-result)]
+           ["full-spec-review FULL_SPEC_REVIEW.md" report]
+           ["full-spec-review final message" (:result-text r)]])))
+
+(defn evaluator-log-text
+  "Evaluator log content. Each section header gives its exact UTF-8 byte
+  length, so section text is recoverable verbatim whatever it contains."
+  [run-id results]
+  (str "# rama-ai-learn evaluator-only private diagnostics\n"
+       "# run-id: " run-id "\n"
+       "# EVALUATOR ONLY: never give this file to a solver; never bundle or publish it.\n"
+       "# Scrubbed: set secret env values and credential patterns only. "
+       "Protected and private-test text is NOT redacted.\n"
+       (apply str (for [{:keys [name evaluator-diagnostics]} results
+                        {:keys [section text]} evaluator-diagnostics]
+                    (str "\n===== " name " | " section " | "
+                         (alength (.getBytes ^String text "UTF-8")) " bytes =====\n"
+                         text "\n===== end " name " | " section " =====\n")))))
+
+(defn evaluator-log-path [report-path]
+  (str (str/replace (str report-path) #"\.md$" "") ".private.log"))
+
+(defn- solver-writable-dir? [project-root dir]
+  (let [impl (fs/path project-root "implementations")]
+    (and (fs/exists? impl)
+         (fs/starts-with? (fs/canonicalize dir) (fs/canonicalize impl)))))
+
+(defn write-evaluator-log!
+  "Create <report>.private.log (owner-only, never overwriting), sync it and
+  read it back. Returns the manifest reference. Throws, leaving no file
+  behind, when the log cannot be written completely."
+  [report-path project-root text]
+  (let [path (fs/absolutize (evaluator-log-path report-path))
+        bs (.getBytes ^String text "UTF-8")
+        sha (sha256-hex bs)
+        fail (fn [msg & [cause]]
+               (throw (ex-info (str "Evaluator log not written; no manifest or bundle emitted: " msg)
+                               {:reason :evaluator-log-failed :path (str path)} cause)))]
+    (when (solver-writable-dir? project-root (fs/parent path))
+      (fail "the reports directory is inside a solver-writable implementation directory"))
+    (try
+      (fs/create-file path {:posix-file-permissions "rw-------"})
+      (catch Exception e (fail "cannot create the file (it may already exist)" e)))
+    (try
+      (with-open [ch (java.nio.channels.FileChannel/open
+                      path (into-array java.nio.file.OpenOption [java.nio.file.StandardOpenOption/WRITE
+                                                                 java.nio.file.LinkOption/NOFOLLOW_LINKS]))]
+        (let [buf (java.nio.ByteBuffer/wrap bs)]
+          (while (.hasRemaining buf) (.write ch buf)))
+        (.force ch true))
+      (let [back (fs/read-all-bytes path)]
+        (when-not (and (= (alength bs) (alength back)) (= sha (sha256-hex back)))
+          (fail "read-back length or SHA-256 differs")))
+      (catch Exception e
+        (fs/delete-if-exists path)
+        (if (= :evaluator-log-failed (:reason (ex-data e))) (throw e) (fail "write failed" e))))
+    {:path (str (fs/file-name path))
+     :path-relative-to "manifest-directory"
+     :sha256 sha
+     :bytes (alength bs)
+     :audience "evaluator-only"
+     :in-bundle false
+     :scrubbed evaluator-log-scrubbing}))
+
+(defn evaluator-log-intact?
+  "True when the log a manifest references exists next to the report as a
+  regular file with the referenced length and SHA-256."
+  [report-path {:keys [path sha256 bytes]}]
+  (let [f (some->> path (fs/path (fs/parent (fs/absolutize report-path))))]
+    (boolean (and f (= path (str (fs/file-name f)))
+                  (fs/regular-file? f {:nofollow-links true})
+                  (let [back (fs/read-all-bytes f)]
+                    (and (= bytes (alength back)) (= sha256 (sha256-hex back))))))))
+
 (defn build-run-manifest
   "Pure: run metadata map plus results -> JSON-ready manifest map."
   [{:keys [run-id started-at finished-at args repo-sha repo-dirty? agent requested
-           grader-timeout-s isolation]} results]
+           grader-timeout-s isolation evaluator-log]} results]
   (when-not (seq isolation)
     (throw (ex-info "A scored run manifest requires the solver isolation record" {:run-id run-id})))
-  {:schema-version 2
+  (when-not (and (string? (:path evaluator-log)) (re-matches #"[0-9a-f]{64}" (str (:sha256 evaluator-log))))
+    (throw (ex-info "A run manifest requires the written evaluator log reference" {:run-id run-id})))
+  {:schema-version 3
    :run-id run-id
    :started-at started-at
    :finished-at finished-at
@@ -1673,6 +1778,7 @@
    :grader-timeout-s grader-timeout-s
    :isolation isolation
    :redaction-policy redaction-policy
+   :evaluator-log evaluator-log
    :challenges (mapv challenge-manifest results)})
 
 (defn manifest-path [report-path]
@@ -1683,10 +1789,14 @@
 
 (defn write-run-manifest!
   "Write the manifest next to the report. Never overwrites an existing file.
-  Returns the path written, or nil when one already existed."
+  Returns the path written, or nil when one already existed. Throws instead
+  of claiming an evaluator log that is missing or differs from its reference."
   [report-path manifest]
   (let [path (manifest-path report-path)]
     (when-not (fs/exists? path)
+      (when-not (evaluator-log-intact? report-path (:evaluator-log manifest))
+        (throw (ex-info "Manifest not written: its evaluator log is missing or incomplete"
+                        {:reason :evaluator-log-mismatch})))
       (spit path (manifest-json manifest))
       path)))
 
@@ -1725,6 +1835,18 @@
               (throw (ex-info (str "Bundle tar failed: " err) {:exit exit}))))
           path
           (finally (fs/delete-tree staging)))))))
+
+(defn emit-run-artifacts!
+  "Evaluator log, then the manifest that references it, then the bundle.
+  Nothing is emitted after a step fails. Returns the paths written."
+  [report-path project-root run-meta results]
+  (let [log-ref (write-evaluator-log! report-path project-root
+                                      (evaluator-log-text (:run-id run-meta) results))
+        manifest (build-run-manifest (assoc run-meta :evaluator-log log-ref) results)
+        mpath (write-run-manifest! report-path manifest)]
+    {:evaluator-log (evaluator-log-path report-path)
+     :manifest mpath
+     :bundle (when mpath (write-run-bundle! report-path manifest))}))
 
 ;;; Alignment scoring
 
@@ -2722,6 +2844,10 @@
                 private-test (private-test-diagnostic private-result private-verdict scrub-ctx)
                 full-spec-review (full-spec-review-diagnostic project-root challenge-name
                                                               (:phase-results phase-result) scrub-ctx)
+                ;; Complete text for the evaluator-only log; secrets scrubbed only.
+                evaluator-diagnostics (evaluator-diagnostics project-root challenge-name private-result
+                                                             (:phase-results phase-result)
+                                                             (:env-secrets scrub-ctx))
                 has-implementation? (boolean (seq (find-impl-files project-root challenge-name)))
                 completion (classify-completion phase-result)
                 outcome (classify-outcome {:completion completion
@@ -2756,6 +2882,7 @@
                                    :private-reason (:private-reason private-verdict)
                                    :private-test private-test
                                    :full-spec-review full-spec-review
+                                   :evaluator-diagnostics evaluator-diagnostics
                                    :has-private-suite? has-suite?
                                    :has-implementation? has-implementation?
                                    :implementation-sha256 (tree-sha256 (fs/path project-root "implementations" challenge-name))
@@ -3213,7 +3340,8 @@
                                       *slow-reasoning* slow-effort
                                       *grader-timeout-s* (or (:grader-timeout opts) *grader-timeout-s*)]
                               (run-challenges valid agent-key agent-name project-root model reasoning enc-key))
-              total-elapsed-s (/ (- (System/currentTimeMillis) start-ms) 1000.0)]
+              total-elapsed-s (/ (- (System/currentTimeMillis) start-ms) 1000.0)
+              artifact-error (volatile! nil)]
           (print-summary-table results total-elapsed-s)
           (let [report-path (generate-report results agent-name project-root
                                              {:total-elapsed-s total-elapsed-s
@@ -3221,24 +3349,30 @@
                                               :reasoning reasoning})]
             (println)
             (println (str "Report saved: " report-path))
-            (let [manifest (build-run-manifest
-                            {:run-id (str (fs/strip-ext (fs/file-name report-path)) "-" (subs (str (random-uuid)) 0 8))
-                             :started-at started-at
-                             :finished-at (str (java.time.Instant/now))
-                             :args (vec args)
-                             :repo-sha (git-out project-root "rev-parse" "HEAD")
-                             :repo-dirty? (boolean (seq (git-out project-root "status" "--porcelain")))
-                             :agent agent-name
-                             :requested {:model model :effort reasoning
-                                         :fast-model fast-model :fast-effort fast-effort
-                                         :slow-model slow-model :slow-effort slow-effort}
-                             :grader-timeout-s (or (:grader-timeout opts) *grader-timeout-s*)
-                             :isolation isolation}
-                            results)]
-              (when-let [mpath (write-run-manifest! report-path manifest)]
-                (println (str "Manifest saved: " mpath)))
-              (when-let [bpath (write-run-bundle! report-path manifest)]
-                (println (str "Bundle saved: " bpath)))))
+            (let [run-meta {:run-id (str (fs/strip-ext (fs/file-name report-path)) "-" (subs (str (random-uuid)) 0 8))
+                            :started-at started-at
+                            :finished-at (str (java.time.Instant/now))
+                            :args (vec args)
+                            :repo-sha (git-out project-root "rev-parse" "HEAD")
+                            :repo-dirty? (boolean (seq (git-out project-root "status" "--porcelain")))
+                            :agent agent-name
+                            :requested {:model model :effort reasoning
+                                        :fast-model fast-model :fast-effort fast-effort
+                                        :slow-model slow-model :slow-effort slow-effort}
+                            :grader-timeout-s (or (:grader-timeout opts) *grader-timeout-s*)
+                            :isolation isolation}]
+              ;; A failed evaluator log stops the manifest and bundle; the
+              ;; results database is still appended before the run fails.
+              (try
+                (let [{:keys [evaluator-log manifest bundle]}
+                      (emit-run-artifacts! report-path project-root run-meta results)]
+                  (println (str "Evaluator-only private log saved: " evaluator-log))
+                  (some->> manifest (str "Manifest saved: ") println)
+                  (some->> bundle (str "Bundle saved: ") println))
+                (catch Exception e
+                  (vreset! artifact-error e)
+                  (binding [*out* *err*]
+                    (println (str "ERROR: " (ex-message e))))))))
 
           ;; Append to results database
           (let [db-path (str (fs/path project-root ".." "reports" "results.edn"))
@@ -3277,6 +3411,7 @@
                   (str (str/join "\n" (map pr-str records)) "\n")
                   :append true))
 
+          (some-> @artifact-error throw)
           results)))))
 
 (when (= *file* (System/getProperty "babashka.file"))

@@ -8,7 +8,21 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from isolate_solver import audit_snapshot, isolated_command, preflight, snapshot
+from isolate_solver import (CHALLENGE_ALLOWLIST, SHARED_ALLOWLIST, audit_snapshot,
+                            isolated_command, preflight, snapshot)
+
+REPO = Path(__file__).resolve().parent.parent
+# The runner writes <report>.private.log next to its reports, in ../reports.
+EVALUATOR_LOG_SENTINEL = "FAIL in (withdraw-test)\nexpected: (= 4711 (withdraw! c 99999))"
+
+
+def bind_sources(args):
+    """Host paths bubblewrap exposes to the solver."""
+    return [Path(args[i + 1]) for i, a in enumerate(args) if a in ("--bind", "--ro-bind")]
+
+
+def within(path, root):
+    return path == root or root in path.parents
 
 
 class IsolationTests(unittest.TestCase):
@@ -196,6 +210,58 @@ print('blocked private files, Git, sibling mounts, key, host /proc; public skill
         # The solver's blocked reads must not destroy or encrypt authoring data.
         for rel in ("docs/atlas/data/reference-decisions.json", "review/answer.clj"):
             self.assertEqual((self.repo / rel).read_text(), f"fixture {rel}")
+
+    @unittest.skipUnless(shutil.which("bwrap"), "Linux bubblewrap required")
+    def test_solver_cannot_read_evaluator_logs(self):
+        logs = [self.root / "reports/run.private.log", self.repo / "reports/run.private.log"]
+        for log in logs:
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text(EVALUATOR_LOG_SENTINEL)
+        probe = ("import sys\nfrom pathlib import Path\nfor p in sys.argv[1:]:\n"
+                 "    try:\n        Path(p).read_bytes()\n    except OSError:\n        continue\n"
+                 "    raise AssertionError('read succeeded: ' + p)\nprint('evaluator logs unreadable')\n")
+        args, env = isolated_command(self.repo, "demo", "claude",
+                                     ["python3", "-c", probe, *map(str, logs)], self.root)
+        for log in logs:
+            self.assertFalse(any(within(log, src) for src in bind_sources(args)), log)
+        result = subprocess.run(args, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("evaluator logs unreadable", result.stdout)
+        self.assertNotIn("withdraw-test", result.stdout + result.stderr)
+        public = self.root / "snapshot"
+        snapshot(self.repo, public, "demo")
+        for path in public.rglob("*"):
+            self.assertFalse(path.name.endswith(".private.log"), path)
+            if path.is_file():
+                self.assertNotIn(b"withdraw-test", path.read_bytes())
+
+
+class RepositoryEvaluatorLogTests(unittest.TestCase):
+    """Every real challenge's snapshot excludes the runner's evaluator logs."""
+
+    def test_evaluator_log_dir_is_outside_every_challenge_snapshot(self):
+        reports = (REPO / ".." / "reports").resolve()
+        in_repo_reports = REPO / "reports"
+        self.assertFalse(within(reports, REPO))
+        allowed = [*SHARED_ALLOWLIST, *("challenges/{c}/" + r for r in CHALLENGE_ALLOWLIST)]
+        self.assertFalse(any(r.split("/")[0] == "reports" for r in allowed))
+        challenges = sorted(p.name for p in (REPO / "challenges").iterdir()
+                            if p.is_dir() and not p.is_symlink())
+        self.assertTrue(challenges)
+        for challenge in challenges:
+            with self.subTest(challenge=challenge), tempfile.TemporaryDirectory() as tmp:
+                public = Path(tmp)
+                snapshot(REPO, public, challenge)
+                for path in public.rglob("*"):
+                    rel = path.relative_to(public)
+                    self.assertFalse(path.name.endswith(".private.log"), rel)
+                    if path.is_symlink():
+                        continue
+                    source = (REPO / rel).resolve()
+                    self.assertTrue(within(source, REPO), rel)
+                    self.assertFalse(within(source, reports) or within(source, in_repo_reports), rel)
+                # Paths only: violations name files and rules, never contents.
+                self.assertEqual(audit_snapshot(REPO, public, challenge, environ={})["violations"], [])
 
 
 if __name__ == "__main__":

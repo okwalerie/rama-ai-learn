@@ -1315,7 +1315,10 @@
   {:run-id "run-1" :started-at "t0" :finished-at "t1"
    :repo-sha "deadbeef" :repo-dirty? false :agent "claude"
    :requested {:model "m" :effort "high"} :grader-timeout-s 1800
-   :isolation isolation-fixture})
+   :isolation isolation-fixture
+   :evaluator-log {:path "run.private.log" :path-relative-to "manifest-directory"
+                   :sha256 (apply str (repeat 64 "0")) :bytes 0 :audience "evaluator-only"
+                   :in-bundle false :scrubbed ["secret-env" "credential"]}})
 
 (deftest run-manifest-test
   (let [r (assoc (scored-result auction-runner-pass true private-sentinel-0-of-1)
@@ -1324,7 +1327,10 @@
         c (first (:challenges m))]
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"requires the solver isolation record"
           (build-run-manifest (dissoc run-meta-fixture :isolation) [r])))
-    (is (= 2 (:schema-version m)))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"requires the written evaluator log reference"
+          (build-run-manifest (dissoc run-meta-fixture :evaluator-log) [r])))
+    (is (= 3 (:schema-version m)))
+    (is (= (:evaluator-log run-meta-fixture) (:evaluator-log m)))
     (is (= isolation-fixture (:isolation m)))
     (is (= redaction-policy (:redaction-policy m)))
     (is (= "run-1" (:run-id m)))
@@ -1339,9 +1345,15 @@
     (is (string? (json/generate-string m)))
     (let [dir (fs/create-temp-dir)
           report (str (fs/path dir "r.md"))]
-      (is (= (str (fs/path dir "r.manifest.json")) (write-run-manifest! report m)))
-      (is (nil? (write-run-manifest! report {:run-id "other"})) "never overwrites")
-      (is (= "run-1" (get (json/parse-string (slurp (manifest-path report))) "run-id")))
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"evaluator log is missing or incomplete"
+            (write-run-manifest! report m)))
+      (is (not (fs/exists? (manifest-path report))) "no manifest claims a missing log")
+      (let [m (build-run-manifest (assoc run-meta-fixture :evaluator-log
+                                         (write-evaluator-log! report (str dir) "log\n"))
+                                  [r])]
+        (is (= (str (fs/path dir "r.manifest.json")) (write-run-manifest! report m)))
+        (is (nil? (write-run-manifest! report {:run-id "other"})) "never overwrites")
+        (is (= "run-1" (get (json/parse-string (slurp (manifest-path report))) "run-id"))))
       (fs/delete-tree dir))))
 
 ;;; Scrubbed diagnostics in the manifest and BUNDLE.json
@@ -1380,6 +1392,7 @@
                              "Spec says withdrawals beyond balance are rejected; fixed in withdraw!.\n\n"
                              "## Finding 2: depot partitioning\nRe-partitioned by account id.\n\n"
                              "## Finding 3\nOPENAI_API_KEY=" secret " was echoed by a tool; " api-key "\n\n"
+                             "## Finding 4: private suite\nwithdraw-test said: " protected-msg "\n\n"
                              "Verdict: all findings fixed; suite green.\n")}]
       (fs/create-dirs (fs/parent (fs/path root rel)))
       (spit (str (fs/path root rel)) text))
@@ -1400,7 +1413,9 @@
         ctx (scrub-context root "demo" env)]
     (assoc r :private-test (private-test-diagnostic private-result
                                                     (classify-private-result true private-result) ctx)
-           :full-spec-review (full-spec-review-diagnostic root "demo" (:phase-results r) ctx))))
+           :full-spec-review (full-spec-review-diagnostic root "demo" (:phase-results r) ctx)
+           :evaluator-diagnostics (evaluator-diagnostics root "demo" private-result (:phase-results r)
+                                                         (:env-secrets ctx)))))
 
 (def empty-corpus
   "A verified corpus with no protected and no public files."
@@ -1455,17 +1470,52 @@
                     "Authorization: Bearer abcdefghijklmnopqrstu\n")
         private-result {:exit 1 :out stdout :err stderr :duration-s 7 :timeout-s 1800}
         r (diagnosed-result fx private-result)
-        m (build-run-manifest run-meta-fixture [r])
         dir (fs/create-temp-dir {:prefix "bundle-"})
         report (str (fs/path dir "run.md"))]
     (try
-      (let [mpath (write-run-manifest! report m)
-            bpath (write-run-bundle! report m)
+      (let [{mpath :manifest bpath :bundle lpath :evaluator-log}
+            (emit-run-artifacts! report root (dissoc run-meta-fixture :evaluator-log) [r])
             manifest-text (slurp mpath)
             from-file (json/parse-string manifest-text true)
-            bundle (read-bundle-json bpath)]
+            bundle (read-bundle-json bpath)
+            log-bytes (fs/read-all-bytes lpath)
+            log (String. ^bytes log-bytes "UTF-8")
+            review (slurp (str (fs/path root "implementations/demo/FULL_SPEC_REVIEW.md")))]
         (is (= [(str (fs/path dir "run.bundle.tar.gz"))] [bpath]))
-        (is (= ["run-1/" "run-1/BUNDLE.json"] (sort (bundle-entries bpath))))
+        (testing "evaluator log keeps complete private diagnostics, scrubbing only secrets"
+          (is (= (str (fs/path dir "run.private.log")) lpath))
+          (is (= {:path "run.private.log" :path-relative-to "manifest-directory"
+                  :sha256 (sha256-hex log-bytes) :bytes (alength ^bytes log-bytes)
+                  :audience "evaluator-only" :in-bundle false :scrubbed ["secret-env" "credential"]}
+                 (:evaluator-log from-file) (:evaluator-log (:manifest bundle)))
+              "manifest and bundle pin the log by path and SHA-256")
+          (is (= "rw-------" (fs/posix->str (fs/posix-file-permissions lpath))))
+          (is (str/includes? log "FAIL in (withdraw-test) (private_test.clj:3)\n"))
+          (doseq [kept [protected-msg protected-line ref-line
+                        "expected: (= 4711 (withdraw! client \"acct\" 99999))\n"
+                        "  actual: (not (= 4711 0))\n"
+                        "  actual: clojure.lang.ExceptionInfo: depot append timed out {:depot \"*deposits\"}\n"
+                        "## Finding 4: private suite\nwithdraw-test said: " (:result-text review-phase)]]
+            (is (str/includes? log kept) "evaluator log keeps protected and private-test text"))
+          (doseq [[section text] [["private-test stdout" stdout] ["private-test stderr" stderr]
+                                  ["full-spec-review FULL_SPEC_REVIEW.md" review]
+                                  ["full-spec-review final message" (:result-text review-phase)]]
+                  :let [text (-> text
+                                 (str/replace secret "[REDACTED:env:OPENAI_API_KEY]")
+                                 (str/replace api-key "[REDACTED:api-key]")
+                                 (str/replace "abcdefghijklmnopqrstu" "[REDACTED:authorization]"))]]
+            (is (str/includes? log (str "\n===== " (:name r) " | " section " | "
+                                        (alength (.getBytes ^String text "UTF-8")) " bytes =====\n"
+                                        text "\n===== end " (:name r) " | " section " =====\n"))
+                (str section " is complete, byte for byte, except scrubbed secrets")))
+          (doseq [leaked [secret api-key "abcdefghijklmnopqrstu"]]
+            (is (not (str/includes? log leaked)) "evaluator log leaks a secret/credential"))
+          (doseq [[label text] [["manifest" manifest-text] ["bundle" (json/generate-string bundle)]]
+                  private ["FAIL in (withdraw-test)" "withdraw-test said: overdraft"
+                           "depot append timed out {:depot" "=====" "EVALUATOR ONLY"]]
+            (is (not (str/includes? text private)) (str label " holds evaluator-only text"))))
+        (is (= ["run-1/" "run-1/BUNDLE.json"] (sort (bundle-entries bpath)))
+            "the bundle holds BUNDLE.json only, never the evaluator log")
         (is (nil? (write-run-bundle! report {:run-id "other"})) "never overwrites")
         (is (= (sha256-hex (.getBytes ^String manifest-text "UTF-8")) (:manifest-sha256 bundle))
             "BUNDLE.json pins the exact manifest file")
@@ -1509,11 +1559,13 @@
                 (is (= {:ran true :verdict "pass" :exit 0 :report-present true :report-skipped nil
                         :report-path "implementations/demo/FULL_SPEC_REVIEW.md"}
                        (select-keys fsr [:ran :verdict :exit :report-present :report-skipped :report-path])))
-                (is (= (-> (slurp (str (fs/path root "implementations/demo/FULL_SPEC_REVIEW.md")))
+                (is (= (-> review
                            (str/replace secret "[REDACTED:env:OPENAI_API_KEY]")
-                           (str/replace api-key "[REDACTED:api-key]"))
+                           (str/replace api-key "[REDACTED:api-key]")
+                           (str/replace (str "withdraw-test said: " protected-msg)
+                                        "[REDACTED:protected-plaintext] said: [REDACTED:protected-plaintext]"))
                        (:report-text fsr))
-                    "byte-for-byte except the two redacted secrets")
+                    "byte-for-byte except the two redacted secrets and the protected echo")
                 (is (= (:result-text review-phase) (:final-message fsr)))
                 (is (= 1 (:secret-env (:redactions fsr)))))
               (is (= "bubblewrap-provider-network" (:isolation (last (:phases c))))))))
@@ -1644,8 +1696,9 @@
         report (str (fs/path dir "run.md"))
         m (build-run-manifest run-meta-fixture [r genuine])]
     (try
-      (write-run-manifest! report m)
-      (let [bundle (read-bundle-json (write-run-bundle! report m))]
+      (let [{:keys [bundle]} (emit-run-artifacts! report (:root fx) (dissoc run-meta-fixture :evaluator-log)
+                                                  [r genuine])
+            bundle (read-bundle-json bundle)]
         (doseq [doc [m (json/parse-string (slurp (manifest-path report)) true) (:manifest bundle)]]
           (let [[c g] (:challenges doc)
                 pt (:private-test c)]
@@ -1662,6 +1715,75 @@
       (is (re-find #"Private verdicts: PASS 0 \| FAIL 1 \| UNAVAILABLE \(not evaluated\) 1"
                    (private-verdict-line [r genuine])))
       (finally (fs/delete-tree dir) (fs/delete-tree (:root fx))))))
+
+;;; Evaluator-only private log: fail closed, never in a solver-visible place
+
+(deftest evaluator-log-fails-closed-test
+  (let [{:keys [root] :as fx} (diagnostics-fixture)
+        r (diagnosed-result fx private-real-fail)
+        meta (dissoc run-meta-fixture :evaluator-log)
+        dir (fs/create-temp-dir {:prefix "evlog-"})
+        none-emitted (fn [report]
+                       (is (not-any? #(fs/exists? (% report)) [manifest-path bundle-path])
+                           "no manifest or bundle after a failed evaluator log"))]
+    (try
+      (testing "an existing log is never overwritten"
+        (let [report (str (fs/path dir "a.md"))]
+          (spit (evaluator-log-path report) "prior")
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Evaluator log not written"
+                (emit-run-artifacts! report root meta [r])))
+          (is (= "prior" (slurp (evaluator-log-path report))))
+          (none-emitted report)))
+      (testing "a missing reports directory"
+        (let [report (str (fs/path dir "missing" "b.md"))]
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Evaluator log not written"
+                (emit-run-artifacts! report root meta [r])))
+          (none-emitted report)))
+      (testing "an incomplete write is detected on read-back and removed"
+        (let [report (str (fs/path dir "c.md"))]
+          (with-redefs [fs/read-all-bytes (fn [_] (byte-array 1))]
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"read-back length or SHA-256 differs"
+                  (emit-run-artifacts! report root meta [r]))))
+          (is (not (fs/exists? (evaluator-log-path report))))
+          (none-emitted report)))
+      (testing "a log changed after it was referenced is not claimed"
+        (let [report (str (fs/path dir "d.md"))
+              ref (write-evaluator-log! report root "complete\n")]
+          (spit (evaluator-log-path report) "trunc")
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"evaluator log is missing or incomplete"
+                (write-run-manifest! report (build-run-manifest (assoc meta :evaluator-log ref) [r]))))
+          (none-emitted report)))
+      (testing "never inside a solver-writable implementation directory"
+        (let [report (str (fs/path root "implementations" "demo" "e.md"))]
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"solver-writable"
+                (emit-run-artifacts! report root meta [r])))
+          (is (not (fs/exists? (evaluator-log-path report))))
+          (none-emitted report)))
+      (finally (fs/delete-tree dir) (fs/delete-tree root)))))
+
+(defn- git-ignored-or-untracked?
+  "True when git can never commit path: it lies outside every worktree, or
+  the enclosing worktree ignores it."
+  [path]
+  (let [dir (first (filter fs/directory? (iterate fs/parent (fs/parent (fs/absolutize path)))))
+        top (git-out dir "rev-parse" "--show-toplevel")]
+    (or (nil? top)
+        (zero? (:exit (p/shell {:dir top :out :string :err :string :continue true}
+                               "git" "check-ignore" "-q" "--no-index" (str (fs/relativize top (fs/absolutize path))))))
+        false)))
+
+(deftest evaluator-log-path-is-gitignored-test
+  (let [repo (fs/canonicalize (fs/cwd))
+        ;; generate-report writes to <repo>/../reports; the log sits beside it.
+        log (fs/path (fs/normalize (fs/path repo ".." "reports")) (fs/file-name (evaluator-log-path "x.md")))]
+    (is (= "x.private.log" (str (fs/file-name log))))
+    (is (not (fs/starts-with? log repo)) "outside the repository, so outside every solver snapshot")
+    (is (git-ignored-or-untracked? log))
+    (doseq [rel ["reports/2026-10-02-run.private.log" "implementations/demo/run.private.log"
+                 "challenges/demo/run.private.log"]]
+      (is (git-ignored-or-untracked? (fs/path repo rel)) rel))
+    (is (not (git-ignored-or-untracked? (fs/path repo "scripts/run_challenges.bb")))
+        "the check itself distinguishes tracked paths")))
 
 (deftest symlinked-review-is-not-followed-test
   (let [{:keys [root ref-line] :as fx} (diagnostics-fixture)

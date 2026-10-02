@@ -77,7 +77,7 @@ count:
 
 ## Run manifest
 
-Each run writes `<report>.manifest.json` (JSON, `schema-version` 2) next to the
+Each run writes `<report>.manifest.json` (JSON, `schema-version` 3) next to the
 markdown report. The file is created once and never overwritten. It holds:
 
 - run id, start and end timestamps, command-line arguments
@@ -93,6 +93,11 @@ markdown report. The file is created once and never overwritten. It holds:
   challenge-allowlist, protected-dirs, audits: {<challenge>: {files,
   categories, violations: 0}}}`. A manifest cannot be built without it.
 - `redaction-policy`: the rules below, `version` 2
+- `evaluator-log`: the reference to the evaluator-only log (below), never its
+  text: `{path, path-relative-to: "manifest-directory", sha256, bytes,
+  audience: "evaluator-only", in-bundle: false, scrubbed: ["secret-env",
+  "credential"]}`. A manifest cannot be built without it, and is not written
+  unless the file next to it has exactly that length and SHA-256.
 - per challenge: outcome, completion, private verdict with counts and reason,
   private-suite availability, score, builds, retries, a SHA-256 of the
   implementation tree, reported cost and estimated cost kept separate, and:
@@ -123,9 +128,32 @@ overwritten. It contains one file, `<run-id>/BUNDLE.json`:
  "redaction-policy": {...}, "manifest": {...the manifest above...}}
 ```
 
-The markdown report and transcripts are not bundled: alignment
-justifications come from a scorer that reads the reference solution, and
-transcripts are unscrubbed.
+The markdown report, transcripts and the evaluator log are not bundled:
+alignment justifications come from a scorer that reads the reference
+solution, and transcripts and the evaluator log are unscrubbed.
+
+## Evaluator log
+
+Before the manifest, the runner writes `<report>.private.log` next to the
+report, in `../reports/` (outside the repository; `*.private.log` is also
+gitignored). It is for the evaluator only and holds, per challenge, the
+complete private-test `stdout` and `stderr`, `FULL_SPEC_REVIEW.md` and the
+full-spec-review final message. Only the `secret-env` and `credential` rules
+below are applied: protected text, clojure.test `expected:`/`actual:` lines
+and private-test data are kept verbatim. Each section starts with
+`===== <challenge> | <section> | <N> bytes =====` (N is the exact UTF-8
+length of the text that follows) and ends with
+`===== end <challenge> | <section> =====`.
+
+The file is created owner-only (`0600`), never overwritten, synced, and read
+back to check its length and SHA-256. If any step fails, or the reports
+directory is inside a solver-writable `implementations/` directory, the file
+is removed and no manifest or bundle is written; the run then exits with an
+error after appending the results database. No solver can read it: solvers
+see only the allowlisted snapshot, their implementation directory and named
+dependency paths (see "Scored-run isolation"), none of which contains
+`../reports/`. Hosts with other readers of `../reports/` (shared accounts,
+backups, sync) must treat the file like `test-private/`.
 
 ## Redaction
 
