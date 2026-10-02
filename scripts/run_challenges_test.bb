@@ -1373,8 +1373,10 @@
                         "challenges/demo/test-private/demo/private_test.clj"
                         (str "(deftest withdraw-test\n  (testing \"" protected-msg "\"\n    " protected-line "))\n")
                         "challenges/demo/test-resources/demo/module.clj" (str ref-line "\n")
+                        "implementations/demo/src/demo/module.clj"
+                        "(throw (ex-info \"depot append timed out\" {}))\n"
                         "implementations/demo/FULL_SPEC_REVIEW.md"
-                        (str "# Full-spec review\n\n## Finding 1: withdraw! allowed overdraft\n"
+                        (str "# Full-spec review\n\n## Finding 1: withdraw! allowed negative balances\n"
                              "Spec says withdrawals beyond balance are rejected; fixed in withdraw!.\n\n"
                              "## Finding 2: depot partitioning\nRe-partitioned by account id.\n\n"
                              "## Finding 3\nOPENAI_API_KEY=" secret " was echoed by a tool; " api-key "\n\n"
@@ -1400,8 +1402,13 @@
                                                     (classify-private-result true private-result) ctx)
            :full-spec-review (full-spec-review-diagnostic root "demo" (:phase-results r) ctx))))
 
+(def empty-corpus
+  "A verified corpus with no protected and no public files."
+  {:protected [] :public [] :implementation [] :paths []})
+
 (deftest scrub-text-test
-  (let [ctx {:env-secrets (secret-env-values {"MY_TOKEN" "abcdefgh12345" "HOME" "/home/x" "X_KEY" "short"})}
+  (let [ctx {:env-secrets (secret-env-values {"MY_TOKEN" "abcdefgh12345" "HOME" "/home/x" "X_KEY" "short"})
+             :corpus empty-corpus}
         gh (str "ghp_" (apply str (repeat 36 "a")))
         {:keys [text redactions]}
         (scrub-text (str "token abcdefgh12345\nAuthorization: Bearer abcdefghijklmnop\n"
@@ -1419,8 +1426,17 @@
     (is (= text (:text (scrub-text text ctx))) "idempotent")
     (let [line (apply str (repeat 200000 "a"))
           t0 (System/currentTimeMillis)]
-      (is (= line (:text (scrub-text line {:private-test? true}))))
+      (is (= line (:text (scrub-text line ctx))))
+      (is (= "[REDACTED:private-test-data]" (:text (scrub-text line (assoc ctx :private-test? true))))
+          "a word outside the public vocabulary is private-test data")
       (is (< (- (System/currentTimeMillis) t0) 5000) "no quadratic backtracking on a 200 KB line"))))
+
+(deftest scrubbing-without-a-corpus-fails-closed-test
+  (doseq [ctx [{} {:corpus (assoc empty-corpus :unavailable "encrypted protected file")}]]
+    (is (= {:text "[REDACTED:protected-index-unavailable]\n\n[REDACTED:protected-index-unavailable]\n"
+            :redactions {:secret-env 0 :credential 0 :private-test-assertion 0 :protected-plaintext 0
+                         :private-test-data 0 :protected-index-unavailable 2}}
+           (scrub-text "Ran 1 tests containing 1 assertions.\n\nanything at all\n" ctx)))))
 
 (deftest private-output-and-review-survive-manifest-and-bundle-test
   (let [{:keys [root protected-line protected-msg ref-line secret api-key] :as fx} (diagnostics-fixture)
@@ -1466,22 +1482,28 @@
               (is (true? (:counted-as-failure pt)))
               (is (nil? (:sentinel pt)))
               (is (= [1 false 1800 7] [(:exit pt) (:timed-out pt) (:timeout-s pt) (:duration-s pt)]))
-              (testing "complete stdout/stderr survive, minus redactions"
-                (doseq [kept ["Testing demo.private-test" "FAIL in (withdraw-test) (private_test.clj:3)"
-                              "ERROR in (deposit-test) (private_test.clj:9)"
-                              "  actual: clojure.lang.ExceptionInfo: depot append timed out {:depot \"*deposits\"}"
-                              " at demo.module$deposit_BANG_.invoke (module.clj:42)"
-                              "Ran 12 tests containing 40 assertions.\n2 failures, 1 errors.\n"]]
-                  (is (str/includes? out kept) kept))
+              (testing "line for line, protected runs and private-test data redacted in place"
+                (is (= (str "\nTesting demo.private-test\n\n"
+                            "FAIL in ([REDACTED:protected-plaintext]) (private_test.clj:3)\n"
+                            "[REDACTED:protected-plaintext]\n"
+                            "expected: [REDACTED:private-test-assertion]\n"
+                            "  actual: [REDACTED:private-test-comparison]\n\n"
+                            "ERROR in (deposit-test) (private_test.clj:9)\n"
+                            "expected: [REDACTED:private-test-assertion]\n"
+                            "  actual: clojure.lang.ExceptionInfo: depot append timed out [REDACTED:private-test-data]\n"
+                            " at demo.module$deposit_BANG_.invoke (module.clj:42)\n"
+                            "[REDACTED:private-test-data] ([REDACTED:protected-plaintext])))\n"
+                            "[REDACTED:private-test-data] [REDACTED:env:OPENAI_API_KEY]\n"
+                            "Ran 12 tests containing 40 assertions.\n2 failures, 1 errors.\n")
+                       out))
                 (is (= (count (str/split stdout #"\n" -1)) (count (str/split out #"\n" -1)))
                     "line-for-line: redaction never drops lines")
-                (is (str/includes? (:stderr pt) "WARNING: implementation emitted a reflection warning")))
-              (testing "assertions, comparisons, protected plaintext and secrets are redacted"
-                (is (= 2 (count (re-seq #"(?m)^expected: \[REDACTED:private-test-assertion\]$" out))))
-                (is (str/includes? out "  actual: [REDACTED:private-test-comparison]"))
-                (is (str/includes? out "[REDACTED:env:OPENAI_API_KEY]"))
-                (is (str/includes? (:stderr pt) "Authorization: Bearer [REDACTED:authorization]"))
-                (is (= {:secret-env 1 :credential 1 :private-test-assertion 3 :protected-plaintext 3}
+                (is (= (str "WARNING: [REDACTED:private-test-data] a reflection warning\n"
+                            "([REDACTED:protected-plaintext])))\n"
+                            "Authorization: Bearer [REDACTED:authorization]\n")
+                       (:stderr pt)))
+                (is (= {:secret-env 1 :credential 1 :private-test-assertion 3 :protected-plaintext 4
+                        :private-test-data 4 :protected-index-unavailable 0}
                        (:redactions pt))))
               (testing "complete full-spec-review findings survive"
                 (is (= {:ran true :verdict "pass" :exit 0 :report-present true :report-skipped nil
@@ -1500,6 +1522,113 @@
                         "(withdraw! client \"acct\" 99999)" "(not (= 4711 0))"]]
           (is (not (str/includes? text leaked)) (str label " leaks a fixture secret/protected value"))))
       (finally (fs/delete-tree dir) (fs/delete-tree root)))))
+
+(defn short-literal-fixture
+  "Challenge whose protected files hold short literals and a > 8 MiB data
+  file with a token near its end. Literals are assembled at run time."
+  []
+  (let [root (fs/create-temp-dir {:prefix "scrub-"})
+        short-a (str "z" "q")
+        short-b (str "k" "9")
+        big-token (str "qx7" "wplm")
+        filler (apply str (repeat (* 9 1024 1024) "."))]
+    (doseq [[rel text] {"challenges/demo/README.md" "Accounts have scores. Unknown accounts are rejected.\n"
+                        "challenges/demo/src/demo/protocol.clj" "(defprotocol Scores (score! [c account k]))\n"
+                        "challenges/demo/test-private/demo/private_test.clj"
+                        (str "(deftest scores-short-literals\n  (is (= 7 (score! c \"" short-a "\" :" short-b ")))\n"
+                             "  (is (= 6 (reduce + [3 1 2]))))\n")
+                        "challenges/demo/test-private/demo/big_data.edn" (str "[" filler " " big-token "]\n")
+                        "challenges/demo/test/demo/runner.clj" "(def hidden-runner-flag :qv4)\n"
+                        "implementations/demo/src/demo/module.clj"
+                        (str "(throw (ex-info \"unknown account\" {}))\n"
+                             "(throw (IllegalArgumentException. (str \"bad input \" x)))\n"
+                             "(println \"processing\" user)\n")}]
+      (fs/create-dirs (fs/parent (fs/path root rel)))
+      (spit (str (fs/path root rel)) text))
+    {:root (str root) :short-a short-a :short-b short-b :big-token big-token}))
+
+(deftest fail-closed-protected-matching-test
+  (let [{:keys [root short-a short-b big-token]} (short-literal-fixture)
+        ctx (scrub-context root "demo" {})
+        leaked? (fn [text] (some #(re-find (re-pattern (str "(?i)(?<![\\p{L}\\p{N}])" % "(?![\\p{L}\\p{N}])")) text)
+                                 [short-a short-b big-token "qv4" "3 1 2" "58213" "scores-short-literals"]))]
+    (try
+      (is (> (fs/size (fs/path root "challenges/demo/test-private/demo/big_data.edn")) (* 8 1024 1024)))
+      (is (nil? (:unavailable (:corpus ctx))))
+      (is (= ["challenges/demo/README.md" "challenges/demo/src/demo/protocol.clj"]
+             (map #(str (fs/relativize root %)) (filter #(str/includes? (str %) "challenges/") (:public (:corpus ctx))))))
+      (is (= 3 (count (:protected (:corpus ctx)))) "test/ is outside the snapshot, so protected")
+      (testing "review text: short literals, an oversized file's token and a short run of public words"
+        (let [review (str "Finding: score! returned 0 for " short-a " with :" short-b ".\n"
+                          "Inputs 3 1 2 were summed; token " big-token " appeared; value " "qv4" ".\n"
+                          "Unknown accounts are rejected.\n")
+              {:keys [text redactions]} (scrub-text review ctx)]
+          (is (= (str "Finding: score! returned 0 for [REDACTED:protected-plaintext] with :[REDACTED:protected-plaintext].\n"
+                      "Inputs [REDACTED:protected-plaintext] were summed; token [REDACTED:protected-plaintext] appeared; "
+                      "value [REDACTED:protected-plaintext].\n"
+                      "Unknown accounts are rejected.\n")
+                 text))
+          (is (= 5 (:protected-plaintext redactions)))
+          (is (not (leaked? text)))))
+      (testing "private-test output: exception messages, ex-data and echoed inputs"
+        (let [stdout (str "\nTesting demo.private-test\n\n"
+                          "ERROR in (scores-short-literals) (private_test.clj:2)\n"
+                          "expected: (= 7 (score! c \"" short-a "\" :" short-b "))\n"
+                          "  actual: clojure.lang.ExceptionInfo: unknown account " short-a
+                          " {:account \"" short-a "\" :input [3 1 2]}\n"
+                          "Caused by: java.lang.IllegalArgumentException: bad input " big-token "\n"
+                          "\tat demo.module$score_BANG_.invoke(module.clj:17)\n"
+                          "processing user-58213 after 3 1 2\n"
+                          "Ran 1 tests containing 2 assertions.\n0 failures, 1 errors.\n")
+              [out err] (scrub-texts [stdout (str "bad input " big-token "\n")] (assoc ctx :private-test? true))]
+          (is (= (str "\nTesting demo.private-test\n\n"
+                      "ERROR in ([REDACTED:protected-plaintext]) (private_test.clj:2)\n"
+                      "expected: [REDACTED:private-test-assertion]\n"
+                      "  actual: clojure.lang.ExceptionInfo: unknown account [REDACTED:protected-plaintext] "
+                      "[REDACTED:private-test-data]\n"
+                      "Caused by: java.lang.IllegalArgumentException: bad input [REDACTED:protected-plaintext]\n"
+                      "\tat demo.module$score_BANG_.invoke(module.clj:17)\n"
+                      "processing user-[REDACTED:private-test-data] after [REDACTED:protected-plaintext]\n"
+                      "Ran 1 tests containing 2 assertions.\n0 failures, 1 errors.\n")
+                 (:text out)))
+          (is (= "bad input [REDACTED:protected-plaintext]\n" (:text err)))
+          (is (not-any? leaked? [(:text out) (:text err)]))))
+      (finally (fs/delete-tree root)))))
+
+(deftest unverifiable-protected-files-fail-closed-test
+  (let [text "Testing demo.private-test\n\nRan 1 tests containing 1 assertions.\n"
+        closed "[REDACTED:protected-index-unavailable]\n\n[REDACTED:protected-index-unavailable]\n"
+        private (fn [root rel] (fs/path root "challenges/demo/test-private/demo" rel))]
+    (doseq [[label break! reason]
+            [["ciphertext only" #(fs/move (private % "private_test.clj") (private % "private_test.clj.enc"))
+              "encrypted protected file"]
+             ["symlink" #(fs/create-sym-link (private % "link.clj") (fs/path % "challenges/demo/README.md"))
+              "symlink or special file in the challenge directory"]
+             ["unreadable" #(fs/set-posix-file-permissions (private % "private_test.clj") "---------") nil]
+             ["vanished after listing" nil nil]]]
+      (testing label
+        (let [{:keys [root]} (short-literal-fixture)]
+          (try
+            (when break! (break! root))
+            (let [ctx (scrub-context root "demo" {})]
+              (is (= reason (:unavailable (:corpus ctx))))
+              (when-not break! (fs/delete (private root "big_data.edn")))
+              (doseq [private-test? [false true]]
+                (let [{:keys [text redactions]} (scrub-text text (assoc ctx :private-test? private-test?))]
+                  (is (= closed text))
+                  (is (= 2 (:protected-index-unavailable redactions))))))
+            (finally (fs/delete-tree root))))))))
+
+(deftest scrub-corpus-mirrors-snapshot-allowlist-test
+  (let [py (slurp "scripts/isolate_solver.py")
+        strings (fn [re] (re-seq #"\"([^\"]+)\"" (second (re-find re py))))
+        shared (map second (strings #"(?s)SHARED_ALLOWLIST = \((.*?)\)\n"))
+        challenge (map second (strings #"CHALLENGE_ALLOWLIST = \((.*?)\)\n"))
+        dirs (set (map second (strings #"(?s)PROTECTED_DIRS = frozenset\(\{(.*?)\}\)")))]
+    (is (= shared snapshot-shared-allowlist))
+    (is (= challenge snapshot-challenge-allowlist))
+    (is (= dirs snapshot-protected-dirs))
+    (is (str/includes? py "auth\\.json)$\")") "SECRET_FILE_RE still ends where the mirror does")))
 
 (deftest sentinel-0-of-1-survives-bundle-as-unavailable-test
   (let [fx (diagnostics-fixture)

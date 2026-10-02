@@ -1069,9 +1069,10 @@
 
 ;;; Diagnostic scrubbing (docs/outcome-taxonomy.md, "Redaction")
 ;;
-;; The manifest and bundle keep the complete private-suite output and the
-;; complete full-spec-review text, minus credentials and runner-protected
-;; plaintext. Redacted spans are replaced in place with [REDACTED:<kind>].
+;; The manifest and bundle keep the private-suite output and the
+;; full-spec-review text line for line, minus credentials and anything that may
+;; carry runner-protected content. Redacted spans are replaced in place with
+;; [REDACTED:<kind>]; when protection cannot be verified, whole lines are.
 
 (def secret-env-name-re #"(?i)KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH")
 
@@ -1108,89 +1109,360 @@
   "clojure.test report lines that print private-test source or expected data:
   the assertion form after `expected:`, and the evaluated comparison after
   `actual: (not ...)`, which embeds the expected value. Exceptions printed
-  after `actual:` are kept."
+  after `actual:` go through the private-test data rule."
   [[#"(?m)^([ \t]*expected:[ \t]?)(?!\[REDACTED).+$" "$1[REDACTED:private-test-assertion]"]
    [#"(?m)^([ \t]*actual:[ \t]?)\(not[ \t(].*$" "$1[REDACTED:private-test-comparison]"]])
 
-(def min-protected-fragment
-  "Shortest protected line or string literal matched in output (characters,
-  after whitespace collapsing). Shorter fragments are too common to attribute."
-  20)
+;; Protected content. Protected sources are every file of the challenge that
+;; the solver snapshot (scripts/isolate_solver.py) leaves out: test-private/,
+;; test-resources/, test/, test-harness/, test-named src files, notes, and so
+;; on. Public text is exactly what the snapshot copies, plus repository paths.
+;; Text is compared as case-folded words (runs of letters/digits): every run of
+;; 1..max-protected-ngram consecutive output words that occurs in a protected
+;; file and in no public text is redacted, however short. Protected files are
+;; streamed in full, whatever their size. If any protected file cannot be read
+;; (or only its .enc ciphertext is present) nothing is verifiable, so every
+;; non-blank line of every scrubbed field is redacted.
 
-(def max-indexed-protected-bytes
-  "Protected files larger than this are not line-indexed (bulk test data)."
-  (* 8 1024 1024))
+(def snapshot-shared-allowlist
+  "Mirrors SHARED_ALLOWLIST in scripts/isolate_solver.py."
+  ["deps.edn" "lib/rama-deps" "lib/harness/deps.edn" "lib/harness/src"
+   "plugins/rama-skill/skills/rama" ".agents/skills/challenge-phase"
+   ".claude/commands/challenge-phase.md" "scripts/import-kondo-configs.sh"])
 
-(defn- normalize-ws [s]
-  (str/trim (str/replace s #"\s+" " ")))
+(def snapshot-challenge-allowlist
+  "Mirrors CHALLENGE_ALLOWLIST in scripts/isolate_solver.py."
+  ["README.md" "deps.edn" "src" ".clj-kondo"])
 
-(defn- text-fragments
-  "Normalized lines and string-literal bodies of text, at least
-  min-protected-fragment long."
-  [text]
-  (->> (concat (str/split-lines text)
-               (map second (re-seq #"\"([^\"\\]*+(?:\\.[^\"\\]*+)*+)\"" text)))
-       (map normalize-ws)
-       (filter #(>= (count %) min-protected-fragment))))
+(def snapshot-protected-dirs
+  "Mirrors PROTECTED_DIRS in scripts/isolate_solver.py."
+  #{".git" "test-private" "test-resources" "test" "test-harness" "review" "atlas"})
 
-(defn- tree-files [dir]
-  (when (fs/directory? dir)
-    (filter #(and (fs/regular-file? % {:nofollow-links true})
-                  (not (str/ends-with? (str %) ".enc")))
-            (fs/glob dir "**" {:hidden true}))))
+(def snapshot-secret-file-re
+  "Mirrors SECRET_FILE_RE in scripts/isolate_solver.py."
+  #"(?i)^(\.env(\..*)?|\.netrc|\.git-credentials|\.npmrc|\.pypirc|.*\.(pem|key|p12|pfx|jks|keystore)|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.?credentials(\.json)?|auth\.json)$")
 
-(defn- indexable-text [path]
-  (when (<= (fs/size path) max-indexed-protected-bytes)
-    (let [s (try (slurp (str path)) (catch Exception _ nil))]
-      (when (and s (not (str/includes? s "\u0000"))) s))))
+(def max-protected-ngram
+  "Longest run of consecutive words compared at once. Longer echoes are caught
+  through their runs of this length."
+  8)
 
-(defn protected-fragments
-  "Fragments of a challenge's runner-protected files (test-private/,
-  test-resources/) that occur nowhere solver-visible: not in the challenge's
-  other files, the Rama skill, or lib/harness/src. Needs plaintext files."
+(def baseline-vocabulary
+  "Words of clojure.test, JVM and Clojure diagnostics. Treated as public, and
+  kept in private-test output even when no public file contains them."
+  (str/split (str "testing fail error errors failure failures ran tests test containing assertion assertions "
+                  "expected actual not nil true false caused by at in more common frames omitted unknown source "
+                  "native method uncaught exception exceptions throwable thrown throw stack trace message cause data "
+                  "info warning warn debug trace execution compiling compile compiler syntax unable to resolve symbol "
+                  "this context no such var namespace could locate init or on classpath file found java lang util io "
+                  "concurrent clojure core rama com rpl invoke invokestatic apply applyto call do eval main thread "
+                  "reflection wrong number of args passed fn the a an is was be and with for from into while when "
+                  "after before timed out timeout illegal argument state null pointer class cast arithmetic divide "
+                  "by zero index bounds unsupported operation interrupted runtime assert failed exceptioninfo "
+                  "runtimeexception illegalargumentexception illegalstateexception nullpointerexception "
+                  "classcastexception arithmeticexception indexoutofboundsexception unsupportedoperationexception "
+                  "timeoutexception executionexception interruptedexception filenotfoundexception compilerexception "
+                  "assertionerror stackoverflowerror outofmemoryerror authorization bearer clj cljc edn")
+             #"\s+"))
+
+(defn- snapshot-denied?
+  "True when isolate_solver.py's `denied` refuses a component of the file's
+  relative path parts. `source-tree?` adds the test-named src file rule."
+  [parts source-tree?]
+  (boolean (or (some #(or (snapshot-protected-dirs %) (str/ends-with? % ".enc")
+                          (re-matches snapshot-secret-file-re %))
+                     parts)
+               (and source-tree? (str/includes? (peek parts) "test")))))
+
+(defn- walk-tree
+  "{:files regular files, :other symlinks and special files} under dir.
+  Links are never followed."
+  [dir]
+  (let [files (volatile! []) other (volatile! [])]
+    (letfn [(walk [d]
+              (doseq [p (sort (fs/list-dir d))]
+                (cond (fs/sym-link? p) (vswap! other conj p)
+                      (fs/directory? p {:nofollow-links true}) (walk p)
+                      (fs/regular-file? p {:nofollow-links true}) (vswap! files conj p)
+                      :else (vswap! other conj p))))]
+      (when (and (not (fs/sym-link? dir)) (fs/directory? dir {:nofollow-links true}))
+        (walk dir)))
+    {:files @files :other @other}))
+
+(defn- rel-parts [base path]
+  (mapv str (fs/relativize base path)))
+
+(defn scrub-corpus
+  "Protected and public files for one challenge. :unavailable names why the
+  protected set cannot be verified (scrubbing then fails closed)."
   [project-root challenge-name]
-  (let [cdir (fs/path project-root "challenges" challenge-name)
-        protected? #(some (fn [d] (str/starts-with? (str (fs/relativize cdir %)) d))
-                          ["test-private/" "test-resources/"])
-        frags (fn [paths] (into #{} (comp (keep indexable-text) (mapcat text-fragments)) paths))
-        files (tree-files cdir)
-        public (frags (concat (remove protected? files)
-                              (tree-files (fs/path project-root "plugins/rama-skill/skills/rama"))
-                              (tree-files (fs/path project-root "lib/harness/src"))))]
-    (remove public (frags (filter protected? files)))))
+  (let [root (fs/path project-root)
+        cdir (fs/path root "challenges" challenge-name)
+        {:keys [files other]} (walk-tree cdir)
+        build-cache? #(= ".cpcache" (first (rel-parts cdir %)))
+        files (remove build-cache? files)
+        other (remove build-cache? other)
+        public? #(let [ps (rel-parts cdir %)]
+                   (and (some #{(first ps)} snapshot-challenge-allowlist)
+                        (not (snapshot-denied? ps (= "src" (first ps))))))
+        shared (mapcat (fn [rel]
+                         (let [p (fs/path root rel)]
+                           (cond (fs/sym-link? p) []
+                                 (fs/regular-file? p {:nofollow-links true}) [p]
+                                 :else (remove #(snapshot-denied? (rel-parts root %) false)
+                                               (:files (walk-tree p))))))
+                       snapshot-shared-allowlist)
+        protected (vec (remove public? files))]
+    {:protected protected
+     :public (vec (concat (filter public? files) shared))
+     :implementation (:files (walk-tree (fs/path root "implementations" challenge-name "src")))
+     :paths (mapv #(str (fs/relativize root %)) (concat files other))
+     :unavailable (cond (not (fs/directory? cdir {:nofollow-links true})) "challenge directory missing"
+                        (seq other) "symlink or special file in the challenge directory"
+                        (some #(str/ends-with? (str %) ".enc") protected) "encrypted protected file")}))
 
-(defn fragment-index
-  "Index fragments by their first min-protected-fragment characters."
-  [fragments]
-  (group-by #(subs % 0 min-protected-fragment) fragments))
+(def ^:private word-re #"[\p{L}\p{N}]+")
 
-(defn- contains-fragment? [index ^String norm]
-  (let [k min-protected-fragment
-        n (count norm)]
-    (loop [i 0]
-      (when (<= (+ i k) n)
-        (if (some #(.startsWith norm ^String % (int i)) (get index (subs norm i (+ i k))))
-          true
-          (recur (inc i)))))))
+(defn- lower ^String [^String s] (.toLowerCase s java.util.Locale/ROOT))
+
+(defn- words [s] (map lower (re-seq word-re s)))
+
+(defn- each-word!
+  "Call (f word) for each case-folded word of the file, in order. Reads 1 MiB
+  chunks, so a file of any size is scanned completely."
+  [path f]
+  (with-open [^java.io.Reader r (io/reader (str path) :encoding "UTF-8")]
+    (let [buf (char-array (* 1024 1024))]
+      (loop [carry ""]
+        (let [n (.read r buf)]
+          (if (neg? n)
+            (when (seq carry) (f (lower carry)))
+            (let [s (str carry (String. buf 0 n))
+                  m (re-matcher word-re s)
+                  len (count s)]
+              ;; A word touching the chunk end may continue in the next chunk.
+              (recur (loop []
+                       (if (.find m)
+                         (if (= (.end m) len)
+                           (.group m)
+                           (do (f (lower (.group m))) (recur)))
+                         ""))))))))))
+
+(defn- ngram-scanner
+  "Word callback adding to `found` each run of up to max-protected-ngram words
+  (space-joined) ending at the current word that is in `target`. `steps` must
+  contain every suffix of every target run."
+  [^java.util.Set steps ^java.util.Set target ^java.util.Set found]
+  (let [win (java.util.ArrayDeque.)]
+    (fn [w]
+      (if-not (.contains steps w)
+        (.clear win)
+        (do (.addFirst win w)
+            (when (> (.size win) max-protected-ngram) (.removeLast win))
+            (loop [it (.iterator win) k nil]
+              (when (.hasNext it)
+                (let [k (if k (str (.next it) " " k) (.next it))]
+                  (when (.contains steps k)
+                    (when (.contains target k) (.add found k))
+                    (recur it k))))))))))
+
+(defn- word-runs-ngrams
+  "Every run of up to max-protected-ngram consecutive words of the word
+  vectors, space-joined (closed under suffixes)."
+  [word-vectors]
+  (into #{} (mapcat (fn [ws]
+                      (let [n (count ws)]
+                        (for [i (range n) k (range 1 (inc (min max-protected-ngram (- n i))))]
+                          (str/join " " (subvec ws i (+ i k)))))))
+        word-vectors))
+
+(defn- protected-only-keys
+  "The word runs of `word-vectors` (output lines split at markers) that occur
+  in a protected file and in no public text. A first pass finds which output
+  words occur in protected files at all; only runs of those are compared.
+  Throws when a protected file cannot be read; the caller then fails closed."
+  [corpus word-vectors]
+  (let [out-words (java.util.HashSet. ^java.util.Collection (into #{} cat word-vectors))
+        present (java.util.HashSet.)]
+    (doseq [p (:protected corpus)]
+      (each-word! p #(when (.contains out-words %) (.add present %))))
+    (let [runs (into #{} (comp (mapcat #(partition-by (fn [w] (.contains present w)) %))
+                               (filter #(.contains present (first %)))
+                               (map vec))
+                     word-vectors)
+          steps (java.util.HashSet. ^java.util.Collection (word-runs-ngrams runs))
+          found (java.util.HashSet.)]
+      (when-not (.isEmpty steps)
+        (doseq [p (:protected corpus)]
+          (each-word! p (ngram-scanner steps steps found))))
+      (when-not (.isEmpty found)
+        (let [public (java.util.HashSet.)]
+          (doseq [p (:public corpus)]
+            ;; An unreadable public file only widens redaction.
+            (try (each-word! p (ngram-scanner steps found public)) (catch Exception _ nil)))
+          (doseq [t (concat (:paths corpus) baseline-vocabulary)]
+            (run! (ngram-scanner steps found public) (words t)))
+          (.removeAll found public)))
+      found)))
+
+(defn- vocabulary
+  "Case-folded words a solver could know: public files, the implementation's
+  own source, repository paths and baseline-vocabulary."
+  [corpus]
+  (let [v (java.util.HashSet.)]
+    (doseq [p (concat (:public corpus) (:implementation corpus))]
+      (try (each-word! p #(.add v %)) (catch Exception _ nil)))
+    (doseq [t (concat (:paths corpus) baseline-vocabulary)]
+      (run! #(.add v %) (words t)))
+    v))
 
 (defn scrub-context
   "Redaction inputs for one challenge: secret env values and the protected
-  fragment index. Build it while protected files are plaintext."
+  and public corpus. Scrub while the protected files are plaintext."
   [project-root challenge-name env]
-  {:env-secrets (secret-env-values env)
-   :fragment-index (fragment-index (protected-fragments project-root challenge-name))})
+  (let [corpus (scrub-corpus project-root challenge-name)]
+    {:env-secrets (secret-env-values env)
+     :corpus corpus
+     :vocabulary (delay (vocabulary corpus))}))
 
 (def redaction-kinds
-  [:secret-env :credential :private-test-assertion :protected-plaintext])
+  [:secret-env :credential :private-test-assertion :protected-plaintext :private-test-data
+   :protected-index-unavailable])
 
 (defn- replace-counting [text re replacement]
   (let [n (count (re-seq re text))]
     [(if (pos? n) (str/replace text re replacement) text) n]))
 
-(defn scrub-text
-  "Scrub one diagnostic text. Returns {:text str :redactions {kind count}}.
-  `private-test?` also redacts clojure.test assertion/comparison lines."
-  [text {:keys [env-secrets fragment-index private-test?]}]
+(def ^:private marker-re #"\[REDACTED:[^\]\n]*\]")
+
+(def ^:private location-number-re
+  "Line/column numbers of a file:line location; never compared or redacted."
+  #"(?<=\.(?:clj|cljc|cljs|edn|bb|java|py|kt|scala):)\d+(?::\d+)?")
+
+(def ^:private count-line-re
+  #"^(?:Ran \d+ tests containing \d+ assertions\.|\d+ failures, \d+ errors\.|\s*\.\.\. \d+ (?:more|common frames omitted))$")
+
+(def private-test-template-res
+  "Private-test output lines kept verbatim apart from protected word runs:
+  clojure.test headers and summaries, stack frames and redacted assertions."
+  [#"^\s*$"
+   #"^Testing \S+$"
+   #"^(?:FAIL|ERROR) in \([^()]*\) \([^()\s]+\)$"
+   #"^Ran \d+ tests containing \d+ assertions\.$"
+   #"^\d+ failures, \d+ errors\.$"
+   #"^\s*at [^\s()]+ ?\((?:[^\s()]+|Unknown Source|Native Method)\)$"
+   #"^\s*\.\.\. \d+ (?:more|common frames omitted)$"
+   #"^\s*(?:expected|actual):\s*\[REDACTED:[^\]]+\]$"])
+
+(defn- re-spans [re s]
+  (let [m (re-matcher re s)]
+    (loop [acc []] (if (.find m) (recur (conj acc [(.start m) (.end m)])) acc))))
+
+(defn- overlaps? [spans s e]
+  (some (fn [[a b]] (and (< s b) (< a e))) spans))
+
+(defn- line-segments
+  "Runs of comparable words of a line, as vectors of {:s :e :w}. Redaction
+  markers and location numbers split runs; count summary lines have none."
+  [^String line]
+  (if (re-matches count-line-re line)
+    []
+    (let [blocked (into (re-spans marker-re line) (re-spans location-number-re line))
+          m (re-matcher word-re line)]
+      (loop [segs [] cur [] prev-end 0]
+        (if (.find m)
+          (let [s (.start m) e (.end m)
+                w {:s s :e e :w (lower (.group m))}
+                flushed (cond-> segs (seq cur) (conj cur))]
+            (cond (overlaps? blocked s e) (recur flushed [] e)
+                  (overlaps? blocked prev-end s) (recur flushed [w] e)
+                  :else (recur segs (conj cur w) e)))
+          (cond-> segs (seq cur) (conj cur)))))))
+
+(defn- segment-ngrams
+  "[start-index length key] for every run of up to max-protected-ngram words."
+  [seg]
+  (let [ws (mapv :w seg) n (count ws)]
+    (for [i (range n) k (range 1 (inc (min max-protected-ngram (- n i))))]
+      [i k (str/join " " (subvec ws i (+ i k)))])))
+
+(defn- merge-spans
+  "Sort spans and merge those overlapping or separated only by non-word text."
+  [^String line spans]
+  (reduce (fn [acc [s e]]
+            (let [[ps pe] (peek acc)]
+              (if (and pe (or (<= s pe) (not (re-find #"[\p{L}\p{N}]" (subs line pe s)))))
+                (conj (pop acc) [ps (max pe e)])
+                (conj acc [s e]))))
+          [] (sort spans)))
+
+(defn- replace-spans [^String line spans marker]
+  (let [sb (StringBuilder.)]
+    (loop [i 0 ss spans]
+      (if-let [[s e] (first ss)]
+        (do (.append sb (subs line i s)) (.append sb ^String marker) (recur e (rest ss)))
+        (str (.append sb (subs line i)))))))
+
+(defn- protected-spans [line segs ^java.util.Set protected]
+  (merge-spans line
+               (for [seg segs
+                     [i k key] (segment-ngrams seg)
+                     :when (.contains protected key)]
+                 [(:s (seg i)) (:e (seg (+ i k -1)))])))
+
+(def ^:private quoted-re #"\"(?:[^\"\\]++|\\.)*+\"?")
+
+(defn- collection-spans
+  "Printed collection literals ({...}, [...], #{...}) outside blocked spans.
+  An unclosed literal runs to the end of the line."
+  [^String line blocked]
+  (let [n (count line)
+        skip (into {} blocked)]
+    (loop [i 0 acc []]
+      (if (>= i n)
+        acc
+        (let [c (.charAt line i)]
+          (cond (skip i) (recur (skip i) acc)
+                (or (= c \{) (= c \[))
+                (let [end (loop [j (inc i) depth 1]
+                            (cond (zero? depth) j
+                                  (>= j n) n
+                                  (skip j) (recur (skip j) depth)
+                                  :else (case (.charAt line j)
+                                          (\{ \[ \() (recur (inc j) (inc depth))
+                                          (\} \] \)) (recur (inc j) (dec depth))
+                                          (recur (inc j) depth))))
+                      start (if (and (pos? i) (= \# (.charAt line (dec i)))) (dec i) i)]
+                  (recur end (conj acc [start end])))
+                :else (recur (inc i) acc)))))))
+
+(defn- private-test-data-spans
+  "Spans of a non-template private-test line that may carry test data: quoted
+  strings, collection literals, numbers outside file:line locations, and
+  words outside the vocabulary."
+  [^String line ^java.util.Set vocab]
+  (let [markers (re-spans marker-re line)
+        quoted (re-spans quoted-re line)
+        colls (if (re-find #"\{|\[(?!REDACTED:)" line)
+                (collection-spans line (into markers quoted))
+                [])
+        literals (into quoted colls)
+        exempt (into markers (re-spans location-number-re line))
+        m (re-matcher word-re line)
+        loose (loop [acc []]
+                (if (.find m)
+                  (let [s (.start m) e (.end m) w (.group m)]
+                    (recur (if (or (overlaps? exempt s e) (overlaps? literals s e)
+                                   (and (not (re-matches #"\p{N}+" w)) (.contains vocab (lower w))))
+                             acc
+                             (conj acc [s e]))))
+                  acc))]
+    (merge-spans line (concat literals loose))))
+
+(defn- pre-scrub
+  "Secret env values, credentials and (private-test output) clojure.test
+  assertion lines. Returns [text counts]."
+  [text {:keys [env-secrets private-test?]}]
   (let [counts (volatile! (zipmap redaction-kinds (repeat 0)))
         tally! (fn [kind n] (vswap! counts update kind + n))
         text (reduce (fn [t [k v]]
@@ -1203,15 +1475,52 @@
         text (if private-test?
                (reduce (fn [t [re r]] (let [[t n] (replace-counting t re r)] (tally! :private-test-assertion n) t))
                        text private-test-report-patterns)
-               text)
-        text (if (seq fragment-index)
-               (str/join "\n" (map (fn [line]
-                                     (if (contains-fragment? fragment-index (normalize-ws line))
-                                       (do (tally! :protected-plaintext 1) "[REDACTED:protected-plaintext]")
-                                       line))
-                                   (str/split text #"\n" -1)))
                text)]
-    {:text text :redactions @counts}))
+    [text @counts]))
+
+(defn scrub-texts
+  "Scrub diagnostic texts together (one pass over the protected files).
+  Returns one {:text str :redactions {kind count}} per text, nil for nil.
+  `private-test?` adds the clojure.test assertion and private-test data rules.
+  Fails closed: without a verifiable corpus every non-blank line is redacted."
+  [texts {:keys [private-test? corpus] :as ctx}]
+  (let [pre (mapv #(some-> % (pre-scrub ctx)) texts)
+        lines (mapv #(some-> % first (str/split #"\n" -1)) pre)
+        segs (mapv #(some->> % (mapv line-segments)) lines)
+        protected (when (and corpus (not (:unavailable corpus)))
+                    (try (protected-only-keys corpus (into #{} (comp cat cat (map #(mapv :w %)))
+                                                           (remove nil? segs)))
+                         (catch Exception _ nil)))
+        vocab (when (and protected private-test?)
+                (or (some-> (:vocabulary ctx) force) (vocabulary corpus)))]
+    (mapv (fn [p ls ss]
+            (when p
+              (let [counts (volatile! (second p))
+                    tally! (fn [kind n] (vswap! counts update kind + n))
+                    scrub-line
+                    (fn [line segs]
+                      (cond
+                        (nil? protected)
+                        (if (str/blank? line)
+                          line
+                          (do (tally! :protected-index-unavailable 1) "[REDACTED:protected-index-unavailable]"))
+
+                        :else
+                        (let [spans (protected-spans line segs protected)
+                              line (replace-spans line spans "[REDACTED:protected-plaintext]")]
+                          (tally! :protected-plaintext (count spans))
+                          (if (and private-test? (not-any? #(re-matches % line) private-test-template-res))
+                            (let [spans (private-test-data-spans line vocab)]
+                              (tally! :private-test-data (count spans))
+                              (replace-spans line spans "[REDACTED:private-test-data]"))
+                            line))))]
+                {:text (str/join "\n" (map scrub-line ls ss)) :redactions @counts})))
+          pre lines segs)))
+
+(defn scrub-text
+  "Scrub one diagnostic text; see scrub-texts."
+  [text ctx]
+  (first (scrub-texts [text] ctx)))
 
 (defn- sum-redactions [& scrubbed]
   (apply merge-with + (zipmap redaction-kinds (repeat 0)) (keep :redactions scrubbed)))
@@ -1221,9 +1530,8 @@
   suite was not started. A sentinel is reported, never counted as a failure."
   [private-result private-verdict ctx]
   (when private-result
-    (let [ctx (assoc ctx :private-test? true)
-          out (scrub-text (:out private-result) ctx)
-          err (scrub-text (:err private-result) ctx)]
+    (let [[out err] (scrub-texts [(:out private-result) (:err private-result)]
+                                 (assoc ctx :private-test? true))]
       {:exit (:exit private-result)
        :timed-out (boolean (:timed-out? private-result))
        :timeout-s (:timeout-s private-result)
@@ -1246,8 +1554,7 @@
         symlink? (fs/sym-link? path)
         report (when (and (not symlink?) (fs/regular-file? path {:nofollow-links true}))
                  (slurp (str path)))
-        report' (some-> report (scrub-text ctx))
-        message (some-> (:result-text r) (scrub-text ctx))]
+        [report' message] (scrub-texts [report (:result-text r)] ctx)]
     (when (or r report symlink?)
       {:ran (boolean r)
        :verdict (some-> (:verdict r) name)
@@ -1327,7 +1634,7 @@
 
 (def redaction-policy
   "Recorded in every manifest and bundle; docs/outcome-taxonomy.md explains it."
-  {:version 1
+  {:version 2
    :scrubbed-fields ["challenges[].private-test.stdout" "challenges[].private-test.stderr"
                      "challenges[].full-spec-review.report-text"
                      "challenges[].full-spec-review.final-message"]
@@ -1336,10 +1643,19 @@
                      " and is >= " min-secret-env-length " chars -> [REDACTED:env:<NAME>]")
     :credential "PEM private keys, sk-ant-/sk- API keys, GitHub, AWS key id, Slack and JWT tokens, Authorization/Bearer values, URL user:password@, and <key|secret|token|password|credential>=/: values of >= 8 chars -> [REDACTED:<kind>]"
     :private-test-assertion "private-test output only: text after clojure.test `expected:`, and `actual: (not ...)` comparisons -> [REDACTED:private-test-assertion|comparison]"
-    :protected-plaintext (str "whole line containing a line or string literal (>= " min-protected-fragment
-                              " chars, whitespace-collapsed) of the challenge's test-private/ or test-resources/ files <= "
-                              max-indexed-protected-bytes " bytes that is absent from its public files, the Rama skill and lib/harness/src -> [REDACTED:protected-plaintext]")}
-   :kept ["test names" "file:line locations" "exceptions and stack traces" "test/assertion/failure counts" "all other text"]})
+    :protected-plaintext (str "every run of 1-" max-protected-ngram " consecutive case-folded words (letters/digits, any length) "
+                              "that occurs in a protected file and in no public text -> [REDACTED:protected-plaintext]. "
+                              "Protected files: every file of the challenge directory outside the solver snapshot allowlist "
+                              "(test-private/, test-resources/, test/, test-harness/, test-named src files, ...; .cpcache/ excluded), "
+                              "streamed in full at any size. Public text: files the snapshot copies, repository paths, "
+                              "and a fixed diagnostic vocabulary. file:line numbers and clojure.test count lines are not compared.")
+    :private-test-data "private-test output only, on lines other than clojure.test headers/summaries, stack frames and redacted assertions: quoted strings, {...}/[...]/#{...} literals, numbers outside file:line locations, and words absent from public text, the implementation's src/ and the diagnostic vocabulary -> [REDACTED:private-test-data]"
+    :protected-index-unavailable "every non-blank line of every scrubbed field, when a protected file cannot be read, only its .enc ciphertext is present, or the challenge directory is missing or holds a symlink/special file -> [REDACTED:protected-index-unavailable]"}
+   :kept ["line count (redaction never drops lines)" "file:line locations" "clojure.test headers, counts and stack frames, minus protected word runs" "exception class names and messages built from public words" "all other review text without protected word runs"]
+   :limitations ["values computed at run time from protected inputs are recognized only in private-test output, by the private-test data rule; in review text only words that literally occur in protected files are redacted"
+                 "a run of words that also occurs, consecutively, in public text is kept"
+                 "only the challenge's own non-snapshot files are protected sources; repository docs/, review/ and .amp/ and other challenges are not"
+                 "credential patterns are heuristic"]})
 
 (defn build-run-manifest
   "Pure: run metadata map plus results -> JSON-ready manifest map."

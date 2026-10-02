@@ -92,21 +92,22 @@ markdown report. The file is created once and never overwritten. It holds:
   `snapshot` `{kind: "allowlisted-public-copy", shared-allowlist,
   challenge-allowlist, protected-dirs, audits: {<challenge>: {files,
   categories, violations: 0}}}`. A manifest cannot be built without it.
-- `redaction-policy`: the rules below, `version` 1
+- `redaction-policy`: the rules below, `version` 2
 - per challenge: outcome, completion, private verdict with counts and reason,
   private-suite availability, score, builds, retries, a SHA-256 of the
   implementation tree, reported cost and estimated cost kept separate, and:
   - `private-test` (`null` when the suite was not started): `exit`,
     `timed-out`, `timeout-s`, `duration-s`, `status`, `sentinel`
     (`zero-of-one`, `ran-0`, `no-summary`, `grader-timeout` or `null`),
-    `counted-as-failure` (true only for a genuine `:fail`), the complete
-    scrubbed `stdout` and `stderr`, and `redactions` (count per kind)
+    `counted-as-failure` (true only for a genuine `:fail`), the
+    scrubbed `stdout` and `stderr` (line for line), and `redactions`
+    (count per kind)
   - `full-spec-review` (`null` when the stage never ran and wrote no
     report): `ran`, `verdict`, `exit`, `report-path`
     (`implementations/<name>/FULL_SPEC_REVIEW.md`), `report-present`,
     `report-skipped` (`"symlink"` when the report was a symlink, which is
-    never followed), the complete scrubbed `report-text` and
-    `final-message` (the session's last assistant message), and `redactions`
+    never followed), the scrubbed `report-text` and `final-message` (the
+    session's last assistant message; line for line), and `redactions`
 - per phase: id, attempt, subsystem, exit, verdict, timeout, provider-limit and
   user-stop flags, `isolation` mode, transient retries, duration, transcript
   path and SHA-256, reported cost and estimated cost
@@ -129,21 +130,50 @@ transcripts are unscrubbed.
 ## Redaction
 
 `private-test.stdout`, `private-test.stderr`, `full-spec-review.report-text`
-and `full-spec-review.final-message` keep the complete text, line for line,
-except for these in-place replacements (counted per kind in `redactions`):
+and `full-spec-review.final-message` keep every line of the original text
+(redaction never adds or drops a line). Spans are replaced in place, in this
+order, and counted per kind in `redactions`:
 
 | Kind | What is replaced | Replacement |
 |---|---|---|
 | `secret-env` | The value of every set environment variable whose name contains `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `CREDENTIAL` or `AUTH` (case-insensitive) and whose value is at least 8 characters. | `[REDACTED:env:<NAME>]` |
 | `credential` | PEM private-key blocks; `sk-ant-…` and `sk-…` API keys; GitHub `gh?_…`/`github_pat_…`, AWS access key ids, Slack and JWT tokens; `Authorization:` and `Bearer` values; `user:password@` in URLs; values of 8+ characters assigned with `=` or `:` to a name containing `api_key`, `secret`, `token`, `password`, `passwd` or `credential`. | `[REDACTED:<kind>]` |
 | `private-test-assertion` | Private-test output only: the form after a clojure.test `expected:`, and an `actual: (not …)` comparison, which embeds the expected value. | `[REDACTED:private-test-assertion]`, `[REDACTED:private-test-comparison]` |
-| `protected-plaintext` | The whole line, when it contains (after collapsing whitespace) a line or string literal of 20+ characters from the challenge's `test-private/` or `test-resources/` that does not also appear in the challenge's other files, the Rama skill, or `lib/harness/src`. Protected files over 8 MiB (bulk test data) are not indexed. | `[REDACTED:protected-plaintext]` |
+| `protected-plaintext` | Every run of 1–8 consecutive words that occurs in a protected file and in no public text. Words are runs of letters and digits, compared case-insensitively, so punctuation and spacing do not matter and there is no minimum length: a one-letter literal counts. Adjacent redacted words become one marker. | `[REDACTED:protected-plaintext]` |
+| `private-test-data` | Private-test output only, on every line except clojure.test `Testing`/`FAIL in`/`ERROR in` headers, the `Ran …`/`… failures, … errors.` summary, stack frames (`at …(File.java:N)`, `... N more`) and already-redacted `expected:`/`actual:` lines: quoted strings, `{…}`/`[…]`/`#{…}` literals, numbers outside `file:line` locations, and words that are not public (see below). This covers exception messages, `ex-data`, and anything the tests or the implementation print. | `[REDACTED:private-test-data]` |
+| `protected-index-unavailable` | Every non-blank line of every scrubbed field, when the protected files cannot be verified: a protected file cannot be read, only its `.enc` ciphertext is present, or the challenge directory is missing or contains a symlink or special file. | `[REDACTED:protected-index-unavailable]` |
 
-Kept: test names, `file:line` locations, exceptions and stack traces
-(including `actual:` exceptions), counts, and all other text. Residual
-exposure: protected fragments shorter than 20 characters, data from
-unindexed files over 8 MiB, and implementation exception messages that echo
-private inputs.
+**Protected files** are every file in `challenges/<name>/` that the solver
+snapshot leaves out (see "Scored-run isolation"): `test-private/`,
+`test-resources/`, `test/`, `test-harness/`, `src/` files whose names
+contain `test`, and any other file outside the snapshot allowlist. Only
+`.cpcache/` is skipped. Each protected file is streamed in full in 1 MiB
+chunks, so there is no size limit, and binary files are scanned too.
+
+**Public text** is what the snapshot copies (the shared and challenge
+allowlists, with the same exclusions), plus repository-relative file paths
+and a fixed list of clojure.test/JVM diagnostic words. The
+`private-test-data` word check also accepts words from
+`implementations/<name>/src/`, so the implementation's own exception
+messages survive.
+
+Never compared or redacted: line and column numbers in `file:line`
+locations, and the clojure.test count lines. A word sequence is matched only
+within one output line and between redaction markers.
+
+Remaining limitations (also listed in the manifest as
+`redaction-policy.limitations`):
+
+- Values computed at run time from protected inputs never appear literally
+  in a protected file. In private-test output, the `private-test-data` rule
+  catches them when they are printed as numbers, strings, collections or
+  non-public words. In review text, which the solver writes without access to
+  protected files, only literal matches are redacted.
+- A run of words is kept when the same consecutive run also occurs in public
+  text, because the solver can see it.
+- Only the challenge's own files count as protected sources. Repository
+  `docs/`, `review/`, `.amp/` and other challenges' files do not.
+- Credential patterns are heuristic.
 
 ## Scored-run isolation
 
