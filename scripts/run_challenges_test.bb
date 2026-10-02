@@ -508,27 +508,25 @@
         (is (some #{"model_reasoning_effort=high"} cmd) "should contain reasoning config")))))
 
 (deftest phase-prompt-compatibility-test
-  ;; The runner's Claude slash command must not change the Amp skill's
-  ;; established decision/dead-end capture (or Codex's own skill invocation).
+  ;; Claude and native-agent phase instructions must capture the same
+  ;; shareable engineering evidence without requesting private reasoning.
   (let [claude-prompt (slurp ".claude/commands/challenge-phase.md")
-        amp-prompt (slurp ".agents/skills/challenge-phase/SKILL.md")
+        native-prompt (slurp ".agents/skills/challenge-phase/SKILL.md")
         plan-template (slurp "plugins/rama-skill/skills/rama/references/artifact-plan.md")
         claude-cmd (claude-phase-cmd "test-ch" :decompose "/root" nil nil)
         codex-cmd (codex-phase-cmd "test-ch" :decompose "/root" nil nil)]
     (is (some #{"/challenge-phase test-ch decompose"} claude-cmd))
     (is (some #{"$challenge-phase test-ch decompose"} codex-cmd))
+    (is (= claude-prompt native-prompt)
+        "Claude and native agents must receive identical phase instructions")
     (is (re-find #"Decision:.*\n- Basis:.*\n- Outcome:" plan-template))
     (is (re-find #"not private chain-of-thought" plan-template))
     (is (not (re-find #"first-person|Write it as you design|how close the call was" plan-template)))
-    (is (re-find #"Decision:.*\n  Basis:.*\n  Outcome:" claude-prompt))
-    (is (re-find #"(?i)do not write private chain-of-thought" claude-prompt))
-    (is (re-find #"rejected alternatives\s+and dead ends" claude-prompt))
-    (is (re-find #"CONFUSION:" claude-prompt))
-    (is (not (re-find #"append your reasoning AT EACH DECISION POINT" claude-prompt)))
-    (is (re-find #"append your reasoning AT EACH DECISION POINT" amp-prompt))
-    (is (re-find #"the dead ends are the point" amp-prompt))
-    (is (re-find #"CONFUSION:" amp-prompt))
-    (is (not (re-find #"Do NOT write private chain-of-thought" amp-prompt)))))
+    (is (re-find #"Decision:.*\n  Basis:.*\n  Outcome:" native-prompt))
+    (is (re-find #"(?i)do not write private chain-of-thought" native-prompt))
+    (is (re-find #"rejected alternatives\s+and dead ends" native-prompt))
+    (is (re-find #"CONFUSION:" native-prompt))
+    (is (not (re-find #"append your reasoning AT EACH DECISION POINT|the dead ends are the point" native-prompt)))))
 
 (deftest tier-cli-parsing-test
   ;; The four required model flags parse into the opts map.
@@ -555,6 +553,13 @@
               *slow-reasoning* "high"]
       (is (= ["opus" "low"] (tier-config :fast)))
       (is (= ["fable" "high"] (tier-config :slow))))))
+
+(deftest tier-routing-help-test
+  (let [help (with-out-str (print-usage))]
+    (is (re-find #"Fast model: subsystem build phases" help))
+    (is (re-find #"Slow model: phase 0, decompose, planning, validation, full-spec-review" help))
+    (is (re-find #"Phase 0, decompose, planning \(phase 1\), plan-validation \(phase 2\), and" help))
+    (is (re-find #"full-spec-review run on the slow model; subsystem build phases use the fast model" help))))
 
 (deftest print-run-header-model-test
   ;; Tests that print-run-header shows model in parentheses when provided

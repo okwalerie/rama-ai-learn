@@ -25,9 +25,9 @@
    :agent      {:desc "Agent: claude, codex, opencode, or pi (default: claude)"
                 :alias :a
                 :default "claude"}
-   :fast-model  {:desc "Fast model: phase 0, easy/medium subproblem phases (required)"}
+   :fast-model  {:desc "Fast model: subsystem build phases (required)"}
    :fast-effort {:desc "Reasoning effort for the fast model (required)"}
-   :slow-model  {:desc "Slow model: planning, plan-validation, decompose, review, hard subproblems (required)"}
+   :slow-model  {:desc "Slow model: phase 0, decompose, planning, validation, full-spec-review (required)"}
    :slow-effort {:desc "Reasoning effort for the slow model (required)"}
    :isolate    {:desc "Run solver phases in a Linux bubblewrap public-only filesystem"
                 :coerce :boolean}
@@ -126,9 +126,9 @@
   (println "  -b, --batch N           Batch number from CHALLENGE_ORDER.md")
   (println "  -d, --difficulty TYPE   Difficulty filter: standard or hard")
   (println "  -a, --agent NAME        Agent: claude, codex, opencode, or pi (default: claude)")
-  (println "      --fast-model M      Fast model: phase 0, easy/medium subproblem phases (required)")
+  (println "      --fast-model M      Fast model: subsystem build phases (required)")
   (println "      --fast-effort E     Reasoning effort for the fast model (required)")
-  (println "      --slow-model M      Slow model: planning, validation, decompose, review, hard (required)")
+  (println "      --slow-model M      Slow model: phase 0, decompose, planning, validation, full-spec-review (required)")
   (println "      --slow-effort E     Reasoning effort for the slow model (required)")
   (println "      --isolate           Linux public-only solver filesystem (bubblewrap required)")
   (println "      --isolate-network   Provider/docs-only network; implies --isolate")
@@ -136,10 +136,8 @@
   (println "  -v, --verbose           Stream agent output to console in real time")
   (println "  -h, --help              Show this help")
   (println)
-  (println "Planning (phase 1) and plan-validation (phase 2) always run on the slow")
-  (println "model. Phase 2 classifies each subproblem easy|medium|hard: easy runs the")
-  (println "rest in one fast session; medium runs the gated phases on the fast model;")
-  (println "hard runs the gated phases on the slow model.")
+  (println "Phase 0, decompose, planning (phase 1), plan-validation (phase 2), and")
+  (println "full-spec-review run on the slow model; subsystem build phases use the fast model.")
   (println)
   (println "Note: Batch 5 (cluster operations) requires a running local Rama cluster.")
   (println "      Set RAMA_CONDUCTOR_HOST/RAMA_CONDUCTOR_UI_PORT to override defaults.")
@@ -629,12 +627,10 @@
 
 (def ^:dynamic *pretty* false)
 
-;; Two model tiers: fast and slow. Phase 2 classifies each subproblem
-;; easy|medium|hard; the runner maps that to a tier (easy/medium → fast,
-;; hard → slow) and, for easy, collapses the post-plan phases into one
-;; session. Planning (1), plan-validation (2), decompose, and full-spec-review
-;; always run on the slow tier; phase 0 and the fast subproblem phases run on
-;; the fast tier. -main resolves both tiers from required CLI opts.
+;; Two model tiers: fast and slow. Phase 0, decompose, planning (1),
+;; plan-validation (2), and full-spec-review always run on the slow tier.
+;; Subsystem build phases always use the fast tier. -main resolves both tiers
+;; from required CLI opts.
 (def ^:dynamic *fast-model* nil)
 (def ^:dynamic *fast-reasoning* nil)
 (def ^:dynamic *slow-model* nil)
@@ -2630,16 +2626,16 @@
   - decompose stage: the agent writes DECOMPOSITION.json; the runner reads it
     to determine subsystems. Missing/unparseable/empty file → the whole module
     is one subsystem (warned, never fatal).
-  - phases 1→7 once per subsystem, in DECOMPOSITION.json order, with fresh gate counters and
-    skip flags per subsystem (see run-subsystem-phases!). On multi-subsystem
-    runs (n > 1) every invocation carries the subsystem slug as a third
-    /challenge-phase argument; when n == 1 no slug is passed and the cycle is
-    identical to a run without decomposition. A cap-exceeded gate or phase-7
-    fail in any subsystem fails the whole run, naming the subsystem.
+  - For each subsystem, run planning (phase 1), plan-validation (phase 2), and
+    build in DECOMPOSITION.json order. A major validation failure retries
+    planning up to the configured cap; see run-subsystem-phases!. On
+    multi-subsystem runs (n > 1), each invocation carries the subsystem slug
+    as a third /challenge-phase argument; when n == 1 no slug is passed.
+    Any subsystem build failure fails the whole run, naming the subsystem.
   - full-spec-review stage (ALWAYS, even when n == 1): see
     run-full-spec-review!.
 
-  Overall run pass = every subsystem's phase 7 passes AND full-spec-review
+  Overall run pass = every subsystem build passes AND full-spec-review
   passes.
 
   An overall wall-clock budget (*overall-timeout-s*) caps the entire run.
@@ -2654,8 +2650,8 @@
   ;; an explicit latitude clause permits is interpretation, and IMPLICIT_SPEC.md
   ;; binds every later phase while being exempt from their validation checks, so
   ;; an error there is unrecoverable downstream.
-  ;; Subproblem cycles run planning + validation on the slow tier and the rest
-  ;; on the tier chosen by phase 2's classification (see run-subsystem-phases!).
+  ;; Subproblem cycles run planning + validation on the slow tier, then build
+  ;; on the fast tier (see run-subsystem-phases!).
   (let [fast-tier (tier-config :fast)
         slow-tier (tier-config :slow)
         [frame-model frame-reasoning] slow-tier
@@ -2706,15 +2702,15 @@
           (or
            (stage-failure rd results)
            ;; Determine subsystems from DECOMPOSITION.json. A missing/invalid
-           ;; file → a single whole-module cycle (slug nil). Difficulty is NOT
-           ;; decided here — phase 2 classifies each subproblem after planning.
+           ;; file → a single whole-module cycle (slug nil). The current runner
+           ;; does not use a difficulty classification.
            (let [subsystems (read-decomposition project-root challenge-name)
                  multi? (> (count subsystems) 1)
                  slugs (if multi? (mapv :name subsystems) [nil])]
              (when (and *verbose* multi?)
                (println (format "  Decomposition: %d subsystems: %s"
                                 (count slugs) (str/join ", " slugs))))
-             ;; Stage: phases 1→7 (or collapsed build) per subsystem.
+             ;; Stage: plan → plan-validation → build per subsystem.
              (loop [remaining slugs
                     results results]
                (if (seq remaining)

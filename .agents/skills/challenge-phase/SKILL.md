@@ -43,38 +43,41 @@ Any specification in the README or protocol is non-negotiable.
   - Do NOT use `rama-challenges.harness` in tests — not in requires, imports, or fully-qualified calls.
   - If the module uses tick depots, use `rama-challenges.shared/REPLACE-TICK-DEPOTS` (already on classpath). Read its docstring for usage.
 
-## Reasoning log (every phase)
+## Engineering decision log (every phase)
 
-`implementations/<challenge_name>/REASONING.md` is an append-only reasoning
+`implementations/<challenge_name>/REASONING.md` is an append-only engineering
 log. The runner has already appended a sentinel line for this phase
 (`=== PHASE <N> attempt <K> — <timestamp> ===`, with the subsystem slug in
 brackets after `<N>` on multi-subsystem runs); your entries go below it.
 
-As you work, append your reasoning AT EACH DECISION POINT — the alternatives
-you weighed, why you rejected them, and which constraint drove the choice.
-Write entries as you decide, not as a summary at the end; a retrospective
-summary loses the dead ends, and the dead ends are the point.
+As you work, append concise engineering records at each meaningful decision
+point, using `Decision:`, `Basis:`, and `Outcome:`. State the selected approach,
+observable constraints or evidence, and the result. Include rejected alternatives
+and dead ends with a brief technical reason; write records as decisions occur,
+not as a retrospective summary.
 
-ALWAYS log anything you are confused or uncertain about, AT THE MOMENT of
-confusion: an API whose behavior you can't predict, documentation that seems
-ambiguous or contradictory, an error you don't understand, a constraint you
-aren't sure how to satisfy. Log it even if — especially if — you resolve the
-confusion moments later, and note what resolved it. Confusion entries are the
-single most valuable content in this file: they identify exactly where the
-skill documentation failed you. Mark them with a `CONFUSION:` prefix.
+When an API, documentation, error, or constraint is unclear, record the concrete
+question or blocker when it arises with a `CONFUSION:` prefix. Record the
+evidence that resolves it and the resulting action, even if resolved quickly;
+these entries identify gaps in the skill documentation.
+
+Do NOT write private chain-of-thought, hidden reasoning, or introspective
+deliberation. Report only concise, shareable engineering decisions and evidence.
 
 - Append with:
   ```
   cat >> implementations/<challenge_name>/REASONING.md <<'EOF'
-  ...your reasoning...
+  Decision: ...
+  Basis: ...
+  Outcome: ...
   EOF
   ```
 - Do NOT rewrite REASONING.md, do NOT edit or delete prior entries, and do
   NOT remove sentinel lines. The file is append-only.
 - This phase is NOT complete until REASONING.md has at least one entry for
   this phase. Verdict phases (2, build, full-spec-review):
-  record the reasoning behind your verdict before emitting it. Decompose:
-  record the boundaries you considered and rejected.
+  record the evidence supporting your verdict before emitting it. Decompose:
+  record the boundaries considered and rejected with concise technical grounds.
 
 ## Phase dispatch
 
