@@ -12,9 +12,9 @@ verdict behind a passing phase pipeline.
 | `:completed` | Every phase exited 0 and the build and full-spec-review verdicts were `PASS`. |
 | `:solver-fail` | The solver ended the run: a `FAIL` verdict, a missing or invalid verdict, repeated plan-validation failures, or a non-zero exit that is not one of the causes below. |
 | `:timeout` | A phase or the overall challenge budget timed out. |
-| `:quota-or-provider-limit` | The failing phase's error fields match a quota, billing, rate-limit, overload or 5xx pattern after the transient-retry cap. |
+| `:quota-or-provider-limit` | The failing phase's error fields match a quota, billing, rate-limit, overload, provider 5xx or provider safety-filter refusal. Retryable provider failures get one same-phase retry first; quota exhaustion does not. |
 | `:user-stopped` | The failing phase exited 130 (SIGINT) or 143 (SIGTERM) without a runner timeout. |
-| `:infra-error` | The runner threw before or around the solver (tooling set-up, hidden set-up, encryption). |
+| `:infra-error` | The runner threw before or around the solver, or a phase exited 137/OOM (or its one retry ended without a solver verdict). |
 
 Completion is not correctness. A `:completed` run only means the solver
 said it was finished.
@@ -26,7 +26,7 @@ said it was finished.
 | `:pass` | The private suite ran at least one test, exited 0, and reported no failures or errors. | `PASS` |
 | `:fail` | The private suite ran at least one test and reported at least one failure or error. | `FAIL` |
 | `:unavailable` | A private suite exists but produced no verdict (not evaluated): `Ran 0 tests`, no `Ran N tests` line (compile or load error, missing implementation namespace), the `0/1` sentinel, a grader timeout, or a non-zero exit with no failing assertions. | `UNAVAIL` |
-| `:not-run` | A private suite exists but was not started (the solver timed out, or the runner errored). | `not-run` |
+| `:not-run` | A private suite exists but was not started (the solver timed out, an infrastructure/provider failure exhausted the phase retry, or the runner errored). | `not-run` |
 | `:none` | The challenge has no `test-private/` directory. | `-` |
 
 A sentinel (zero tests, no summary line, grader timeout) is **never**
@@ -43,7 +43,7 @@ and `F failures, E errors.` rather than trusting the exit code alone.
 
 The headline is derived in this order; the first match wins:
 
-1. `:infra-error` when the runner threw.
+1. `:infra-error` when the runner threw or a phase exhausted an infrastructure retry.
 2. `:private-pass` or `:private-fail` when the private suite produced a verdict.
    The private verdict dominates whatever the phase pipeline reported.
 3. `:timeout`, `:quota-or-provider-limit` or `:user-stopped` from completion.
@@ -73,6 +73,12 @@ count:
 - transient provider retries inside one phase invocation, which are
   infrastructure, not solver behaviour
 
+`infra-retries` records those same-phase re-invocations separately in the
+challenge and phase manifests. The retried invocation uses the same pinned
+command, model and effort. Each invocation has its own transcript and reasoning
+sentinel; neither an infrastructure retry nor a provider refusal reduces the
+semantic score. An explicit solver `FAIL` on retry remains a solver failure.
+
 `builds` (the old `iterations`) is still reported as telemetry.
 
 ## Run manifest
@@ -99,7 +105,7 @@ markdown report. The file is created once and never overwritten. It holds:
   "credential"]}`. A manifest cannot be built without it, and is not written
   unless the file next to it has exactly that length and SHA-256.
 - per challenge: outcome, completion, private verdict with counts and reason,
-  private-suite availability, score, builds, retries, a SHA-256 of the
+  private-suite availability, score, builds, semantic retries, infra-retries, a SHA-256 of the
   implementation tree, reported cost and estimated cost kept separate, and:
   - `private-test` (`null` when the suite was not started): `exit`,
     `timed-out`, `timeout-s`, `duration-s`, `status`, `sentinel`
@@ -113,8 +119,9 @@ markdown report. The file is created once and never overwritten. It holds:
     `report-skipped` (`"symlink"` when the report was a symlink, which is
     never followed), the scrubbed `report-text` and `final-message` (the
     session's last assistant message; line for line), and `redactions`
-- per phase: id, attempt, subsystem, exit, verdict, timeout, provider-limit and
-  user-stop flags, `isolation` mode, transient retries, duration, transcript
+- per phase: id, attempt, subsystem, exit, verdict, timeout, provider-limit,
+  infra-error and user-stop flags, `isolation` mode, infra-retries (also in the
+  legacy `transient-retries` field), duration, transcript
   path and SHA-256, reported cost and estimated cost
 
 ## Run bundle

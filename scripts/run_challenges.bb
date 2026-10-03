@@ -602,9 +602,10 @@
   (* 8 3600))
 
 (def ^:dynamic *phase-retry-cap*
-  "Max times a single phase invocation is re-run after a transient server-side
-  error (overload, 5xx, rate limit) before giving up. Fresh session each time."
-  3)
+  "One infrastructure re-invocation of the same phase and pinned command."
+  1)
+
+(def ^:dynamic *phase-retry-backoff-ms* 15000)
 
 (defn time-remaining-s
   "Seconds left in the overall challenge run budget. Never negative."
@@ -958,6 +959,7 @@
     (cond
       (= :pass status)          :completed
       (:provider-limit? last-r) :quota-or-provider-limit
+      (:infra-error? last-r)    :infra-error
       (:user-stopped? last-r)   :user-stopped
       (= :timeout status)       :timeout
       :else                     :solver-fail)))
@@ -967,7 +969,7 @@
   runner's phase status."
   [{:keys [infra-error? completion private-status has-implementation?]}]
   (cond
-    infra-error?                                                     :infra-error
+    (or infra-error? (= :infra-error completion))                    :infra-error
     (= :pass private-status)                                         :private-pass
     (= :fail private-status)                                         :private-fail
     (#{:timeout :quota-or-provider-limit :user-stopped} completion)  completion
@@ -1615,9 +1617,11 @@
    :verdict (some-> (:verdict r) name)
    :timed-out (boolean (:timed-out? r))
    :provider-limit (boolean (:provider-limit? r))
+   :infra-error (boolean (:infra-error? r))
    :user-stopped (boolean (:user-stopped? r))
    :isolation (:isolation r)
-   :transient-retries (:retries r)
+   :transient-retries (or (:infra-retries r) 0)
+   :infra-retries (or (:infra-retries r) 0)
    :duration-s (:duration-s r)
    :transcript-path (:transcript-path r)
    :transcript-sha256 (file-sha256 (:transcript-path r))
@@ -1637,6 +1641,7 @@
    :scored (some? (:challenge-score r))
    :builds (:builds r)
    :retries (:retries r)
+   :infra-retries (or (:infra-retries r) 0)
    :implementation-sha256 (:implementation-sha256 r)
    :challenge-tree-sha (:challenge-tree-sha r)
    :cost-reported (:cost-reported r)
@@ -2238,7 +2243,13 @@
   ;; Deliberately excludes the output-token-maximum error (a config problem,
   ;; not transient) — that one contains "api error" but retrying it just
   ;; re-hits the same cap.
-  #"(?i)overloaded|overloaded_error|internal server error|service unavailable|bad gateway|gateway timeout|too many requests|error_during_execution|connection reset|econnreset|socket hang ?up|rate.?limit\w*\s+(?:exceeded|error|reached|hit)|(?:status|code|http|error)\W{0,12}(?:429|50[0234]|529)\b|\b(?:429|50[0234]|529)\s+(?:error|status)")
+  #"(?i)overloaded|overloaded_error|internal server error|service unavailable|bad gateway|gateway timeout|too many requests|error_during_execution|connection reset|econnreset|socket hang ?up|rate.?limit\w*\s+(?:exceeded|error|reached|hit)|(?:status|code|http|error)\W{0,12}(?:429|5\d\d)\b|\b(?:429|5\d\d)\s+(?:error|status)")
+
+(def ^:private oom-error-re
+  #"(?i)\b(?:out of memory|outofmemoryerror|oom(?:.?killed)?|heap space)\b")
+
+(def ^:private safety-filter-error-re
+  #"(?i)\b(?:content.?filter(?:s|ed|ing)?|safety.?filter(?:s|ed|ing)?|blocked by (?:the )?safety (?:system|filters?)|safety (?:system|filters?) (?:blocked|refused)|finish.?reason\W+safety)\b")
 
 (defn agent-error-text
   "The subset of an agent invocation's output worth scanning for transient
@@ -2284,10 +2295,25 @@
   [out err]
   (boolean (re-find transient-error-re (agent-error-text out err))))
 
+(defn infrastructure-failure
+  "Classify only a failed agent invocation, never solver prose or tool errors.
+  Quota is terminal; the other provider and host failures get one retry."
+  [{:keys [exit out err timed-out? canonical]}]
+  (let [summary (result-event canonical)
+        error-text (agent-error-text out err)]
+    (when (and (not timed-out?)
+               (or (not= 0 exit) (:is_error summary))
+               (not (contains? #{130 143} exit)))
+      (cond
+        (re-find quota-error-re error-text) :quota-or-provider-limit
+        (or (= 137 exit) (re-find oom-error-re error-text)) :infra-error
+        (or (re-find transient-error-re error-text)
+            (re-find safety-filter-error-re error-text)) :quota-or-provider-limit))))
+
 (defn run-phase!
   "Invoke one phase of a challenge. Clamps the per-call timeout to whatever's
-  left in the overall run budget. A transient server-side error re-runs the
-  invocation (fresh session) up to *phase-retry-cap* times with backoff before
+  left in the overall run budget. An infrastructure failure re-runs the
+  invocation once (fresh session, same command/pin) with backoff before
   the result is returned. `subsystem` is nil on single-subsystem runs;
   on multi-subsystem runs it is the slug of the subsystem being built and is
   threaded into the /challenge-phase invocation, the reasoning sentinel, and
@@ -2305,13 +2331,13 @@
         _ (when *verbose*
             (println (format "  Phase %s (attempt %d) starting (budget remaining: %ds, this-call cap: %ds)..."
                              phase-label attempt remaining effective-timeout)))
-        ;; Re-run the invocation on a transient server-side error, with backoff,
+        ;; Re-run the invocation on an infrastructure failure, with backoff,
         ;; until it succeeds, the retry cap is hit, or the budget runs out.
         ;; Every invocation gets its own sentinel and its own saved transcript:
         ;; a discarded retry still consumed budget and still wrote to the
         ;; implementation directory, so throwing its transcript away leaves the
         ;; run's wall clock unexplainable after the fact.
-        {:keys [exit out err duration-s timed-out? retries transcript-path]}
+        {:keys [exit out err duration-s timed-out? infra-retries transcript-path infra-failure canonical]}
         (loop [tries 0]
           (let [remaining (long (time-remaining-s run-start-millis))
                 eff (min *outer-timeout-s* (max 1 remaining))
@@ -2332,19 +2358,21 @@
                 path (save-transcript! project-root agent-name model reasoning
                                        challenge-name transcript phase-id attempt
                                        run-start-time subsystem tries)
-                r (assoc r :retries tries :transcript-path path)]
-            (if (and (transient-server-error? (:out r) (:err r))
-                     (not (:timed-out? r))
+                canonical (if (seq (:out r)) (normalize-agent-output (:out r)) "")
+                failure (infrastructure-failure (assoc r :canonical canonical))
+                r (assoc r :canonical canonical :infra-retries tries
+                           :infra-failure failure :transcript-path path)]
+            (if (and failure
+                     (not (re-find quota-error-re (agent-error-text (:out r) (:err r))))
                      (< tries *phase-retry-cap*)
                      (> (time-remaining-s run-start-millis) 0))
-              (let [backoff (min 60 (* 15 (inc tries)))]
+              (let [backoff-ms (* *phase-retry-backoff-ms* (inc tries))]
                 (when *verbose*
-                  (println (format "  Phase %s: transient server error — retry %d/%d in %ds"
-                                   phase-label (inc tries) *phase-retry-cap* backoff)))
-                (Thread/sleep (* backoff 1000))
+                  (println (format "  Phase %s: infrastructure error — retry %d/%d in %.1fs"
+                                   phase-label (inc tries) *phase-retry-cap* (/ backoff-ms 1000.0))))
+                (Thread/sleep backoff-ms)
                 (recur (inc tries)))
               r)))
-        canonical (normalize-agent-output out)
         summary (result-event canonical)
         combined (str out "\n" err)
         verdict (parse-phase-verdict combined)
@@ -2354,26 +2382,31 @@
                          (compute-cost token-usage (model->pricing model)))
         cost (or cost-reported cost-estimated)
         final-exit (if (and (zero? exit) (:is_error summary)) 1 exit)
-        error-text (agent-error-text out err)
-        provider-limit? (boolean (and (not= 0 final-exit)
-                                      (not timed-out?)
-                                      (or (re-find transient-error-re error-text)
-                                          (re-find quota-error-re error-text))))
+        ;; A failed retry with no solver verdict is still an interrupted phase,
+        ;; even if the second CLI only emitted a generic process error.
+        infra-failure (if (and (pos? infra-retries) (not= 0 final-exit)
+                               (not timed-out?) (not (contains? #{130 143} exit))
+                               (nil? verdict) (nil? infra-failure))
+                        :infra-error
+                        infra-failure)
+        provider-limit? (= :quota-or-provider-limit infra-failure)
+        infra-error? (= :infra-error infra-failure)
         user-stopped? (boolean (and (not timed-out?) (contains? #{130 143} exit)))
         tool-uses (parse-tool-uses canonical)
         skills-used (parse-skills-used canonical)
         skill-refs-used (parse-skill-refs-used canonical)]
     (when *verbose*
-      (println (format "  Phase %s (attempt %d) finished: exit=%d duration=%ds retries=%d verdict=%s"
-                       phase-label attempt exit duration-s retries
+      (println (format "  Phase %s (attempt %d) finished: exit=%d duration=%ds infra-retries=%d verdict=%s"
+                       phase-label attempt exit duration-s infra-retries
                        (if verdict (name verdict) "n/a"))))
     {:phase-id phase-id
      :attempt attempt
-     :retries retries
+     :infra-retries infra-retries
      :subsystem subsystem
      :exit final-exit
      :timed-out? (boolean timed-out?)
      :provider-limit? provider-limit?
+     :infra-error? infra-error?
      :user-stopped? user-stopped?
      :duration-s duration-s
      :verdict verdict
@@ -2837,7 +2870,8 @@
         (try
           (let [private-result
                 (when (and (has-private-tests? project-root challenge-name)
-                           (not= :timeout status))
+                           (not (contains? #{:timeout :infra-error :quota-or-provider-limit}
+                                           (classify-completion phase-result))))
                   (when *verbose*
                     (println (format "Running private tests for %s..." challenge-name)))
                   (let [result (run-private-tests! project-root challenge-name)]
@@ -2872,6 +2906,7 @@
                 phase-results (:phase-results phase-result)
                 builds (count (filter #(= :build (:phase-id %)) phase-results))
                 retries (count-semantic-retries phase-results)
+                infra-retries (reduce + 0 (map #(or (:infra-retries %) 0) phase-results))
 
                 ;; Alignment is a separate dimension from correctness: score it
                 ;; whenever there is a finished or correct implementation.
@@ -2906,6 +2941,7 @@
                                    :challenge-score score
                                    :builds builds
                                    :retries retries
+                                   :infra-retries infra-retries
                                    :iterations iterations
                                    :duration-s duration-s
                                    :cost cost
@@ -3465,7 +3501,7 @@
                                            input-tokens output-tokens
                                            cache-creation-tokens cache-read-tokens
                                            tool-uses cost scoring
-                                           completion private-counts private-reason builds retries] :as r}]
+                                           completion private-counts private-reason builds retries infra-retries] :as r}]
                                 {:timestamp            timestamp
                                  :agent                agent-name
                                  :model                model
@@ -3480,6 +3516,7 @@
                                  :challenge-score      challenge-score
                                  :builds               builds
                                  :retries              retries
+                                 :infra-retries        (or infra-retries 0)
                                  :iterations           iterations
                                  :duration-s           duration-s
                                  :input-tokens         (or input-tokens 0)

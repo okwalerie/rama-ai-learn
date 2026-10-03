@@ -2,6 +2,10 @@
  {run-challenges
   {:doc "Run Rama coding challenges against an AI agent"
    :task (do (load-file "scripts/run_challenges.bb") ((resolve '-main) *command-line-args*))}
+
+  orb-run
+  {:doc "Run one pinned challenge in an Amp Orb with fail-closed preflights"
+   :task (apply shell "python3" "scripts/orb_run.py" *command-line-args*)}
    
   verify-lcb-private-tests
   {:doc "Verify LCB challenges have migrated private-test alias/files/readme command"
