@@ -13,7 +13,9 @@
 (load-file (str (fs/parent (fs/absolutize *file*)) "/encrypt_challenges.bb"))
 
 (def cli-spec
-  {:grader-timeout {:desc "Seconds before a private-test (grader) run is killed with its process tree (default 1800)"
+  {:resource-preflight {:desc "Check Orb CPU and memory without running a challenge"
+                        :coerce :boolean}
+   :grader-timeout {:desc "Seconds before a private-test (grader) run is killed with its process tree (default 1800)"
                     :coerce :long}
    :filter     {:desc "Glob pattern to match challenge names (e.g. \"basic-*\")"
                 :alias :f}
@@ -122,6 +124,7 @@
   (println "Usage: bb run-challenges [options]")
   (println)
   (println "Options:")
+  (println "      --resource-preflight  Check Orb capacity and exit (no challenge or credentials needed)")
   (println "  -f, --filter GLOB       Glob pattern to match challenge names (e.g. \"basic-*\")")
   (println "  -b, --batch N           Batch number from CHALLENGE_ORDER.md")
   (println "  -d, --difficulty TYPE   Difficulty filter: standard or hard")
@@ -911,6 +914,12 @@
     (:timed-out? private-result)
     {:private-status :unavailable :private-sentinel :grader-timeout
      :private-reason (str "grader timeout after " (:timeout-s private-result) "s")}
+
+    (or (= 137 (:exit private-result))
+        (re-find #"(?i)OutOfMemoryError|Java heap space|Killed process.*java"
+                 (str (:out private-result) "\n" (:err private-result))))
+    {:private-status :unavailable :private-sentinel :grader-oom
+     :private-reason (str "grader out of memory (exit " (:exit private-result) ")")}
 
     :else
     (let [counts (parse-test-counts (str (:out private-result) "\n" (:err private-result)))
@@ -1759,12 +1768,16 @@
 (defn build-run-manifest
   "Pure: run metadata map plus results -> JSON-ready manifest map."
   [{:keys [run-id started-at finished-at args repo-sha repo-dirty? agent requested
-           grader-timeout-s isolation evaluator-log]} results]
+           grader-timeout-s isolation resources evaluator-log]} results]
   (when-not (seq isolation)
     (throw (ex-info "A scored run manifest requires the solver isolation record" {:run-id run-id})))
+  (when-not (and (string? (:orb-size resources))
+                 (:memory-limit-bytes resources) (:memory-available-bytes resources)
+                 (:cpu-count resources))
+    (throw (ex-info "A run manifest requires measured Orb resources" {:run-id run-id})))
   (when-not (and (string? (:path evaluator-log)) (re-matches #"[0-9a-f]{64}" (str (:sha256 evaluator-log))))
     (throw (ex-info "A run manifest requires the written evaluator log reference" {:run-id run-id})))
-  {:schema-version 3
+  {:schema-version 4
    :run-id run-id
    :started-at started-at
    :finished-at finished-at
@@ -1772,6 +1785,7 @@
    :repo {:head-sha repo-sha :dirty repo-dirty?}
    :requested (merge {:agent agent} requested)
    :grader-timeout-s grader-timeout-s
+   :resources resources
    :isolation isolation
    :redaction-policy redaction-policy
    :evaluator-log evaluator-log
@@ -2083,6 +2097,9 @@
   "Wall-clock cap for one private-test (grader) invocation, in seconds."
   1800)
 
+;; Keep Java heap below the workload limit: Rama also uses native memory.
+(def grader-jvm-options "-Xmx4g -XX:ActiveProcessorCount=4 -XX:+ExitOnOutOfMemoryError")
+
 (def ^:dynamic *private-test-cmd*
   "Command that runs a challenge's private suite from the challenge dir."
   ["clojure" "-X:test-private"])
@@ -2116,7 +2133,10 @@
         cmd (if group? (into [@setsid-path] *private-test-cmd*) *private-test-cmd*)
         timeout-s *grader-timeout-s*
         start (System/currentTimeMillis)
-        proc (p/process cmd {:dir challenge-dir :in ""})
+        proc (p/process cmd {:dir challenge-dir :in ""
+                             :extra-env {"JDK_JAVA_OPTIONS"
+                                         (str (when-let [existing (System/getenv "JDK_JAVA_OPTIONS")]
+                                                (str existing " ")) grader-jvm-options)}})
         out-fut (future (slurp (:out proc)))
         err-fut (future (slurp (:err proc)))
         done (deref proc (* 1000 timeout-s) ::timeout)
@@ -3209,6 +3229,67 @@
 
 ;;; Scored-run isolation preflight
 
+;; The enterprise-rag successful retry ran on a1.large (8 vCPUs, 14 GiB
+;; workload cgroup). Leave room for the solver, OS, and native Rama allocations
+;; beyond the grader's bounded Java heap.
+(def minimum-orb-cpus 8)
+(def minimum-orb-limit-bytes (* 14 1024 1024 1024))
+(def minimum-free-memory-bytes (* 8 1024 1024 1024))
+
+(defn- read-long-file [path]
+  (try
+    (let [s (str/trim (slurp (str path)))]
+      (when-not (= s "max") (parse-long s)))
+    (catch Exception _ nil)))
+
+(defn- proc-text [path]
+  ;; Babashka cannot read procfs files in this Orb (EINVAL); cat can.
+  (:out (p/shell {:out :string :err :string} "cat" path)))
+
+(defn- cgroup-ancestors []
+  (when-let [[_ rel] (re-find #"(?m)^0::(/.*)$" (proc-text "/proc/self/cgroup"))]
+    (loop [dir (fs/path "/sys/fs/cgroup" (subs rel 1)) dirs []]
+      (if (= (str dir) "/sys/fs/cgroup")
+        (conj dirs dir)
+        (recur (fs/parent dir) (conj dirs dir))))))
+
+(defn orb-resources
+  "Snapshot effective cgroup limits, free memory and CPU capacity. Unknown
+  limits remain nil, never mistaken for an unlimited qualifying Orb."
+  []
+  (let [dirs (cgroup-ancestors)
+        memory (keep (fn [dir]
+                       (when-let [limit (read-long-file (fs/path dir "memory.max"))]
+                         {:limit limit :free (when-let [used (read-long-file (fs/path dir "memory.current"))]
+                                               (max 0 (- limit used)))})) dirs)
+        host-free (some-> (re-find #"(?m)^MemAvailable:\s+(\d+) kB$" (proc-text "/proc/meminfo"))
+                          second parse-long (* 1024))
+        cpu-quotas (keep (fn [dir]
+                           (try
+                             (let [[quota period] (str/split (str/trim (slurp (str (fs/path dir "cpu.max")))) #"\s+")]
+                               (when-not (= quota "max")
+                                 (quot (parse-long quota) (parse-long period))))
+                             (catch Exception _ nil))) dirs)]
+    {:orb-size (or (not-empty (System/getenv "RAMA_ORB_SIZE")) "unknown")
+     :memory-limit-bytes (when (seq memory) (apply min (map :limit memory)))
+     :memory-available-bytes (when (and host-free (seq memory) (every? :free memory))
+                               (apply min host-free (map :free memory)))
+     :cpu-count (apply min (.availableProcessors (Runtime/getRuntime)) cpu-quotas)
+     :grader-jvm-options grader-jvm-options}))
+
+(defn require-orb-resources!
+  "Fail before solver work unless the measured Orb meets the standard run floor."
+  [resources]
+  (let [{:keys [memory-limit-bytes memory-available-bytes cpu-count]} resources]
+    (when-not (and memory-limit-bytes (>= memory-limit-bytes minimum-orb-limit-bytes)
+                   memory-available-bytes (>= memory-available-bytes minimum-free-memory-bytes)
+                   cpu-count (>= cpu-count minimum-orb-cpus))
+      (throw (ex-info (format (str "Orb resource preflight failed: need at least %d CPUs, %d GiB "
+                                   "cgroup limit and %d GiB currently available; observed %s")
+                              minimum-orb-cpus 14 8 (pr-str resources))
+                      {:reason :insufficient-orb-resources :resources resources})))
+    resources))
+
 (defn require-scored-run-isolation!
   "Every run-challenges run is scored, so every solver phase must launch in
   the bubblewrap public snapshot. Probe bubblewrap and audit each selected
@@ -3241,6 +3322,9 @@
         project-root (str (fs/parent (fs/absolutize "bb.edn")))]
     (when (:help opts)
       (print-usage)
+      (System/exit 0))
+    (when (:resource-preflight opts)
+      (println (pr-str (require-orb-resources! (orb-resources))))
       (System/exit 0))
 
     (let [challenge-order-path (fs/path project-root "CHALLENGE_ORDER.md")]
@@ -3279,7 +3363,8 @@
                               (mapv first))
             ;; the slow tier labels the run in headers, reports, and the db
             model slow-model
-            reasoning slow-effort]
+            reasoning slow-effort
+            resources (when (seq valid) (orb-resources))]
 
         (when (seq missing-tier)
           (binding [*out* *err*]
@@ -3299,6 +3384,8 @@
           (println "No challenges found matching filters.")
           (System/exit 0))
 
+        (require-orb-resources! resources)
+        (println "Orb resources:" (pr-str resources))
         (require-reference-isolation! project-root (:isolate-network opts))
 
         (when (and (:isolate-network opts) (not (contains? #{"claude" "opencode"} agent-name)))
@@ -3356,6 +3443,7 @@
                                         :fast-model fast-model :fast-effort fast-effort
                                         :slow-model slow-model :slow-effort slow-effort}
                             :grader-timeout-s (or (:grader-timeout opts) *grader-timeout-s*)
+                            :resources resources
                             :isolation isolation}]
               ;; A failed evaluator log stops the manifest and bundle; the
               ;; results database is still appended before the run fails.
