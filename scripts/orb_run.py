@@ -68,6 +68,8 @@ def verify_completion(output, agent):
         require(any(e.get("type") == "text" and e.get("part", {}).get("text") for e in events),
                 "OpenCode did not return completion text")
         require(not any(e.get("type") == "error" for e in events), "OpenCode returned an error")
+        require(any(e.get("type") == "step_finish" and e.get("part", {}).get("reason") == "stop"
+                    for e in events), "OpenCode did not finish a completion")
 
 
 def preflight(opts, output):

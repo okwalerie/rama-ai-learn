@@ -64,7 +64,8 @@ class OrbRunTests(unittest.TestCase):
                 return json.dumps({"probe": "passed", "network": "strict",
                                    "snapshot": {"audits": {"attack": {"violations": 0}}}})
             if "--challenge" in args:
-                return json.dumps({"type": "text", "part": {"text": "OK"}})
+                return (json.dumps({"type": "text", "part": {"text": "OK"}}) + "\n" +
+                        json.dumps({"type": "step_finish", "part": {"reason": "stop"}}))
             return ""
         with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", {"AMP_ORB": "1",
                     "AMP_ORB_PROVIDER": "e2b", "CHALLENGE_KEY": "test"}, clear=True), \
@@ -79,7 +80,8 @@ class OrbRunTests(unittest.TestCase):
             self.assertEqual(len([c for c in commands if "--network" in c and "--preflight" not in c]), 1)
 
     def test_empty_or_failed_completion_is_not_entitlement(self):
-        for payload in ('', '{"type":"error"}', '{"type":"text","part":{"text":""}}'):
+        for payload in ('', '{"type":"error"}', '{"type":"text","part":{"text":""}}',
+                        '{"type":"text","part":{"text":"partial"}}'):
             with self.assertRaises(RuntimeError):
                 orb_run.verify_completion(payload, "opencode")
         with self.assertRaises(RuntimeError):
