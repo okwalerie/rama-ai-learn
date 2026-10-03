@@ -658,6 +658,92 @@
                       "\"result\":\"API Error: max output tokens exceeded\"}")
                  "")))))
 
+(deftest infrastructure-failure-test
+  (let [failure (fn [exit out err]
+                  (infrastructure-failure {:exit exit :out out :err err
+                                           :canonical (if (seq out)
+                                                        (normalize-agent-output out) "")}))]
+    (are [expected exit out err] (= expected (failure exit out err))
+      :infra-error 137 "" ""
+      :infra-error 1 "" "java.lang.OutOfMemoryError: Java heap space"
+      :quota-or-provider-limit 1 "" "HTTP 501 Not Implemented"
+      :quota-or-provider-limit 1 "{\"type\":\"error\",\"error\":{\"message\":\"content_filter blocked response\"}}" ""
+      :quota-or-provider-limit 1 "" "Provider response blocked by safety filters"
+      :quota-or-provider-limit 1 "" "insufficient_quota"
+      nil 1 "" "Syntax error in module.clj"
+      nil 0 "PHASE_VALIDATION:pass\n" "HTTP 503 in an unrelated warning"
+      nil 1 "{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"content\":\"HTTP 503\"}]}}" ""
+      nil 130 "" "HTTP 503")))
+
+(deftest infrastructure-phase-retry-test
+  (let [tmp (str (fs/create-temp-dir))
+        project (str (fs/path tmp "project"))
+        started (java.time.LocalDateTime/now)
+        scripted (fn [responses]
+                   (let [calls (atom [])
+                         remaining (atom responses)
+                         r (with-redefs [invoke-command! (fn [cmd _]
+                                                           (swap! calls conj cmd)
+                                                           (let [answer (first @remaining)]
+                                                             (swap! remaining rest)
+                                                             (merge {:out "" :err "" :duration-s 0}
+                                                                    answer)))]
+                             (binding [*phase-retry-backoff-ms* 0]
+                               (run-phase! {:phase-cmd (fn [& _] ["fixed-agent" "--model" "pinned-model"])}
+                                           "demo" :build 1 nil project "codex" "pinned-model" "high"
+                                           started (System/currentTimeMillis))))]
+                     [r @calls]))]
+    (fs/create-dirs project)
+    (try
+      (doseq [[initial category] [[{:exit 137} :infra-error]
+                                  [{:exit 1 :err "Out of memory"} :infra-error]
+                                  [{:exit 1 :err "HTTP 503"} :quota-or-provider-limit]
+                                  [{:exit 1 :out "{\"type\":\"error\",\"error\":\"safety filter blocked\"}"}
+                                   :quota-or-provider-limit]]]
+        (let [[r calls] (scripted [initial {:exit 1 :err (:err initial) :out (:out initial)}])
+              completion (classify-completion {:status :fail :phase-results [r]})]
+          (is (= 2 (count calls)) (pr-str initial))
+          (is (= (first calls) (second calls)) "retry keeps the exact command and pin")
+          (is (= 1 (:infra-retries r)))
+          (is (= category completion))
+          (is (nil? (compute-challenge-score (classify-outcome
+                                               {:completion completion :private-status :not-run
+                                                :has-implementation? false}) 0)))
+          (is (fs/exists? (:transcript-path r)))
+          (is (str/includes? (:transcript-path r) "-retry1.jsonl"))))
+      (let [[r calls] (scripted [{:exit 137} {:exit 0 :out "PHASE_VALIDATION:pass"}])]
+        (is (= 2 (count calls)))
+        (is (= 0 (:exit r)))
+        (is (= :pass (:verdict r)))
+        (is (= 1 (:infra-retries r)))
+        (is (zero? (count-semantic-retries [r])))
+        (is (= 100 (compute-challenge-score :public-pass (count-semantic-retries [r])))))
+      (let [[r calls] (scripted [{:exit 0 :out "{\"type\":\"error\",\"error\":\"HTTP 503\"}"}
+                                 {:exit 0 :out "PHASE_VALIDATION:pass"}])]
+        (is (= 2 (count calls)) "structured provider error retries despite CLI exit zero")
+        (is (= 1 (:infra-retries r)))
+        (is (= :pass (:verdict r))))
+      (let [[r calls] (scripted [{:exit 137} {:exit 1 :out "PHASE_VALIDATION:fail"}])]
+        (is (= 2 (count calls)))
+        (is (= :solver-fail (classify-completion {:status :fail :phase-results [r]}))
+            "an explicit solver FAIL on retry is not masked"))
+      (let [[r calls] (scripted [{:exit 1 :err "HTTP 503"} {:exit 1 :err "process exited"}])]
+        (is (= 2 (count calls)))
+        (is (= :infra-error (classify-completion {:status :fail :phase-results [r]}))
+            "an interrupted retry without solver verdict is not solver failure"))
+      (let [[r calls] (scripted [{:exit 137} {:exit 1 :timed-out? true}])]
+        (is (= 2 (count calls)))
+        (is (not (:infra-error? r)))
+        (is (= :timeout (classify-completion {:status :timeout :phase-results [r]}))))
+      (let [[r calls] (scripted [{:exit 137} {:exit 130}])]
+        (is (= 2 (count calls)))
+        (is (= :user-stopped (classify-completion {:status :fail :phase-results [r]}))))
+      (let [[r calls] (scripted [{:exit 1 :out "PHASE_VALIDATION:fail"}])]
+        (is (= 1 (count calls)))
+        (is (= 0 (:infra-retries r)))
+        (is (= :fail (:verdict r))))
+      (finally (fs/delete-tree tmp)))))
+
 (deftest save-transcript-retry-test
   ;; A transient-error re-invocation is the SAME attempt run again, so it gets a
   ;; `-retry{R}` segment rather than sharing (and overwriting) the attempt's
@@ -1233,12 +1319,15 @@
     (is (= :completed (classify-completion {:status :pass})))
     (is (= :quota-or-provider-limit
            (classify-completion {:status :fail :phase-results [{:provider-limit? true}]})))
+    (is (= :infra-error
+           (classify-completion {:status :fail :phase-results [{:infra-error? true}]})))
     (is (= :user-stopped (classify-completion {:status :fail :phase-results [{:user-stopped? true}]})))
     (is (= :timeout (classify-completion {:status :timeout :phase-results [{:timed-out? true}]})))
     (is (= :solver-fail (classify-completion {:status :fail :phase-results [{:verdict :fail}]}))))
   (testing "headline outcome for each path; the private verdict dominates"
     (are [expected in] (= expected (classify-outcome in))
       :infra-error              {:infra-error? true :private-status :pass}
+      :infra-error              {:completion :infra-error :private-status :pass}
       :private-pass             {:completion :solver-fail :private-status :pass}
       :private-fail             {:completion :completed :private-status :fail}
       :timeout                  {:completion :timeout :private-status :not-run}
