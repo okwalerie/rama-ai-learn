@@ -224,8 +224,32 @@ Metadata establishes CLI support, not account
 entitlement or proof the provider applies the requested effort. No inference is
 performed by the preflight. Pi/Codex model metadata validation is not implemented.
 
-The authorized evaluation configurations (select the challenge with `-f` or batch
-from `CHALLENGE_ORDER.md`) are:
+Wave-3 Amp Orbs must use the versioned `bb orb-run` entrypoint exclusively,
+with a full assigned commit SHA already available in the checkout (fetch it
+first if necessary). Run one challenge per Orb; do not invoke the runner
+directly for Wave-3:
+
+```bash
+bb orb-run --pin <full-40-character-commit-sha> --challenge <exact-challenge-name> \
+  --agent opencode --slow-model openrouter/z-ai/glm-5.3 --slow-effort high \
+  --fast-model openrouter/meta/muse-spark-1.3-contributor --fast-effort high
+```
+
+The launcher refuses tracked changes, checks out the assigned commit detached,
+re-executes itself from that commit and checks only `HEAD == pin` (not the moving
+`origin/master`). It runs `.agents/setup`, then fails closed unless the execution
+host is an Amp Orb, `CHALLENGE_KEY` is present, the runner's resource preflight
+passes, installed model/effort metadata is valid, the strict-proxy snapshot audit
+passes, one actual completion succeeds per distinct model/effort pair through the
+strict proxy, and the selected challenge's reference harness passes serially.
+Only then does it launch `bb run-challenges --isolate-network` for that challenge.
+The sibling `reports/orb-<challenge>-<time>/` contains launcher logs, report,
+manifest, tar bundle, evaluator-only private log and verified phase transcripts.
+Keep the private log and transcripts outside the solver snapshot and do not
+publish them. A failed gate leaves logs but no complete-run receipt.
+
+The authorized evaluation configurations for non-Wave-3 manual runner calls
+(select the challenge with `-f` or batch from `CHALLENGE_ORDER.md`) are:
 
 ```bash
 # A: Claude CLI
