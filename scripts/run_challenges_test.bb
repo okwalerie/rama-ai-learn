@@ -1320,6 +1320,8 @@
   {:run-id "run-1" :started-at "t0" :finished-at "t1"
    :repo-sha "deadbeef" :repo-dirty? false :agent "claude"
    :requested {:model "m" :effort "high"} :grader-timeout-s 1800
+   :resources {:orb-size "a1.large" :cpu-count 8 :memory-limit-bytes 15032385536
+               :memory-available-bytes 11000000000 :grader-jvm-options grader-jvm-options}
    :isolation isolation-fixture
    :evaluator-log {:path "run.private.log" :path-relative-to "manifest-directory"
                    :sha256 (apply str (repeat 64 "0")) :bytes 0 :audience "evaluator-only"
@@ -1332,9 +1334,12 @@
         c (first (:challenges m))]
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"requires the solver isolation record"
           (build-run-manifest (dissoc run-meta-fixture :isolation) [r])))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"requires measured Orb resources"
+          (build-run-manifest (dissoc run-meta-fixture :resources) [r])))
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"requires the written evaluator log reference"
           (build-run-manifest (dissoc run-meta-fixture :evaluator-log) [r])))
-    (is (= 3 (:schema-version m)))
+    (is (= 4 (:schema-version m)))
+    (is (= (:resources run-meta-fixture) (:resources m)))
     (is (= (:evaluator-log run-meta-fixture) (:evaluator-log m)))
     (is (= isolation-fixture (:isolation m)))
     (is (= redaction-policy (:redaction-policy m)))
@@ -1878,6 +1883,60 @@
       (Thread/sleep 300)
       (is (not= 0 (:exit (p/shell {:out :string :err :string :continue true} "pgrep" "-f" marker)))
           "no grandchild survives the grader"))
+    (fs/delete-tree root)))
+
+(deftest orb-resource-floor-test
+  (let [good {:orb-size "unknown" :cpu-count 8
+              :memory-limit-bytes minimum-orb-limit-bytes
+              :memory-available-bytes minimum-free-memory-bytes}]
+    (is (= good (require-orb-resources! good)))
+    (doseq [bad [(assoc good :cpu-count 7)
+                 (assoc good :memory-limit-bytes (dec minimum-orb-limit-bytes))
+                 (assoc good :memory-available-bytes (dec minimum-free-memory-bytes))
+                 (assoc good :memory-limit-bytes nil)
+                 (assoc good :memory-available-bytes nil)]]
+      (is (= :insufficient-orb-resources
+             (:reason (ex-data (try (require-orb-resources! bad)
+                                    (catch clojure.lang.ExceptionInfo e e)))))))
+    (let [actual (orb-resources)]
+      (is (pos? (:cpu-count actual)))
+      (is (pos? (:memory-limit-bytes actual)))
+      (is (pos? (:memory-available-bytes actual)))
+      (is (<= (:memory-available-bytes actual) (:memory-limit-bytes actual))))))
+
+(deftest orb-resource-ancestor-limits-test
+  (with-redefs [cgroup-ancestors (constantly ["/mock/child" "/mock/parent"])
+                read-long-file (fn [path]
+                                 (get {"/mock/child/memory.max" (* 16 1024 1024 1024)
+                                       "/mock/child/memory.current" (* 2 1024 1024 1024)
+                                       "/mock/parent/memory.max" minimum-orb-limit-bytes
+                                       "/mock/parent/memory.current" (* 7 1024 1024 1024)}
+                                      (str path)))
+                proc-text (constantly "MemAvailable:   15000000 kB\n")
+                slurp (fn [path]
+                        (get {"/mock/child/cpu.max" "max 100000"
+                              "/mock/parent/cpu.max" "700000 100000"}
+                             (str path)))]
+    (let [r (orb-resources)]
+      (is (= minimum-orb-limit-bytes (:memory-limit-bytes r)))
+      (is (= (* 7 1024 1024 1024) (:memory-available-bytes r)))
+      (is (= 7 (:cpu-count r)))
+      (is (thrown? clojure.lang.ExceptionInfo (require-orb-resources! r))))))
+
+(deftest grader-jvm-options-and-oom-test
+  (let [root (fs/create-temp-dir)]
+    (fs/create-dirs (fs/path root "challenges" "x"))
+    (let [r (binding [*private-test-cmd* ["bash" "-c" "printf '%s' \"$JDK_JAVA_OPTIONS\""]]
+              (run-private-tests! (str root) "x"))]
+      (is (= 0 (:exit r)))
+      (is (str/ends-with? (:out r) grader-jvm-options)))
+    (let [r (binding [*private-test-cmd* ["java" "-XshowSettings:vm" "-version"]]
+              (run-private-tests! (str root) "x"))]
+      (is (= 0 (:exit r)))
+      (is (re-find #"Max. Heap Size.*4.00G" (:err r))))
+    (doseq [r [{:exit 137 :out "Ran 2 tests containing 2 assertions.\n1 failures, 0 errors." :err ""}
+               {:exit 1 :out "Ran 2 tests containing 2 assertions.\n0 failures, 1 errors." :err "java.lang.OutOfMemoryError: Java heap space"}]]
+      (is (= :grader-oom (:private-sentinel (classify-private-result true r)))))
     (fs/delete-tree root)))
 
 (let [{:keys [fail error]} (run-tests)]

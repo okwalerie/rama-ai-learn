@@ -49,6 +49,24 @@ solver starts, and the result is recorded as `isolation` in the run manifest
 namespaces. Missing bubblewrap, denied namespace creation, or a snapshot audit
 failure fails closed; there is no unisolated fallback.
 
+Use an **a1.large Orb** for scored runs. The successful enterprise-rag retry
+measured 8 CPUs and a 14 GiB workload cgroup limit (and completed its private
+suite without a cgroup OOM). The larger-Orb fanout reference-suite rerun passed
+5 tests / 91 assertions, but its exact Orb SKU was not recorded; do not infer
+that it was a1.large. Run `bb run-challenges --resource-preflight` after Orb
+setup to check capacity without credentials or a solver. The runner also checks
+before each scored run: at least 8 available logical CPUs, a 14 GiB effective
+cgroup memory limit, and 8 GiB currently available memory (the lesser of host
+MemAvailable and cgroup headroom). Unknown limits or a smaller Orb fail closed.
+Run one private/JVM suite at a time per Orb. The private grader runs
+`clojure -X:test-private` with a 30-minute process-tree timeout and explicit
+`JDK_JAVA_OPTIONS` (`-Xmx4g -XX:ActiveProcessorCount=4 -XX:+ExitOnOutOfMemoryError`);
+an OOM is reported as private-unavailable, not a correctness failure. Manifest
+schema 4 records measured CPU count, effective memory limit, free memory at
+launch and grader JVM settings in `resources`. `resources.orb-size` is
+`RAMA_ORB_SIZE` only if supplied by the scheduler; otherwise it is `unknown`
+rather than a size guessed from measured capacity.
+
 The solver sees only the selected README, public source (excluding test-support
 files), deps, kondo config, generic Rama skill, phase instructions, and shared
 library source. It does not see the project's `.git`, encrypted files, private test/reference
