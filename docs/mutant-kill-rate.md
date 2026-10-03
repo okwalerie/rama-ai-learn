@@ -1,14 +1,66 @@
-# Mutant kill rate — baseline
+# Mutant kill rate — before and after PR #11
 
 `bb mutant-kill-rate` runs each challenge's private grader (`test-private/`)
 against the reference module (must pass) and against each mutant (should
 fail). A mutant is a copy of the reference with one wrong design, usually an
 NFR violation. A mutant that survives points to a grader gap.
 
+## Comparison (same 25 mutants)
+
+| Graders | References | Mutants killed | Kill rate | Survived | Broken |
+|---|---:|---:|---:|---:|---:|
+| Before: `4bed04d` (2026-09-30) | 16/16 | 6/25 | 24% | 19 | 0 |
+| After: `78b9872` (`origin/master`, includes PR #11 at `600158f`; 2026-10-03) | 16/16 | 13/25 | 52% | 12 | 0 |
+
+The after run used `bb mutant-kill-rate --jobs 1 --timeout-s 900` across all
+16 challenges with mutants, without skipping any references. The mutant
+sources are unchanged from `0396370`. Seven previous survivors flipped to
+killed; none flipped the other way. Both full run receipts and the joined rows
+are in `docs/mutant-kill-rate.json` (`before-run`, `after-run`, `mutants`).
+"PR #11 NFR test?" means **at least one of the after run's failing test names**
+was introduced in PR #11; it does not claim that test was the only killer.
+In particular, `full-prefix-scan` was already killed before PR #11 but also
+fails the new ranking test. "Killing test" lists the after run's failing test
+names; `—` means no test failed.
+
+| Challenge | Mutant | Before | After | Killing test (after) | PR #11 NFR test? |
+|---|---|---|---|---|---|
+| bank-transfer-module | stream-topology | killed | killed | performance-challenge-test | No |
+| bank-transfer-module | unsubindexed-history | killed | killed | performance-challenge-test | No |
+| chat-app | durable-heartbeats | killed | killed | fault-tolerance-challenge-test, write-volume-challenge-test | No |
+| chat-app | per-member-post-writes | killed | killed | write-volume-challenge-test | No |
+| collaborative-document-editor | non-subindexed-history | survived | survived | — | No |
+| collaborative-document-editor | recompute-doc-on-read | survived | survived | — | No |
+| hld-ad-click-aggregation | global-placement | survived | survived | — | No |
+| hld-ad-click-aggregation | read-time-aggregation | survived | killed | window-work-independent-of-clicks-in-window | Yes |
+| hld-feature-flag-service | env-scan | survived | survived | — | No |
+| hld-feature-flag-service | global-pstate | survived | survived | — | No |
+| hld-file-sync | version-history-vector | survived | survived | — | No |
+| hld-hotel-reservation | cancel-scans-bookings | survived | killed | reserve-and-cancel-bounded-by-stay-not-history | Yes |
+| hld-metrics-pipeline | lazy-retention | survived | survived | — | No |
+| hld-metrics-pipeline | series-blob | survived | survived | — | No |
+| hld-payment-system | journal-sorted-map-blob | survived | killed | journal-page-reads-each-returned-row | Yes |
+| hld-rate-limiter | stream-client-dedup | survived | survived | — | No |
+| hld-search-autocomplete | full-prefix-scan | killed | killed | independent-four-tasks, independent-two-tasks, suggest-ranks-by-score-not-lexical-order | Yes |
+| hld-search-autocomplete | locale-placement | survived | survived | — | No |
+| hld-stock-exchange | book-as-one-value | survived | killed | trade-pages-and-depth-read-each-returned-entry | Yes |
+| hld-ticketing-system | hold-scans-event-holds | survived | killed | mutating-commands-bounded-by-own-history | Yes |
+| hld-url-shortener | stream-client-dedup | survived | killed | forced-stream-retry-counts-each-click-once | Yes |
+| time-series-module-hard | no-thirty-day-rollup | survived | killed | multi-year-range-reads-coarse-buckets | Yes |
+| time-series-module-hard | stream-ingest | killed | killed | performance-challenge-test | No |
+| top-users-module | global-user-totals | survived | survived | — | No |
+| top-users-module | query-time-top-n | survived | survived | — | No |
+
+The seven newly killed mutants fail tests added in PR #11: ad-click window
+work, hotel reserve/cancel work, payment journal paging, stock-exchange depth
+and trade paging, ticketing command work, URL-shortener retry, and time-series
+multi-year range reads. The remaining 12 survivors still identify uncovered
+designs; a surviving mutant is not evidence that its design is desirable.
+
 ## Baseline (2026-09-30, graders as on `origin/master` 4bed04d)
 
 **References: 16/16 pass. Mutants: 6/25 killed (24%), 19 survived, 0 broken
-(no compile or JVM crashes).** Machine-readable: `docs/mutant-kill-rate.json`.
+(no compile or JVM crashes).** Baseline receipt: `before-run` in the JSON.
 
 Every survivor passed the challenge's complete private suite, functional tests
 included. So each survivor compiles and keeps the reference's
@@ -45,7 +97,7 @@ design (see its manifest).
 | top-users-module | global-user-totals | survived | User totals in one `:global?` PState. |
 | top-users-module | query-time-top-n | survived | No maintained top-500; every read scans and sorts all users. |
 
-Every survivor matches a gap named in the NFR audit
+At the baseline, every survivor matched a gap named in the NFR audit
 (`origin/wip/atlas-onepagers:docs/nfr-audit.md`). The audit either names the
 design as passing, or says the relevant cost, balance, or retry behaviour is
 untested (top-users: no NFR tests at all). **Caveat:** the manifests'
@@ -54,7 +106,9 @@ survivor against the audit. They are not blind predictions. The exceptions are
 `time-series/no-thirty-day-rollup`, `hotel/cancel-scans-bookings`,
 `file-sync/version-history-vector` and `rate-limiter/stream-client-dedup`,
 which were marked `:survives` from the audit before they ran. The six killed
-mutants were all `:expected :killed` beforehand.
+mutants were all `:expected :killed` beforehand. The manifests retain these
+baseline expectations, so `as-expected?` is false for the seven newly killed
+mutants in the after-run receipt; this is not a grader failure.
 
 ### Positive controls (gold-standard graders)
 
@@ -75,7 +129,9 @@ mutants were all `:expected :killed` beforehand.
 ### Provenance and how the runs were made
 
 All runs were sequential, one grader JVM at a time (`--jobs 1`, one process).
-The baseline merges three runs:
+The after comparison is one full run on the rebased branch, from approximately
+22:53–23:56 UTC on 2026-10-03. All 16 references passed before the mutants
+for their respective challenges were graded. The baseline merges three runs:
 
 1. Full run, 03:33–04:25 UTC. All 16 challenges; the script as at 8286be6
    (before the lock). `hotel/cancel-scans-bookings`,
@@ -94,20 +150,16 @@ failure, which did not reproduce in isolation: the direct grader gave exit 0,
 task now takes a machine-wide lock (`$TMPDIR/mutant-kill-rate.lock`; a second
 run exits 3) and warns on `--jobs > 1`.
 
-## How to run (and rerun after `wip/nfr-tests` merges)
+## How to run
 
 ```bash
 bb scripts/mutant_kill_rate_test.bb                # task unit tests
-bb mutant-kill-rate --jobs 1 --timeout-s 900       # all challenges, ~55 min
+bb mutant-kill-rate --jobs 1 --timeout-s 900       # all challenges; overwrites JSON with a single-run receipt
 bb mutant-kill-rate -c hld-payment-system          # one challenge
 ```
 
-To measure the NFR tests, make a scratch merge
-(`git switch -c scratch/mkr-nfr && git merge origin/wip/nfr-tests`), rerun,
-and diff the resulting JSON against `docs/mutant-kill-rate.json`. Mutants are
-independent of the graders, so the merge needs no mutant changes. The
-survivors above are the audit's gaps, so each one the NFR tests close should
-flip to killed; update its manifest `:expected` to `:killed`. Not done yet.
+The runner writes only a single-run receipt. This document's joined JSON
+preserves the committed baseline and after run; save it before rerunning.
 
 Classification rules (in `scripts/mutant_kill_rate.bb`):
 
@@ -145,7 +197,6 @@ Mutants live only under `challenges/<name>/test-private/mutants/<id>/`.
 
 ## Remaining gaps
 
-- The scratch merge with `wip/nfr-tests` and a rerun have not been done.
 - Audited challenges with no mutants: auction-module, fanout,
   social-graph-and-fanout, who-to-follow, timed-notifications,
   unbalanced-social-graph, content-moderation, family-tree,
@@ -153,13 +204,13 @@ Mutants live only under `challenges/<name>/test-private/mutants/<id>/`.
   hld-job-scheduler, hld-notification-system, hld-web-crawler,
   hld-enterprise-rag.
 - Killed mutants were not checked separately for functional preservation (a
-  kill could partly come from a functional test). Per the killing-test labels,
-  all six were killed by performance/write-volume tests. Additional
+  kill could partly come from a functional test). At baseline, all six were
+  killed by performance/write-volume tests. Additional
   fault-tolerance failures were also recorded for `durable-heartbeats`.
 - `hld-url-shortener/stream-client-dedup` and
   `hld-ticketing-system/hold-scans-event-holds` were flagged in review as
-  possibly not functional-preserving. Both passed the full functional suite,
-  so any drift is untested rather than absent.
+  possibly not functional-preserving. Both passed the baseline functional
+  suite, so any drift was untested rather than absent at baseline.
 - The positive control mutants run on a single random task count (2 or 4)
   per run, as the harness chooses.
 
@@ -168,8 +219,9 @@ Mutants live only under `challenges/<name>/test-private/mutants/<id>/`.
 | When (UTC) | Model (evidence) | Permission mode (evidence) | Notes |
 |---|---|---|---|
 | 2026-09-29 06:25–07:15 | claude-opus-5-5 (transcript `"model":"claude-opus-5-5"`; process `claude --model claude-opus-5-5`) | default, then bypassPermissions (by the operator), then acceptEdits | bb/clojure/git were blocked at first; the partial concurrent run was invalid |
-| 2026-09-30 03:30– | claude-opus-5-5 (process `claude --model claude-opus-5-5 --permission-mode auto`; debug log `[auto-mode] verifyAutoModeGateAccess: enabledState=enabled ... model=claude-opus-5-5 modelSupported=true`; transcript `"permissionMode":"auto"`) | auto (`~/.claude/settings.json` = `{"permissions":{"defaultMode":"auto"}}`) | All runs in this doc; `git push` worked under auto |
+| 2026-09-30 03:30– | claude-opus-5-5 (process `claude --model claude-opus-5-5 --permission-mode auto`; debug log `[auto-mode] verifyAutoModeGateAccess: enabledState=enabled ... model=claude-opus-5-5 modelSupported=true`; transcript `"permissionMode":"auto"`) | auto (`~/.claude/settings.json` = `{"permissions":{"defaultMode":"auto"}}`) | Baseline runs; `git push` worked under auto |
+| 2026-10-03 22:53–23:56 | No Claude CLI/model call; `bb mutant-kill-rate --jobs 1 --timeout-s 900` invoked graders directly from this Amp thread | Not applicable to grader JVMs | After run on `78b9872`; 16/16 references passed |
 
 One manifest-drafting subagent ran on 2026-09-29 (alias `opus`; its transcript
 records `claude-opus-5-5`). Its 12 manifests were reviewed and the outcomes
-re-derived from runs in this session. No other model was used.
+re-derived from baseline runs in that session.
