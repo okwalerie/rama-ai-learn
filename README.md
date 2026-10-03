@@ -262,9 +262,44 @@ passes, one actual completion succeeds per distinct model/effort pair through th
 strict proxy, and the selected challenge's reference harness passes serially.
 Only then does it launch `bb run-challenges --isolate-network` for that challenge.
 The sibling `reports/orb-<challenge>-<time>/` contains launcher logs, report,
-manifest, tar bundle, evaluator-only private log and verified phase transcripts.
-Keep the private log and transcripts outside the solver snapshot and do not
-publish them. A failed gate leaves logs but no complete-run receipt.
+manifest, tar bundle, evaluator-only private log, verified phase transcripts and
+the implementation (checked against the manifest's `implementation-sha256`).
+Keep the private log and transcripts outside the solver snapshot; publish them
+only through the private run-archive release below. A failed gate leaves logs
+but no complete-run receipt.
+
+After collecting, the launcher re-verifies the output directory and writes two
+zstd `-19` archives under `<output>/archives/`:
+`<challenge>-<provider>-<run_id>.results.tar.zst` (implementation, report,
+manifest, run bundle, launch record, private log) and `.transcripts.tar.zst`
+(phase transcripts, runner logs). Each holds a `BUNDLE.json` with the run
+identity, pin, requested and observed model/effort (observed lists are empty
+when the CLI does not report them), times, phase/private/overall verdicts,
+sizes and per-file SHA-256. With `--wave N` it uploads both to release
+`wave-N` of `okwalerie/rama-ai-learn-runs`, refusing unless that repository is
+PRIVATE, creating the release if absent and never replacing a different asset.
+Any failure exits non-zero. For an existing output directory (or to retry):
+
+```bash
+bb run-archives write <output>             # write or verify; prints sizes
+bb run-archives upload --wave N <output>   # write if needed, then upload
+```
+
+Fetch a wave into the gitignored `runs/<run>/` (results by default; a
+transcripts archive merges into the same run only if its identity matches and
+none of its paths exist):
+
+```bash
+bb fetch-runs --wave N --list
+bb fetch-runs --wave N [--with-transcripts <run>]...
+python3 scripts/import_run_bundle.py <archive>... [--dest runs]   # local files
+```
+
+Releases with only `*.legacy.tar.gz` bundles (e.g. `wave-2`) are not
+importable by `fetch-runs`. Their formats vary, and many list `files` instead
+of mapping paths to SHA-256, so `import_run_bundle.py` rejects them. Download
+them for manual inspection; import an individual bundle only after confirming
+its `BUNDLE.json` maps `files` to SHA-256.
 
 The authorized evaluation configurations for non-Wave-3 manual runner calls
 (select the challenge with `-f` or batch from `CHALLENGE_ORDER.md`) are:
@@ -375,6 +410,7 @@ python3 -m unittest discover -s scripts -p 'test_transcript_events.py' -v
 python3 -m unittest discover -s scripts -p 'test_isolate_solver.py' -v
 python3 -m unittest discover -s scripts -p 'test_check_solver_models.py' -v
 python3 -m unittest discover -s scripts -p 'test_solver_proxy.py' -v
+python3 -m unittest discover -s scripts -p 'test_*run*.py' -v   # orb launcher, run archives, import
 bb scripts/run_challenges_test.bb
 python3 scripts/analyze-latest-transcript.py --file scripts/fixtures/transcripts/pi.jsonl summary
 python3 scripts/analyze-latest-transcript.py --file scripts/fixtures/transcripts/opencode.jsonl module
