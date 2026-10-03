@@ -249,8 +249,8 @@ directly for Wave-3:
 
 ```bash
 bb orb-run --pin <full-40-character-commit-sha> --challenge <exact-challenge-name> \
-  --agent opencode --slow-model openrouter/z-ai/glm-5.3 --slow-effort high \
-  --fast-model openrouter/meta/muse-spark-1.3-contributor --fast-effort high
+  --agent opencode --slow-model opencode-go/gpt-6-luna --slow-effort high \
+  --fast-model opencode-go/glm-5.3-flash --fast-effort high --wave <N>
 ```
 
 The launcher refuses tracked changes, checks out the assigned commit detached,
@@ -275,7 +275,9 @@ manifest, run bundle, launch record, private log) and `.transcripts.tar.zst`
 (phase transcripts, runner logs). Each holds a `BUNDLE.json` with the run
 identity, pin, requested and observed model/effort (observed lists are empty
 when the CLI does not report them), times, phase/private/overall verdicts,
-sizes and per-file SHA-256. With `--wave N` it uploads both to release
+sizes and per-file SHA-256. `--wave N` is required (use `--no-upload` only for unscored
+or debugging runs). The launcher checks that the runs repository is private before
+the run starts, then uploads both archives to release
 `wave-N` of `okwalerie/rama-ai-learn-runs`, refusing unless that repository is
 PRIVATE, creating the release if absent and never replacing a different asset.
 Any failure exits non-zero. For an existing output directory (or to retry):

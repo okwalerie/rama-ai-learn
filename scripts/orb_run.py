@@ -187,13 +187,18 @@ def main(argv=None):
         parser.add_argument(f"--{tier}-model", required=True)
         parser.add_argument(f"--{tier}-effort", required=True)
     parser.add_argument("--output", type=Path, help="Bundle directory, outside the repository")
-    parser.add_argument("--wave", type=int,
+    upload = parser.add_mutually_exclusive_group(required=True)
+    upload.add_argument("--wave", type=int,
                         help="Upload the run archives to release wave-<N> of the private runs repo")
+    upload.add_argument("--no-upload", action="store_true",
+                        help="Keep the archives in the output directory only (unscored or debugging runs)")
     parser.add_argument("--checked-out", action="store_true", help=argparse.SUPPRESS)
     opts = parser.parse_args(argv)
     require(re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", opts.challenge), "Invalid challenge name")
     if opts.wave is not None:
         run_archives.wave_tag(opts.wave)
+        # Check the destination before spending hours on the run, not after.
+        run_archives.require_private(run_archives.RUNS_REPO)
     if not opts.checked_out:
         pin_checkout(opts.pin)
         # The invoked launcher, not just the runner, must come from the pinned tree.

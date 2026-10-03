@@ -193,5 +193,24 @@ class OrbRunTests(unittest.TestCase):
                 orb_run.publish(Path("/o"), 3)
 
 
+    def test_wave_or_explicit_no_upload_is_required(self):
+        base = ["--pin", "a" * 40, "--challenge", "demo", "--agent", "claude",
+                "--fast-model", "m", "--fast-effort", "high", "--slow-model", "m", "--slow-effort", "high"]
+        with patch("sys.stderr"), self.assertRaises(SystemExit):
+            orb_run.main(base)
+        with patch("sys.stderr"), self.assertRaises(SystemExit):
+            orb_run.main(base + ["--wave", "3", "--no-upload"])
+
+    def test_wave_checks_runs_repo_is_private_before_the_run(self):
+        base = ["--pin", "a" * 40, "--challenge", "demo", "--agent", "claude",
+                "--fast-model", "m", "--fast-effort", "high", "--slow-model", "m", "--slow-effort", "high"]
+        with patch.object(run_archives, "require_private",
+                          side_effect=run_archives.ArchiveError("not PRIVATE")) as private, \
+                patch.object(orb_run, "pin_checkout") as checkout:
+            with self.assertRaisesRegex(run_archives.ArchiveError, "not PRIVATE"):
+                orb_run.main(base + ["--wave", "3"])
+            private.assert_called_once_with(run_archives.RUNS_REPO)
+            checkout.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main()
