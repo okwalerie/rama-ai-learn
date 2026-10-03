@@ -10,7 +10,8 @@
    [clojure.test :refer [is testing]]
    [com.rpl.rama.test :as rtest]
    [hld-rate-limiter.protocol :as p]
-   [rama-challenges.harness :as harness]))
+   [rama-challenges.harness :as harness]
+   [rama-challenges.nfr :as nfr]))
 
 (defn- internal-pstate?
   [{:keys [name]}]
@@ -275,3 +276,47 @@
             (is (balanced? read-hist)
                 (str "read work (point reads + iterator seeks + iterator reads) not spread across tasks: "
                      read-hist))))))))
+
+(defn test-stream-retry
+  "A check! whose processing is retried (forced :streaming-complete failure)
+   must debit exactly once. Topology-neutral: a microbatch design sees no
+   forced retry; a stream design must be retry-safe."
+  [create-module-fn tasks]
+  (let [{:keys [module wrap-client]} (create-module-fn)
+        cfg {:shadow? false
+             :user {:capacity 10 :refill 0}
+             :endpoints {"e" {:capacity 10 :refill 0}}}]
+    (with-open [ipc (rtest/create-ipc)]
+      (rtest/launch-module! ipc module {:tasks tasks :threads tasks})
+      (let [a (wrap-client ipc)]
+        (p/set-config! a "u" 1 cfg)
+        (harness/wait-for-processing! a)
+        (testing "retried debiting check! debits both buckets once"
+          (nfr/with-forced-stream-retry
+            (fn []
+              (p/check! a "u" "r1" "e" 3 5)
+              (harness/wait-for-processing! a)))
+          (harness/wait-for-processing! a)
+          (is (= {:allowed true :would-allow true :reason nil :tick 5
+                  :config-version 1 :remaining {:user 7 :endpoint 7}}
+                 (p/get-decision a "u" "r1")))
+          (is (= {:tick 5 :config-version 1
+                  :user {:capacity 10 :available 7}
+                  :endpoint {:capacity 10 :available 7}}
+                 (p/get-status a "u" "e" 0))
+              "stream retry must not double-debit"))
+        (testing "retried duplicate and fresh checks after the retry"
+          (nfr/with-forced-stream-retry 2
+            (fn []
+              (p/check! a "u" "r1" "e" 3 9)
+              (p/check! a "u" "r2" "e" 3 6)
+              (harness/wait-for-processing! a)))
+          (harness/wait-for-processing! a)
+          (is (= {:allowed true :would-allow true :reason nil :tick 6
+                  :config-version 1 :remaining {:user 4 :endpoint 4}}
+                 (p/get-decision a "u" "r2")))
+          (is (= {:tick 6 :config-version 1
+                  :user {:capacity 10 :available 4}
+                  :endpoint {:capacity 10 :available 4}}
+                 (p/get-status a "u" "e" 0))
+              "stream retries must not double-debit"))))))
