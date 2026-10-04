@@ -1967,6 +1967,33 @@
           "no grandchild survives the grader"))
     (fs/delete-tree root)))
 
+(deftest call-with-impl-diff-test
+  (let [root (fs/create-temp-dir)
+        impl (fs/path root "impl")]
+    (try
+      (fs/create-dirs (fs/path impl "src"))
+      (spit (str (fs/path impl "src" "a.clj")) "(ns a)\n")
+      (testing "edits, additions and the phase result are reported; caches are not"
+        (let [{:keys [result diff]}
+              (call-with-impl-diff impl #(do (spit (str (fs/path impl "src" "a.clj")) "(ns a)\n(def x 1)\n")
+                                             (spit (str (fs/path impl "PLAN.md")) "plan\n")
+                                             (fs/create-dirs (fs/path impl ".cpcache"))
+                                             (spit (str (fs/path impl ".cpcache" "noise.cp")) "noise")
+                                             :phase-result))]
+          (is (= :phase-result result))
+          (is (str/includes? diff "+(def x 1)"))
+          (is (str/includes? diff "+plan"))
+          (is (not (str/includes? diff "noise")))))
+      (testing "no change yields nil"
+        (is (nil? (:diff (call-with-impl-diff impl (constantly nil))))))
+      (testing "a missing implementation directory diffs as all-new"
+        (let [fresh (fs/path root "fresh")]
+          (is (str/includes? (:diff (call-with-impl-diff fresh #(do (fs/create-dirs fresh)
+                                                                     (spit (str (fs/path fresh "b.clj")) "b\n"))))
+                             "+b"))))
+      (is (= "/t/run-phase1.diff" (phase-diff-path "/t/run-phase1.jsonl")))
+      (finally (fs/delete-tree root)))))
+
 (deftest orb-resource-floor-test
   (let [good {:orb-size "unknown" :cpu-count 8
               :memory-limit-bytes minimum-orb-limit-bytes

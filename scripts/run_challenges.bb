@@ -2302,6 +2302,55 @@
         (or (re-find transient-error-re error-text)
             (re-find safety-filter-error-re error-text)) :quota-or-provider-limit))))
 
+;;; Per-invocation implementation diffs
+
+(def impl-diff-skipped-dirs
+  "Build and editor caches left out of implementation diffs."
+  #{".cpcache" "target" ".clj-kondo" ".lsp" ".shadow-cljs" "node_modules"})
+
+(defn- snapshot-impl-tree!
+  "Copy src into dest without following links, skipping build caches."
+  [src dest]
+  (fs/create-dirs dest)
+  (when (fs/directory? src)
+    (fs/walk-file-tree
+     src
+     {:pre-visit-dir (fn [dir _]
+                       (if (and (not= dir src) (impl-diff-skipped-dirs (str (fs/file-name dir))))
+                         :skip-subtree :continue))
+      :visit-file (fn [f _]
+                    (let [target (fs/path dest (fs/relativize src f))]
+                      (fs/create-dirs (fs/parent target))
+                      (fs/copy f target {:nofollow-links true}))
+                    :continue)})))
+
+(defn call-with-impl-diff
+  "Run f, returning {:result (f) :diff unified-diff-or-nil} of what changed
+  under impl-dir meanwhile. A diff failure never fails the phase."
+  [impl-dir f]
+  (let [tmp (fs/create-temp-dir {:prefix "impl-diff-"})]
+    (try
+      (snapshot-impl-tree! impl-dir (fs/path tmp "before"))
+      (let [result (f)
+            diff (try
+                   (snapshot-impl-tree! impl-dir (fs/path tmp "after"))
+                   (let [{:keys [exit out]} (p/shell {:out :string :err :string :continue true
+                                                      :dir (str tmp)}
+                                                     "git" "diff" "--no-index" "--no-color"
+                                                     "--" "before" "after")]
+                     (when (#{0 1} exit) (not-empty out)))
+                   (catch Exception e
+                     (binding [*out* *err*]
+                       (println (str "Warning: implementation diff failed: " (ex-message e))))
+                     nil))]
+        {:result result :diff diff})
+      (finally (fs/delete-tree tmp)))))
+
+(defn phase-diff-path
+  "Sidecar for a saved transcript; outside every manifest and bundle."
+  [transcript-path]
+  (str/replace (str transcript-path) #"\.jsonl$" ".diff"))
+
 (defn run-phase!
   "Invoke one phase of a challenge. Clamps the per-call timeout to whatever's
   left in the overall run budget. An infrastructure failure re-runs the
@@ -2335,8 +2384,10 @@
                 eff (min *outer-timeout-s* (max 1 remaining))
                 _ (append-reasoning-sentinel! project-root challenge-name
                                               phase-id attempt subsystem tries)
-                r (binding [*outer-timeout-s* eff]
-                    (invoke-command! cmd project-root))
+                {r :result impl-diff :diff}
+                (call-with-impl-diff (fs/path project-root "implementations" challenge-name)
+                                     #(binding [*outer-timeout-s* eff]
+                                        (invoke-command! cmd project-root)))
                 transcript (str (json/generate-string
                                   {:type "run_metadata" :timestamp (:started-at r)
                                    :isolation (isolation-mode)
@@ -2350,6 +2401,7 @@
                 path (save-transcript! project-root agent-name model reasoning
                                        challenge-name transcript phase-id attempt
                                        run-start-time subsystem tries)
+                _ (when impl-diff (spit (phase-diff-path path) impl-diff))
                 canonical (if (seq (:out r)) (normalize-agent-output (:out r)) "")
                 failure (infrastructure-failure (assoc r :canonical canonical))
                 r (assoc r :canonical canonical :infra-retries tries
