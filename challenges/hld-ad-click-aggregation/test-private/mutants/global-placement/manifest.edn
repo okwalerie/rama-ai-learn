@@ -1,0 +1,7 @@
+{:id "global-placement"
+ :challenge "hld-ad-click-aggregation"
+ :targets-nfr "horizontal scalability: campaigns partitioned across tasks"
+ :wrong-design "Declares $$campaigns with {:global? true} and routes both the microbatch ingest and the windows-in-range query to |global, so all campaigns live on a single task."
+ :expected :survives
+ :functional-preserved? :unverified
+ :notes "Unexecuted: manifest written from diff review only; compile and functional preservation not yet validated."}

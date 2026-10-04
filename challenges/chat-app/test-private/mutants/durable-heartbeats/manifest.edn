@@ -1,0 +1,8 @@
+{:id "durable-heartbeats"
+ :challenge "chat-app"
+ :targets-nfr "heartbeats perform no durable writes (presence is ephemeral)"
+ :wrong-design "Each heartbeat is appended to a depot and a stream topology writes a durable last-beat PState that presence reads."
+ :expected :killed
+ :split :dev
+ :functional-preserved? false
+ :notes "Positive control on a gold-standard grader: performance_test_support.clj:55-61 asserts 100 heartbeats write nothing durable. Not functional-preserving by design: presence now survives module update, which the fault-tolerance test (:223-225) also detects."}

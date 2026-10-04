@@ -1,0 +1,7 @@
+{:id "query-time-top-n"
+ :challenge "top-users-module"
+ :targets-nfr "top-users read must be precomputed, O(500) not O(users); audit gap: top-N at query time"
+ :wrong-design "No top-500 list is maintained; top-users runs an |all query topology that scans and sorts every user total on each read."
+ :expected :survives
+ :functional-preserved? true
+ :notes "TBD"}

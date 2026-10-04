@@ -6,6 +6,7 @@ import { mermaidSource } from './graph.mjs';
 export async function run() {
   const report = window.atlasCheck = { width: innerWidth, routes: [], graphs: [], errors: [], links: [] };
   const check = (ok, message) => { if (!ok) report.errors.push(message); };
+  const mutants = (await (await fetch('mutant-kill-rate.json')).json()).mutants;
   const wait = async predicate => {
     const start = performance.now();
     while (!predicate()) {
@@ -14,16 +15,24 @@ export async function run() {
     }
   };
   for (const [slug, graphs] of Object.entries(flows)) {
+    const rows = mutants.filter(row => row.challenge === slug);
     location.hash = slug;
     await wait(() => document.querySelector('.breadcrumbs')?.textContent.includes(slug));
-    check(document.querySelectorAll('[role=tab]').length === 5, `${slug}: five tabs`);
-    for (const tab of ['lr', 'td', 'requirements', 'user', 'reference']) {
+    check(document.querySelectorAll('[role=tab]').length === (rows.length ? 6 : 5), `${slug}: grader evidence tab only with mutants`);
+    for (const tab of ['lr', 'td', 'requirements', 'user', 'reference', ...(rows.length ? ['mutation'] : [])]) {
       document.getElementById(`tab-${tab}`).click();
       const panel = document.getElementById(`panel-${tab}`);
       await wait(() => [...panel.querySelectorAll('.graph-card')].every(c => ['ready','error'].includes(c.dataset.rendered)));
       check(panel.classList.contains('active'), `${slug}/${tab}: active panel`);
       check(panel.textContent.trim().length > 100, `${slug}/${tab}: empty content`);
       check(document.documentElement.scrollWidth <= innerWidth + 1, `${slug}/${tab}: page overflow ${document.documentElement.scrollWidth}`);
+      if (tab === 'mutation') {
+        check(panel.querySelectorAll('tbody tr').length === rows.length, `${slug}: mutant row count`);
+        for (const row of rows) {
+          check(panel.textContent.includes(row.mutant) && panel.textContent.includes(row.after), `${slug}/${row.mutant}: missing result`);
+          for (const test of row['killing-test']) check(panel.textContent.includes(test), `${slug}/${row.mutant}: missing killing test ${test}`);
+        }
+      }
       for (const button of panel.querySelectorAll('[data-diagram]')) {
         button.click();
         check(document.activeElement === document.getElementById(button.dataset.diagram)?.querySelector('.graph-viewport'), `${slug}: scenario navigation focus`);

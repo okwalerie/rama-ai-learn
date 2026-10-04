@@ -1,0 +1,7 @@
+{:id "book-as-one-value"
+ :challenge "hld-stock-exchange"
+ :targets-nfr "README :258 'the book of a symbol must not be held as a single value read and rewritten whole on every command'; get-depth proportional to levels"
+ :wrong-design "Each side's price levels and per-level FIFO queues are stored as one non-subindexed map value per symbol, so every submit/cancel reads and rewrites the whole side of the book and get-depth fetches the whole side and sorts it client-side."
+ :expected :survives
+ :functional-preserved? true
+ :notes "PENDING"}

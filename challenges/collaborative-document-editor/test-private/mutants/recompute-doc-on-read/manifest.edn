@@ -1,0 +1,7 @@
+{:id "recompute-doc-on-read"
+ :challenge "collaborative-document-editor"
+ :targets-nfr "document read cost independent of history length"
+ :wrong-design "Drops the materialized $$docs PState and has the doc+version query replay the entire edit log from the empty string on every read."
+ :expected :survives
+ :functional-preserved? :unverified
+ :notes "Unexecuted: manifest written from diff review only; compile and functional preservation not yet validated. Reference delegates to upstream nlb.collaborative-document-editor; mutant inlines a copy of that module, so any drift from upstream beyond the $$docs removal is unchecked."}

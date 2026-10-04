@@ -1,0 +1,7 @@
+{:id "env-scan"
+ :challenge "hld-feature-flag-service"
+ :targets-nfr "flag read is a point lookup independent of flags per environment"
+ :wrong-design "Partitions and keys flags by (tenant, env) with a subindexed flag-key map per environment, and flag reads fetch every flag of the environment via foreign-select ALL and linearly scan for the requested key."
+ :expected :survives
+ :functional-preserved? :unverified
+ :notes "Unexecuted: manifest written from diff review only; compile and functional preservation not yet validated. Also concentrates all flags of one (tenant, env) on one partition."}

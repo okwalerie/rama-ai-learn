@@ -1,0 +1,7 @@
+{:id "journal-sorted-map-blob"
+ :challenge "hld-payment-system"
+ :targets-nfr "README resource guarantees: no unbounded per-tenant collection (journal) read/deserialized/rewritten as one value; get-journal proportional to limit"
+ :wrong-design "The tenant's journal is stored as one non-subindexed sorted-map value: every fund!/charge!/refund! reads, deserializes and rewrites the whole journal, and get-journal fetches the whole journal and pages it client-side."
+ :expected :survives
+ :functional-preserved? true
+ :notes "PENDING"}

@@ -1,0 +1,7 @@
+{:id "non-subindexed-history"
+ :challenge "collaborative-document-editor"
+ :targets-nfr "edit and version-read cost independent of history length"
+ :wrong-design "Inlines the upstream module but declares the per-document $$edits log as a plain (non-subindexed) vector, so every edit and every doc+version read loads and rewrites the whole history."
+ :expected :survives
+ :functional-preserved? :unverified
+ :notes "Unexecuted: manifest written from diff review only; compile and functional preservation not yet validated. Reference delegates to upstream nlb.collaborative-document-editor; mutant inlines a copy of that module, so any drift from upstream beyond the schema line is unchecked."}

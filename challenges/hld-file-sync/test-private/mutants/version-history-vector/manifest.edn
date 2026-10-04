@@ -1,0 +1,8 @@
+{:id "version-history-vector"
+ :challenge "hld-file-sync"
+ :targets-nfr "README:272 a file's whole version history must not be used as one value"
+ :wrong-design "A file's :versions map is not subindexed, so every commit and version read loads and rewrites the file's whole version history as one value."
+ :expected :survives
+ :split :dev
+ :functional-preserved? true
+ :notes "Audit-predicted gap (nfr-audit hld-file-sync: version history as one value costs 1 read/1 write and passes every bound). Directory name kept from WIP; the mutation is a non-subindexed map, not a vector."}

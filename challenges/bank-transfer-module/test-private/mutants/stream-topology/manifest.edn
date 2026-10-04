@@ -1,0 +1,7 @@
+{:id "stream-topology"
+ :challenge "bank-transfer-module"
+ :targets-nfr "exactly-once transfers require microbatch topology"
+ :wrong-design "Deposits and transfers are processed in a stream topology (non-idempotent +sum / balance debit under retry) instead of a microbatch topology."
+ :expected :killed
+ :functional-preserved? true
+ :notes "KILLED: performance-challenge-test: topology-type check (line 69, #{:stream}), transfer rocks-read bound (line 83, 10 > 8), and balanced depot-read check (line 41, no microbatch depot-read events); functional tests pass."}

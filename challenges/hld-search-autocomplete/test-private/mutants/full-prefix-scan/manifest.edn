@@ -1,0 +1,7 @@
+{:id "full-prefix-scan"
+ :challenge "hld-search-autocomplete"
+ :targets-nfr "top-k query cost proportional to k, not to candidates per prefix"
+ :wrong-design "Reads every ranked candidate of the prefix with subselect ALL and takes the top k in the query instead of a bounded sorted-set-range-from-start of k."
+ :expected :killed
+ :functional-preserved? :unverified
+ :notes "Unexecuted: manifest written from diff review only; compile and functional preservation not yet validated."}
