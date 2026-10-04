@@ -133,7 +133,8 @@
       (let [output (str "{\"type\":\"thread.started\",\"thread_id\":\"abc\"}\n"
                         "{\"type\":\"turn.started\"}\n"
                         "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":40,\"output_tokens\":50}}\n")]
-        (is (= {:input-tokens 100
+        ;; Codex input_tokens includes cached tokens; canonical input excludes them.
+        (is (= {:input-tokens 60
                 :output-tokens 50
                 :cache-creation-tokens 0
                 :cache-read-tokens 40}
@@ -142,10 +143,18 @@
     (testing "when given Codex JSONL with multiple turn.completed events"
       (let [output (str "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":40,\"output_tokens\":50}}\n"
                         "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":200,\"cached_input_tokens\":80,\"output_tokens\":75}}\n")]
-        (is (= {:input-tokens 300
+        (is (= {:input-tokens 180
                 :output-tokens 125
                 :cache-creation-tokens 0
                 :cache-read-tokens 120}
+               (parse-token-usage output)))))
+
+    (testing "when Codex reports cache writes, they are split out of input"
+      (let [output "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":40,\"cache_write_input_tokens\":10,\"output_tokens\":5}}\n"]
+        (is (= {:input-tokens 50
+                :output-tokens 5
+                :cache-creation-tokens 10
+                :cache-read-tokens 40}
                (parse-token-usage output)))))))
 
 (deftest integer-reported-cost-test

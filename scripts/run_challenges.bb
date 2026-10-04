@@ -489,11 +489,14 @@
        :cache-creation-tokens (get usage :cache_creation_input_tokens 0)
        :cache-read-tokens     (get usage :cache_read_input_tokens 0)}
       ;; Codex: {"type":"turn.completed","usage":{"input_tokens":...,"cached_input_tokens":...,...}}
+      ;; Codex input_tokens includes cached and cache-write tokens; Claude's excludes them.
       "turn.completed"
-      {:input-tokens          (get usage :input_tokens 0)
-       :output-tokens         (get usage :output_tokens 0)
-       :cache-creation-tokens 0
-       :cache-read-tokens     (get usage :cached_input_tokens 0)}
+      (let [cached  (get usage :cached_input_tokens 0)
+            written (get usage :cache_write_input_tokens 0)]
+        {:input-tokens          (max 0 (- (get usage :input_tokens 0) cached written))
+         :output-tokens         (get usage :output_tokens 0)
+         :cache-creation-tokens written
+         :cache-read-tokens     cached})
       nil)))
 
 (defn parse-token-usage
