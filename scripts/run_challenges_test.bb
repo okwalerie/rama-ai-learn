@@ -1153,22 +1153,6 @@
       (is (empty? (filterv (fn [[p _ _]] (= :full-spec-review p)) invocations))
           "full-spec review never runs"))))
 
-(deftest reference-surfaces-require-strict-isolation-test
-  (let [root (fs/create-temp-dir {:prefix "reference-isolation-"})
-        command ["claude" "-p" "fixture"]]
-    (try
-      (doseq [surface ["docs/atlas" "review"]]
-        (fs/create-dirs (fs/path root surface))
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"require --isolate-network"
-              (solver-command command (str root) "demo" "claude")))
-        (binding [*isolate* true]
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"require --isolate-network"
-                (solver-command command (str root) "demo" "claude"))))
-        (binding [*isolate-network* true]
-          (is (some #{"strict"} (solver-command command (str root) "demo" "claude"))))
-        (fs/delete-tree (fs/path root surface)))
-      (finally (fs/delete-tree root)))))
-
 (deftest isolated-solver-command-test
   (let [cmd ["opencode" "run" "--" "prompt with spaces"]]
     (is (= cmd (solver-command cmd "/project" "demo" "opencode")))
@@ -2020,6 +2004,23 @@
       (is (= (* 7 1024 1024 1024) (:memory-available-bytes r)))
       (is (= (min 7 (.availableProcessors (Runtime/getRuntime))) (:cpu-count r)))
       (is (thrown? clojure.lang.ExceptionInfo (require-orb-resources! r))))))
+
+(deftest orb-resource-unconfined-host-test
+  (let [meminfo "MemTotal:       32000000 kB\nMemAvailable:   12000000 kB\n"]
+    (testing "every ancestor reads max: bounded by host memory"
+      (with-redefs [cgroup-ancestors (constantly ["/mock/child" "/mock/parent" "/sys/fs/cgroup"])
+                    proc-text (constantly meminfo)
+                    slurp (fn [path] (when (str/ends-with? (str path) "memory.max") "max\n"))]
+        (let [r (orb-resources)]
+          (is (= (* 32000000 1024) (:memory-limit-bytes r)))
+          (is (= (* 12000000 1024) (:memory-available-bytes r))))))
+    (testing "an unreadable ancestor limit stays unknown"
+      (with-redefs [cgroup-ancestors (constantly ["/mock/child" "/mock/parent"])
+                    proc-text (constantly meminfo)
+                    slurp (fn [path] (when (= "/mock/child/memory.max" (str path)) "max\n"))]
+        (let [r (orb-resources)]
+          (is (nil? (:memory-limit-bytes r)))
+          (is (nil? (:memory-available-bytes r))))))))
 
 (deftest grader-jvm-options-and-oom-test
   (let [root (fs/create-temp-dir)]

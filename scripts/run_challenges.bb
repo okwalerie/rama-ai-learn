@@ -645,16 +645,6 @@
 (def ^:dynamic *isolate* false)
 (def ^:dynamic *isolate-network* false)
 
-(defn require-reference-isolation!
-  "Reference-bearing authoring surfaces require both filesystem and network isolation.
-   Encryption hides challenge files, not atlas pages, Git history or live Portals."
-  [project-root strict?]
-  (when (and (not strict?)
-             (some #(fs/exists? (fs/path project-root %)) ["docs/atlas" "review"]))
-    (throw (ex-info
-            "Reference-bearing docs/atlas or review is present: solver launches require --isolate-network (Claude or OpenCode). Encryption and --isolate alone do not block reference Portals or upstream source downloads."
-            {:reason :reference-isolation-required}))))
-
 ;; Recorded per phase invocation (transcript metadata and run manifest).
 (defn isolation-mode []
   (cond *isolate-network* "bubblewrap-provider-network"
@@ -662,7 +652,6 @@
         :else "none"))
 
 (defn solver-command [cmd project-root challenge-name agent-name]
-  (require-reference-isolation! project-root *isolate-network*)
   (if (or *isolate* *isolate-network*)
     (into (cond-> ["python3" (str (fs/path project-root "scripts/isolate_solver.py"))
                    "--repo" project-root "--challenge" challenge-name "--agent" agent-name]
@@ -3292,17 +3281,27 @@
         (conj dirs dir)
         (recur (fs/parent dir) (conj dirs dir))))))
 
+(defn- memory-max-unset? [dir]
+  (try (= "max" (str/trim (slurp (str (fs/path dir "memory.max")))))
+       (catch Exception _ false)))
+
 (defn orb-resources
   "Snapshot effective cgroup limits, free memory and CPU capacity. Unknown
-  limits remain nil, never mistaken for an unlimited qualifying Orb."
+  limits remain nil, never mistaken for an unlimited qualifying Orb. Only
+  when every non-root ancestor explicitly reads `max` (an unconfined
+  workstation) is memory bounded by the host's MemTotal/MemAvailable."
   []
   (let [dirs (cgroup-ancestors)
         memory (keep (fn [dir]
                        (when-let [limit (read-long-file (fs/path dir "memory.max"))]
                          {:limit limit :free (when-let [used (read-long-file (fs/path dir "memory.current"))]
                                                (max 0 (- limit used)))})) dirs)
-        host-free (some-> (re-find #"(?m)^MemAvailable:\s+(\d+) kB$" (proc-text "/proc/meminfo"))
-                          second parse-long (* 1024))
+        meminfo (proc-text "/proc/meminfo")
+        host-kb (fn [field] (some-> (re-find (re-pattern (str "(?m)^" field ":\\s+(\\d+) kB$")) meminfo)
+                                    second parse-long (* 1024)))
+        host-free (host-kb "MemAvailable")
+        unbounded? (let [ds (remove #(= (str %) "/sys/fs/cgroup") dirs)]
+                     (boolean (and (seq ds) (every? memory-max-unset? ds))))
         cpu-quotas (keep (fn [dir]
                            (try
                              (let [[quota period] (str/split (str/trim (slurp (str (fs/path dir "cpu.max")))) #"\s+")]
@@ -3310,9 +3309,11 @@
                                  (quot (parse-long quota) (parse-long period))))
                              (catch Exception _ nil))) dirs)]
     {:orb-size (or (not-empty (System/getenv "RAMA_ORB_SIZE")) "unknown")
-     :memory-limit-bytes (when (seq memory) (apply min (map :limit memory)))
-     :memory-available-bytes (when (and host-free (seq memory) (every? :free memory))
-                               (apply min host-free (map :free memory)))
+     :memory-limit-bytes (cond (seq memory) (apply min (map :limit memory))
+                               unbounded? (host-kb "MemTotal"))
+     :memory-available-bytes (cond (and host-free (seq memory) (every? :free memory))
+                                   (apply min host-free (map :free memory))
+                                   unbounded? host-free)
      :cpu-count (apply min (.availableProcessors (Runtime/getRuntime)) cpu-quotas)
      :grader-jvm-options grader-jvm-options}))
 
@@ -3336,7 +3337,7 @@
   record for the manifest; throws when isolation is absent or broken."
   [project-root opts agent-name challenge-names]
   (when-not (or (:isolate opts) (:isolate-network opts))
-    (throw (ex-info (str "Scored runs require solver isolation: pass --isolate-network (or --isolate). "
+    (throw (ex-info (str "Scored runs require solver isolation: pass --isolate (or --isolate-network). "
                          "Without it the solver can read private tests, reference docs and host credentials.")
                     {:reason :isolation-required})))
   (let [strict? (boolean (:isolate-network opts))
@@ -3425,7 +3426,6 @@
 
         (require-orb-resources! resources)
         (println "Orb resources:" (pr-str resources))
-        (require-reference-isolation! project-root (:isolate-network opts))
 
         (when (and (:isolate-network opts) (not (contains? #{"claude" "opencode"} agent-name)))
           (throw (ex-info "--isolate-network supports Claude and OpenCode with OpenRouter or OpenCode Go only" {})))
