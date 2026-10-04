@@ -191,12 +191,26 @@ def opencode_go_config():
     })
 
 
+# Host tool prefixes outside /usr (e.g. Homebrew on an immutable Fedora
+# workstation, where codex, clojure, java and bb live). Absent on Orbs.
+TOOL_PREFIXES = ("/home/linuxbrew/.linuxbrew",)
+
+
+def tool_prefixes():
+    return [p for p in TOOL_PREFIXES if Path(p).is_dir()]
+
+
 def system_binds():
     args = []
     for path in ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/opt/java/openjdk"):
         if Path(path).exists():
             args += ["--ro-bind", path, path]
-    for path in ("/etc/ssl", "/etc/alternatives", "/etc/java-17-openjdk",
+    for prefix in tool_prefixes():
+        # The prefix may sit behind a symlink (/home -> var/home); mount the
+        # real tree read-only at the path its scripts and shebangs name.
+        args += ["--ro-bind", str(Path(prefix).resolve()), prefix]
+    # Fedora's /etc/ssl entries are symlinks into /etc/pki's public trust store.
+    for path in ("/etc/ssl", "/etc/pki/ca-trust", "/etc/pki/tls", "/etc/alternatives", "/etc/java-17-openjdk",
                  "/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf",
                  "/etc/passwd", "/etc/group", "/etc/ld.so.cache"):
         if Path(path).exists():
@@ -286,8 +300,9 @@ def isolated_command(repo, challenge, agent, command, staging, *, strict=False):
         path = home / rel
         if path.exists():
             args += ["--ro-bind", str(path), str(path)]
+    tool_bins = "".join(f"{p}/bin:{p}/sbin:" for p in tool_prefixes())
     env = {"HOME": str(home), "USER": home.name, "LANG": "C.UTF-8",
-           "PATH": f"{home}/.local/bin:/usr/local/bin:/usr/bin:/bin",
+           "PATH": f"{home}/.local/bin:{tool_bins}/usr/local/bin:/usr/bin:/bin",
            "TMPDIR": "/tmp", "GIT_CONFIG_NOSYSTEM": "1"}
     if Path("/opt/java/openjdk").exists():
         env["JAVA_HOME"] = "/opt/java/openjdk"

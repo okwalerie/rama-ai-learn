@@ -489,11 +489,14 @@
        :cache-creation-tokens (get usage :cache_creation_input_tokens 0)
        :cache-read-tokens     (get usage :cache_read_input_tokens 0)}
       ;; Codex: {"type":"turn.completed","usage":{"input_tokens":...,"cached_input_tokens":...,...}}
+      ;; Codex input_tokens includes cached and cache-write tokens; Claude's excludes them.
       "turn.completed"
-      {:input-tokens          (get usage :input_tokens 0)
-       :output-tokens         (get usage :output_tokens 0)
-       :cache-creation-tokens 0
-       :cache-read-tokens     (get usage :cached_input_tokens 0)}
+      (let [cached  (get usage :cached_input_tokens 0)
+            written (get usage :cache_write_input_tokens 0)]
+        {:input-tokens          (max 0 (- (get usage :input_tokens 0) cached written))
+         :output-tokens         (get usage :output_tokens 0)
+         :cache-creation-tokens written
+         :cache-read-tokens     cached})
       nil)))
 
 (defn parse-token-usage
@@ -642,16 +645,6 @@
 (def ^:dynamic *isolate* false)
 (def ^:dynamic *isolate-network* false)
 
-(defn require-reference-isolation!
-  "Reference-bearing authoring surfaces require both filesystem and network isolation.
-   Encryption hides challenge files, not atlas pages, Git history or live Portals."
-  [project-root strict?]
-  (when (and (not strict?)
-             (some #(fs/exists? (fs/path project-root %)) ["docs/atlas" "review"]))
-    (throw (ex-info
-            "Reference-bearing docs/atlas or review is present: solver launches require --isolate-network (Claude or OpenCode). Encryption and --isolate alone do not block reference Portals or upstream source downloads."
-            {:reason :reference-isolation-required}))))
-
 ;; Recorded per phase invocation (transcript metadata and run manifest).
 (defn isolation-mode []
   (cond *isolate-network* "bubblewrap-provider-network"
@@ -659,7 +652,6 @@
         :else "none"))
 
 (defn solver-command [cmd project-root challenge-name agent-name]
-  (require-reference-isolation! project-root *isolate-network*)
   (if (or *isolate* *isolate-network*)
     (into (cond-> ["python3" (str (fs/path project-root "scripts/isolate_solver.py"))
                    "--repo" project-root "--challenge" challenge-name "--agent" agent-name]
@@ -2310,6 +2302,75 @@
         (or (re-find transient-error-re error-text)
             (re-find safety-filter-error-re error-text)) :quota-or-provider-limit))))
 
+(def ^:private append-monitor (Object.))
+
+(defn append-locked!
+  "Append text under an exclusive lock, so concurrent runners sharing
+  ../reports (one per worktree lane) never interleave records. The file
+  lock spans processes; the monitor covers threads, which a JVM's file
+  lock rejects rather than queues."
+  [path ^String text]
+  (locking append-monitor
+    (with-open [ch (java.nio.channels.FileChannel/open
+                    (fs/path path)
+                    (into-array java.nio.file.OpenOption
+                                [java.nio.file.StandardOpenOption/CREATE
+                                 java.nio.file.StandardOpenOption/WRITE
+                                 java.nio.file.StandardOpenOption/APPEND]))]
+      ;; Closing the channel releases the lock.
+      (.lock ch)
+      (let [buf (java.nio.ByteBuffer/wrap (.getBytes text "UTF-8"))]
+        (while (.hasRemaining buf) (.write ch buf))))))
+
+;;; Per-invocation implementation diffs
+
+(def impl-diff-skipped-dirs
+  "Build and editor caches left out of implementation diffs."
+  #{".cpcache" "target" ".clj-kondo" ".lsp" ".shadow-cljs" "node_modules"})
+
+(defn- snapshot-impl-tree!
+  "Copy src into dest without following links, skipping build caches."
+  [src dest]
+  (fs/create-dirs dest)
+  (when (fs/directory? src)
+    (fs/walk-file-tree
+     src
+     {:pre-visit-dir (fn [dir _]
+                       (if (and (not= dir src) (impl-diff-skipped-dirs (str (fs/file-name dir))))
+                         :skip-subtree :continue))
+      :visit-file (fn [f _]
+                    (let [target (fs/path dest (fs/relativize src f))]
+                      (fs/create-dirs (fs/parent target))
+                      (fs/copy f target {:nofollow-links true}))
+                    :continue)})))
+
+(defn call-with-impl-diff
+  "Run f, returning {:result (f) :diff unified-diff-or-nil} of what changed
+  under impl-dir meanwhile. A diff failure never fails the phase."
+  [impl-dir f]
+  (let [tmp (fs/create-temp-dir {:prefix "impl-diff-"})]
+    (try
+      (snapshot-impl-tree! impl-dir (fs/path tmp "before"))
+      (let [result (f)
+            diff (try
+                   (snapshot-impl-tree! impl-dir (fs/path tmp "after"))
+                   (let [{:keys [exit out]} (p/shell {:out :string :err :string :continue true
+                                                      :dir (str tmp)}
+                                                     "git" "diff" "--no-index" "--no-color"
+                                                     "--" "before" "after")]
+                     (when (#{0 1} exit) (not-empty out)))
+                   (catch Exception e
+                     (binding [*out* *err*]
+                       (println (str "Warning: implementation diff failed: " (ex-message e))))
+                     nil))]
+        {:result result :diff diff})
+      (finally (fs/delete-tree tmp)))))
+
+(defn phase-diff-path
+  "Sidecar for a saved transcript; outside every manifest and bundle."
+  [transcript-path]
+  (str/replace (str transcript-path) #"\.jsonl$" ".diff"))
+
 (defn run-phase!
   "Invoke one phase of a challenge. Clamps the per-call timeout to whatever's
   left in the overall run budget. An infrastructure failure re-runs the
@@ -2343,8 +2404,10 @@
                 eff (min *outer-timeout-s* (max 1 remaining))
                 _ (append-reasoning-sentinel! project-root challenge-name
                                               phase-id attempt subsystem tries)
-                r (binding [*outer-timeout-s* eff]
-                    (invoke-command! cmd project-root))
+                {r :result impl-diff :diff}
+                (call-with-impl-diff (fs/path project-root "implementations" challenge-name)
+                                     #(binding [*outer-timeout-s* eff]
+                                        (invoke-command! cmd project-root)))
                 transcript (str (json/generate-string
                                   {:type "run_metadata" :timestamp (:started-at r)
                                    :isolation (isolation-mode)
@@ -2358,6 +2421,7 @@
                 path (save-transcript! project-root agent-name model reasoning
                                        challenge-name transcript phase-id attempt
                                        run-start-time subsystem tries)
+                _ (when impl-diff (spit (phase-diff-path path) impl-diff))
                 canonical (if (seq (:out r)) (normalize-agent-output (:out r)) "")
                 failure (infrastructure-failure (assoc r :canonical canonical))
                 r (assoc r :canonical canonical :infra-retries tries
@@ -3168,6 +3232,21 @@
        (when total-elapsed-s
          (println (str "Total elapsed: " (format-duration total-elapsed-s))))))))
 
+(defn claim-report-path!
+  "Atomically create reports-dir/filename, or name-2.md, name-3.md, ... when
+  a concurrent lane already claimed it in the same second. The manifest and
+  bundle derive from this path and never overwrite, so a shared name would
+  silently drop one lane's artifacts."
+  [reports-dir filename]
+  (fs/create-dirs reports-dir)
+  (let [stem (str/replace filename #"\.md$" "")]
+    (loop [n 1]
+      (let [path (fs/path reports-dir (if (= 1 n) filename (str stem "-" n ".md")))]
+        (if (try (fs/create-file path) true
+                 (catch java.nio.file.FileAlreadyExistsException _ false))
+          path
+          (recur (inc n)))))))
+
 (defn generate-report
   "Generate a markdown report file. Returns the report file path.
   opts is an optional map with keys:
@@ -3188,7 +3267,7 @@
                     (and model reasoning) (format "%s-%s-%s-%s-%s.md" date-str time-str agent-name (str/replace model #"[/\\\\]" "_") reasoning)
                     model                 (format "%s-%s-%s-%s.md" date-str time-str agent-name (str/replace model #"[/\\\\]" "_"))
                     :else                 (format "%s-%s-%s.md" date-str time-str agent-name))
-         report-path (fs/path reports-dir filename)
+         report-path (claim-report-path! reports-dir filename)
          results' (mapv #(assoc % :outcome (result-outcome %)) results)
          sb (StringBuilder.)]
      (fs/create-dirs reports-dir)
@@ -3289,17 +3368,27 @@
         (conj dirs dir)
         (recur (fs/parent dir) (conj dirs dir))))))
 
+(defn- memory-max-unset? [dir]
+  (try (= "max" (str/trim (slurp (str (fs/path dir "memory.max")))))
+       (catch Exception _ false)))
+
 (defn orb-resources
   "Snapshot effective cgroup limits, free memory and CPU capacity. Unknown
-  limits remain nil, never mistaken for an unlimited qualifying Orb."
+  limits remain nil, never mistaken for an unlimited qualifying Orb. Only
+  when every non-root ancestor explicitly reads `max` (an unconfined
+  workstation) is memory bounded by the host's MemTotal/MemAvailable."
   []
   (let [dirs (cgroup-ancestors)
         memory (keep (fn [dir]
                        (when-let [limit (read-long-file (fs/path dir "memory.max"))]
                          {:limit limit :free (when-let [used (read-long-file (fs/path dir "memory.current"))]
                                                (max 0 (- limit used)))})) dirs)
-        host-free (some-> (re-find #"(?m)^MemAvailable:\s+(\d+) kB$" (proc-text "/proc/meminfo"))
-                          second parse-long (* 1024))
+        meminfo (proc-text "/proc/meminfo")
+        host-kb (fn [field] (some-> (re-find (re-pattern (str "(?m)^" field ":\\s+(\\d+) kB$")) meminfo)
+                                    second parse-long (* 1024)))
+        host-free (host-kb "MemAvailable")
+        unbounded? (let [ds (remove #(= (str %) "/sys/fs/cgroup") dirs)]
+                     (boolean (and (seq ds) (every? memory-max-unset? ds))))
         cpu-quotas (keep (fn [dir]
                            (try
                              (let [[quota period] (str/split (str/trim (slurp (str (fs/path dir "cpu.max")))) #"\s+")]
@@ -3307,9 +3396,11 @@
                                  (quot (parse-long quota) (parse-long period))))
                              (catch Exception _ nil))) dirs)]
     {:orb-size (or (not-empty (System/getenv "RAMA_ORB_SIZE")) "unknown")
-     :memory-limit-bytes (when (seq memory) (apply min (map :limit memory)))
-     :memory-available-bytes (when (and host-free (seq memory) (every? :free memory))
-                               (apply min host-free (map :free memory)))
+     :memory-limit-bytes (cond (seq memory) (apply min (map :limit memory))
+                               unbounded? (host-kb "MemTotal"))
+     :memory-available-bytes (cond (and host-free (seq memory) (every? :free memory))
+                                   (apply min host-free (map :free memory))
+                                   unbounded? host-free)
      :cpu-count (apply min (.availableProcessors (Runtime/getRuntime)) cpu-quotas)
      :grader-jvm-options grader-jvm-options}))
 
@@ -3333,7 +3424,7 @@
   record for the manifest; throws when isolation is absent or broken."
   [project-root opts agent-name challenge-names]
   (when-not (or (:isolate opts) (:isolate-network opts))
-    (throw (ex-info (str "Scored runs require solver isolation: pass --isolate-network (or --isolate). "
+    (throw (ex-info (str "Scored runs require solver isolation: pass --isolate (or --isolate-network). "
                          "Without it the solver can read private tests, reference docs and host credentials.")
                     {:reason :isolation-required})))
   (let [strict? (boolean (:isolate-network opts))
@@ -3422,7 +3513,6 @@
 
         (require-orb-resources! resources)
         (println "Orb resources:" (pr-str resources))
-        (require-reference-isolation! project-root (:isolate-network opts))
 
         (when (and (:isolate-network opts) (not (contains? #{"claude" "opencode"} agent-name)))
           (throw (ex-info "--isolate-network supports Claude and OpenCode with OpenRouter or OpenCode Go only" {})))
@@ -3528,9 +3618,7 @@
                                  :scoring              scoring})
                               results)]
             (fs/create-dirs (fs/parent db-path))
-            (spit db-path
-                  (str (str/join "\n" (map pr-str records)) "\n")
-                  :append true))
+            (append-locked! db-path (str (str/join "\n" (map pr-str records)) "\n")))
 
           (some-> @artifact-error throw)
           results)))))

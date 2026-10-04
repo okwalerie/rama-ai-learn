@@ -52,6 +52,20 @@ class IsolationTests(unittest.TestCase):
         self.assertEqual(subprocess.check_output(
             ["git", "-C", str(self.repo), "show", "HEAD:private-key"], text=True), "fixture private-key")
 
+    def test_host_tool_prefix_is_read_only_and_on_path(self):
+        prefix = self.root / "brew"
+        (prefix / "bin").mkdir(parents=True)
+        with patch("isolate_solver.TOOL_PREFIXES", (str(prefix),)):
+            args, env = isolated_command(self.repo, "demo", "codex", ["true"], self.root)
+        triples = [args[j:j + 3] for j in range(len(args) - 2)]
+        self.assertIn(["--ro-bind", str(prefix.resolve()), str(prefix)], triples)
+        self.assertNotIn(["--bind", str(prefix.resolve()), str(prefix)], triples)
+        self.assertIn(f"{prefix}/bin:", env["PATH"])
+        (self.root / "x").mkdir()
+        with patch("isolate_solver.TOOL_PREFIXES", (str(self.root / "absent"),)):
+            args, env = isolated_command(self.repo, "demo", "codex", ["true"], self.root / "x")
+        self.assertNotIn(str(self.root / "absent"), " ".join(args) + env["PATH"])
+
     def test_authoring_references_are_not_in_solver_snapshot(self):
         public = self.root / "public"
         snapshot(self.repo, public, "demo")
