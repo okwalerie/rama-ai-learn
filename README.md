@@ -318,6 +318,23 @@ CHALLENGE_KEY=<passphrase> bb run-challenges --isolate-network -f <challenge> --
   --fast-model openrouter/meta/muse-spark-1.3-contributor --fast-effort high
 ```
 
+## Parallel lanes on one host
+
+One checkout cannot host two runners at once, because each run encrypts every
+other challenge's private files. `scripts/run-lanes.sh` gives each lane its
+own detached worktree of `HEAD` at `../<repo>-lane<i>`, deals the matching
+challenges round-robin, and keeps the machine awake with `systemd-inhibit`.
+Lanes share `../reports` and `../transcripts`. Logs go to `../lane-logs/<time>/`.
+
+```bash
+CHALLENGE_KEY=<passphrase> scripts/run-lanes.sh -n 2 -f 'hld-*' -- -a codex --isolate \
+  --slow-model <model> --slow-effort high --fast-model <model> --fast-effort medium
+```
+
+Each run uses about 4 GiB for the grader heap plus the solver's own test JVMs.
+Check `bb run-challenges --resource-preflight` and size `-n` to free memory.
+Every phase invocation also writes `<transcript>.diff`, a diff of
+`implementations/<challenge>`, next to its transcript in `../transcripts`.
 
 ## Docker workflow
 

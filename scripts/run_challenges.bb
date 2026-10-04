@@ -2302,6 +2302,26 @@
         (or (re-find transient-error-re error-text)
             (re-find safety-filter-error-re error-text)) :quota-or-provider-limit))))
 
+(def ^:private append-monitor (Object.))
+
+(defn append-locked!
+  "Append text under an exclusive lock, so concurrent runners sharing
+  ../reports (one per worktree lane) never interleave records. The file
+  lock spans processes; the monitor covers threads, which a JVM's file
+  lock rejects rather than queues."
+  [path ^String text]
+  (locking append-monitor
+    (with-open [ch (java.nio.channels.FileChannel/open
+                    (fs/path path)
+                    (into-array java.nio.file.OpenOption
+                                [java.nio.file.StandardOpenOption/CREATE
+                                 java.nio.file.StandardOpenOption/WRITE
+                                 java.nio.file.StandardOpenOption/APPEND]))]
+      ;; Closing the channel releases the lock.
+      (.lock ch)
+      (let [buf (java.nio.ByteBuffer/wrap (.getBytes text "UTF-8"))]
+        (while (.hasRemaining buf) (.write ch buf))))))
+
 ;;; Per-invocation implementation diffs
 
 (def impl-diff-skipped-dirs
@@ -3212,6 +3232,21 @@
        (when total-elapsed-s
          (println (str "Total elapsed: " (format-duration total-elapsed-s))))))))
 
+(defn claim-report-path!
+  "Atomically create reports-dir/filename, or name-2.md, name-3.md, ... when
+  a concurrent lane already claimed it in the same second. The manifest and
+  bundle derive from this path and never overwrite, so a shared name would
+  silently drop one lane's artifacts."
+  [reports-dir filename]
+  (fs/create-dirs reports-dir)
+  (let [stem (str/replace filename #"\.md$" "")]
+    (loop [n 1]
+      (let [path (fs/path reports-dir (if (= 1 n) filename (str stem "-" n ".md")))]
+        (if (try (fs/create-file path) true
+                 (catch java.nio.file.FileAlreadyExistsException _ false))
+          path
+          (recur (inc n)))))))
+
 (defn generate-report
   "Generate a markdown report file. Returns the report file path.
   opts is an optional map with keys:
@@ -3232,7 +3267,7 @@
                     (and model reasoning) (format "%s-%s-%s-%s-%s.md" date-str time-str agent-name (str/replace model #"[/\\\\]" "_") reasoning)
                     model                 (format "%s-%s-%s-%s.md" date-str time-str agent-name (str/replace model #"[/\\\\]" "_"))
                     :else                 (format "%s-%s-%s.md" date-str time-str agent-name))
-         report-path (fs/path reports-dir filename)
+         report-path (claim-report-path! reports-dir filename)
          results' (mapv #(assoc % :outcome (result-outcome %)) results)
          sb (StringBuilder.)]
      (fs/create-dirs reports-dir)
@@ -3583,9 +3618,7 @@
                                  :scoring              scoring})
                               results)]
             (fs/create-dirs (fs/parent db-path))
-            (spit db-path
-                  (str (str/join "\n" (map pr-str records)) "\n")
-                  :append true))
+            (append-locked! db-path (str (str/join "\n" (map pr-str records)) "\n")))
 
           (some-> @artifact-error throw)
           results)))))

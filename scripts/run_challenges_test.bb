@@ -372,28 +372,28 @@
         (testing "when model is specified"
           (let [path (generate-report sample-results "claude" project-dir {:total-elapsed-s 100 :model "sonnet"})
                 content (slurp path)]
-            (is (re-find #"-claude-sonnet\.md$" path)
+            (is (re-find #"-claude-sonnet(-\d+)?\.md$" path)
                 "filename should include model")
             (is (re-find #"Model: sonnet" content)
                 "content should include Model line")))
         (testing "when model is nil"
           (let [path (generate-report sample-results "claude" project-dir {:total-elapsed-s 100})
                 content (slurp path)]
-            (is (re-find #"-claude\.md$" path)
+            (is (re-find #"-claude(-\d+)?\.md$" path)
                 "filename should not include model")
             (is (not (re-find #"Model:" content))
                 "content should not include Model line")))
         (testing "when reasoning is specified with model"
           (let [path (generate-report sample-results "claude" project-dir {:total-elapsed-s 100 :model "sonnet" :reasoning "high"})
                 content (slurp path)]
-            (is (re-find #"-claude-sonnet-high\.md$" path)
+            (is (re-find #"-claude-sonnet-high(-\d+)?\.md$" path)
                 "filename should include model and reasoning")
             (is (re-find #"Reasoning: high" content)
                 "content should include Reasoning line")))
         (testing "when reasoning is specified without model"
           (let [path (generate-report sample-results "claude" project-dir {:total-elapsed-s 100 :reasoning "medium"})
                 content (slurp path)]
-            (is (re-find #"-claude\.md$" path)
+            (is (re-find #"-claude(-\d+)?\.md$" path)
                 "filename should not include reasoning when model is absent")
             (is (re-find #"Reasoning: medium" content)
                 "content should include Reasoning line")))
@@ -1966,6 +1966,22 @@
       (is (not= 0 (:exit (p/shell {:out :string :err :string :continue true} "pgrep" "-f" marker)))
           "no grandchild survives the grader"))
     (fs/delete-tree root)))
+
+(deftest concurrent-lane-report-files-test
+  (let [dir (fs/create-temp-dir)]
+    (try
+      (testing "same-second report names get distinct paths"
+        (let [paths (doall (pmap (fn [_] (str (claim-report-path! dir "r.md"))) (range 4)))]
+          (is (= 4 (count (set paths))))
+          (is (some #(str/ends-with? % "/r.md") paths))
+          (is (some #(str/ends-with? % "/r-4.md") paths))))
+      (testing "concurrent appends never interleave records"
+        (let [db (str (fs/path dir "results.edn"))
+              line (fn [i] (str (pr-str {:lane i :pad (apply str (repeat 20000 "x"))}) "\n"))]
+          (doall (pmap #(append-locked! db (line %)) (range 6)))
+          (is (= (set (map line (range 6)))
+                 (set (map #(str % "\n") (str/split-lines (slurp db))))))))
+      (finally (fs/delete-tree dir)))))
 
 (deftest call-with-impl-diff-test
   (let [root (fs/create-temp-dir)
