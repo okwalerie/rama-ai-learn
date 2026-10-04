@@ -214,6 +214,18 @@ class TranscriptTests(unittest.TestCase):
                                                 'Ran 3 tests containing 17 assertions.'}]}}])
                 self.assertEqual('17 assertions' in command(events, 'test-runs'), expected)
 
+    def test_real_codex_exec_transcript(self):
+        # Captured from codex-cli 0.160 `exec --json`: a compile error, a fix, a rerun.
+        events = analyzer.load(FIXTURES / 'codex-real.jsonl')
+        summary = next(e for e in events if e['type'] == 'result')
+        self.assertEqual(summary['result'], '12')
+        self.assertEqual(summary['usage']['input_tokens'], 161988 - 147328)
+        self.assertEqual(summary['usage']['cache_read_input_tokens'], 147328)
+        self.assertEqual(summary['usage']['output_tokens'], 480)
+        self.assertIn('EOF while reading', command(events, 'errors'))
+        self.assertEqual(command(events, 'timeline').count("BASH: /bin/bash -lc 'clojure -M probe.clj'"), 3)
+        self.assertEqual(command(events, 'timeline').count('FileChange'), 1)
+
     def test_multiblock_final_response_and_codex_error_string(self):
         events = normalize([{'type': 'message_end', 'message': {'role': 'assistant',
                             'content': [{'type': 'text', 'text': 'first'}, {'type': 'text', 'text': 'second'}],

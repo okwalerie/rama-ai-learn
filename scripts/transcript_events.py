@@ -211,10 +211,14 @@ def normalize(events):
             elif t == 'turn.completed':
                 u = e.get('usage')
                 if u is not None:
-                    usage(e, {'input_tokens': u.get('input_tokens', 0),
+                    # Codex input_tokens includes cached and cache-write tokens;
+                    # canonical input_tokens (Claude's) excludes them.
+                    cached = u.get('cached_input_tokens', 0)
+                    written = u.get('cache_write_input_tokens', 0)
+                    usage(e, {'input_tokens': max(0, u.get('input_tokens', 0) - cached - written),
                               'output_tokens': u.get('output_tokens', 0),
-                              'cache_read_input_tokens': u.get('cached_input_tokens', 0),
-                              'cache_creation_input_tokens': 0})
+                              'cache_read_input_tokens': cached,
+                              'cache_creation_input_tokens': written})
                 emit(e, type='turn_end', stop_reason='turn.completed')
             elif t in ('turn.failed', 'error'):
                 emit(e, type='error', error=e.get('error', e.get('message')))

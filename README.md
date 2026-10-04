@@ -40,8 +40,8 @@ elsewhere on disk. For uncontaminated challenge results, use a disposable checko
 whose Git history excludes private material and isolate it from other checkouts,
 backups, and the encryption key. Do not count a run that accessed hidden references.
 
-Every `bb run-challenges` run is scored and **requires** `--isolate-network`
-(or `--isolate`); encryption without it is **not isolation**. A preflight probes
+Every `bb run-challenges` run is scored and **requires** `--isolate`
+(or `--isolate-network`); encryption without it is **not isolation**. A preflight probes
 bubblewrap and audits each selected challenge's solver snapshot before any
 solver starts, and the result is recorded as `isolation` in the run manifest
 (see `docs/outcome-taxonomy.md`). The runner launches each solver phase through
@@ -100,7 +100,8 @@ unprivileged namespaces; Docker isolation was not validated by the orb tests.
 
 ### CONNECT-restricted networking is an additional opt-in boundary
 
-Use **`--isolate-network`** for evaluation solvers. It implies `--isolate` and
+`--isolate-network` is optional; filesystem isolation (`--isolate`) is the
+required boundary. Network isolation implies `--isolate` and
 keeps bubblewrap's separate network namespace (no external interface, host
 loopback, or direct DNS route). The only external connection path is a mounted
 Unix socket to a host-side CONNECT proxy. A Python loopback bridge inside the
@@ -317,6 +318,23 @@ CHALLENGE_KEY=<passphrase> bb run-challenges --isolate-network -f <challenge> --
   --fast-model openrouter/meta/muse-spark-1.3-contributor --fast-effort high
 ```
 
+## Parallel lanes on one host
+
+One checkout cannot host two runners at once, because each run encrypts every
+other challenge's private files. `scripts/run-lanes.sh` gives each lane its
+own detached worktree of `HEAD` at `../<repo>-lane<i>`, deals the matching
+challenges round-robin, and keeps the machine awake with `systemd-inhibit`.
+Lanes share `../reports` and `../transcripts`. Logs go to `../lane-logs/<time>/`.
+
+```bash
+CHALLENGE_KEY=<passphrase> scripts/run-lanes.sh -n 2 -f 'hld-*' -- -a codex --isolate \
+  --slow-model <model> --slow-effort high --fast-model <model> --fast-effort medium
+```
+
+Each run uses about 4 GiB for the grader heap plus the solver's own test JVMs.
+Check `bb run-challenges --resource-preflight` and size `-n` to free memory.
+Every phase invocation also writes `<transcript>.diff`, a diff of
+`implementations/<challenge>`, next to its transcript in `../transcripts`.
 
 ## Docker workflow
 

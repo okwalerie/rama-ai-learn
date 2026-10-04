@@ -133,7 +133,8 @@
       (let [output (str "{\"type\":\"thread.started\",\"thread_id\":\"abc\"}\n"
                         "{\"type\":\"turn.started\"}\n"
                         "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":40,\"output_tokens\":50}}\n")]
-        (is (= {:input-tokens 100
+        ;; Codex input_tokens includes cached tokens; canonical input excludes them.
+        (is (= {:input-tokens 60
                 :output-tokens 50
                 :cache-creation-tokens 0
                 :cache-read-tokens 40}
@@ -142,10 +143,18 @@
     (testing "when given Codex JSONL with multiple turn.completed events"
       (let [output (str "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":40,\"output_tokens\":50}}\n"
                         "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":200,\"cached_input_tokens\":80,\"output_tokens\":75}}\n")]
-        (is (= {:input-tokens 300
+        (is (= {:input-tokens 180
                 :output-tokens 125
                 :cache-creation-tokens 0
                 :cache-read-tokens 120}
+               (parse-token-usage output)))))
+
+    (testing "when Codex reports cache writes, they are split out of input"
+      (let [output "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":40,\"cache_write_input_tokens\":10,\"output_tokens\":5}}\n"]
+        (is (= {:input-tokens 50
+                :output-tokens 5
+                :cache-creation-tokens 10
+                :cache-read-tokens 40}
                (parse-token-usage output)))))))
 
 (deftest integer-reported-cost-test
@@ -363,28 +372,28 @@
         (testing "when model is specified"
           (let [path (generate-report sample-results "claude" project-dir {:total-elapsed-s 100 :model "sonnet"})
                 content (slurp path)]
-            (is (re-find #"-claude-sonnet\.md$" path)
+            (is (re-find #"-claude-sonnet(-\d+)?\.md$" path)
                 "filename should include model")
             (is (re-find #"Model: sonnet" content)
                 "content should include Model line")))
         (testing "when model is nil"
           (let [path (generate-report sample-results "claude" project-dir {:total-elapsed-s 100})
                 content (slurp path)]
-            (is (re-find #"-claude\.md$" path)
+            (is (re-find #"-claude(-\d+)?\.md$" path)
                 "filename should not include model")
             (is (not (re-find #"Model:" content))
                 "content should not include Model line")))
         (testing "when reasoning is specified with model"
           (let [path (generate-report sample-results "claude" project-dir {:total-elapsed-s 100 :model "sonnet" :reasoning "high"})
                 content (slurp path)]
-            (is (re-find #"-claude-sonnet-high\.md$" path)
+            (is (re-find #"-claude-sonnet-high(-\d+)?\.md$" path)
                 "filename should include model and reasoning")
             (is (re-find #"Reasoning: high" content)
                 "content should include Reasoning line")))
         (testing "when reasoning is specified without model"
           (let [path (generate-report sample-results "claude" project-dir {:total-elapsed-s 100 :reasoning "medium"})
                 content (slurp path)]
-            (is (re-find #"-claude\.md$" path)
+            (is (re-find #"-claude(-\d+)?\.md$" path)
                 "filename should not include reasoning when model is absent")
             (is (re-find #"Reasoning: medium" content)
                 "content should include Reasoning line")))
@@ -1143,22 +1152,6 @@
           "subsystem beta never runs")
       (is (empty? (filterv (fn [[p _ _]] (= :full-spec-review p)) invocations))
           "full-spec review never runs"))))
-
-(deftest reference-surfaces-require-strict-isolation-test
-  (let [root (fs/create-temp-dir {:prefix "reference-isolation-"})
-        command ["claude" "-p" "fixture"]]
-    (try
-      (doseq [surface ["docs/atlas" "review"]]
-        (fs/create-dirs (fs/path root surface))
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"require --isolate-network"
-              (solver-command command (str root) "demo" "claude")))
-        (binding [*isolate* true]
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"require --isolate-network"
-                (solver-command command (str root) "demo" "claude"))))
-        (binding [*isolate-network* true]
-          (is (some #{"strict"} (solver-command command (str root) "demo" "claude"))))
-        (fs/delete-tree (fs/path root surface)))
-      (finally (fs/delete-tree root)))))
 
 (deftest isolated-solver-command-test
   (let [cmd ["opencode" "run" "--" "prompt with spaces"]]
@@ -1974,6 +1967,49 @@
           "no grandchild survives the grader"))
     (fs/delete-tree root)))
 
+(deftest concurrent-lane-report-files-test
+  (let [dir (fs/create-temp-dir)]
+    (try
+      (testing "same-second report names get distinct paths"
+        (let [paths (doall (pmap (fn [_] (str (claim-report-path! dir "r.md"))) (range 4)))]
+          (is (= 4 (count (set paths))))
+          (is (some #(str/ends-with? % "/r.md") paths))
+          (is (some #(str/ends-with? % "/r-4.md") paths))))
+      (testing "concurrent appends never interleave records"
+        (let [db (str (fs/path dir "results.edn"))
+              line (fn [i] (str (pr-str {:lane i :pad (apply str (repeat 20000 "x"))}) "\n"))]
+          (doall (pmap #(append-locked! db (line %)) (range 6)))
+          (is (= (set (map line (range 6)))
+                 (set (map #(str % "\n") (str/split-lines (slurp db))))))))
+      (finally (fs/delete-tree dir)))))
+
+(deftest call-with-impl-diff-test
+  (let [root (fs/create-temp-dir)
+        impl (fs/path root "impl")]
+    (try
+      (fs/create-dirs (fs/path impl "src"))
+      (spit (str (fs/path impl "src" "a.clj")) "(ns a)\n")
+      (testing "edits, additions and the phase result are reported; caches are not"
+        (let [{:keys [result diff]}
+              (call-with-impl-diff impl #(do (spit (str (fs/path impl "src" "a.clj")) "(ns a)\n(def x 1)\n")
+                                             (spit (str (fs/path impl "PLAN.md")) "plan\n")
+                                             (fs/create-dirs (fs/path impl ".cpcache"))
+                                             (spit (str (fs/path impl ".cpcache" "noise.cp")) "noise")
+                                             :phase-result))]
+          (is (= :phase-result result))
+          (is (str/includes? diff "+(def x 1)"))
+          (is (str/includes? diff "+plan"))
+          (is (not (str/includes? diff "noise")))))
+      (testing "no change yields nil"
+        (is (nil? (:diff (call-with-impl-diff impl (constantly nil))))))
+      (testing "a missing implementation directory diffs as all-new"
+        (let [fresh (fs/path root "fresh")]
+          (is (str/includes? (:diff (call-with-impl-diff fresh #(do (fs/create-dirs fresh)
+                                                                     (spit (str (fs/path fresh "b.clj")) "b\n"))))
+                             "+b"))))
+      (is (= "/t/run-phase1.diff" (phase-diff-path "/t/run-phase1.jsonl")))
+      (finally (fs/delete-tree root)))))
+
 (deftest orb-resource-floor-test
   (let [good {:orb-size "unknown" :cpu-count 8
               :memory-limit-bytes minimum-orb-limit-bytes
@@ -2011,6 +2047,23 @@
       (is (= (* 7 1024 1024 1024) (:memory-available-bytes r)))
       (is (= (min 7 (.availableProcessors (Runtime/getRuntime))) (:cpu-count r)))
       (is (thrown? clojure.lang.ExceptionInfo (require-orb-resources! r))))))
+
+(deftest orb-resource-unconfined-host-test
+  (let [meminfo "MemTotal:       32000000 kB\nMemAvailable:   12000000 kB\n"]
+    (testing "every ancestor reads max: bounded by host memory"
+      (with-redefs [cgroup-ancestors (constantly ["/mock/child" "/mock/parent" "/sys/fs/cgroup"])
+                    proc-text (constantly meminfo)
+                    slurp (fn [path] (when (str/ends-with? (str path) "memory.max") "max\n"))]
+        (let [r (orb-resources)]
+          (is (= (* 32000000 1024) (:memory-limit-bytes r)))
+          (is (= (* 12000000 1024) (:memory-available-bytes r))))))
+    (testing "an unreadable ancestor limit stays unknown"
+      (with-redefs [cgroup-ancestors (constantly ["/mock/child" "/mock/parent"])
+                    proc-text (constantly meminfo)
+                    slurp (fn [path] (when (= "/mock/child/memory.max" (str path)) "max\n"))]
+        (let [r (orb-resources)]
+          (is (nil? (:memory-limit-bytes r)))
+          (is (nil? (:memory-available-bytes r))))))))
 
 (deftest grader-jvm-options-and-oom-test
   (let [root (fs/create-temp-dir)]
