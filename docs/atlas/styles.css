@@ -42,6 +42,8 @@ main { min-width: 0; padding: 0 clamp(18px, 3vw, 44px) 48px; max-width: 1800px; 
 .hero h2 { font-size: 30px; line-height: 1.2; margin: 0 0 12px; }
 .hero p { color: var(--muted); max-width: 75ch; margin: 0; }
 .coverage { margin-top: 14px !important; font-size: 14px; }
+.hero .mutation-overview { margin-top: 12px; color: var(--ink); font-size: 14px; }
+.mutation-overview strong { color: var(--accent); }
 .intro-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; padding: 18px 0; border-block: 1px solid var(--line); }
 .note-card h3 { font-size: 17px; margin: 0 0 8px; }
 .note-card p, .note-card li { font-size: 14px; line-height: 1.6; }
@@ -79,6 +81,18 @@ main { min-width: 0; padding: 0 clamp(18px, 3vw, 44px) 48px; max-width: 1800px; 
 .page-card summary { cursor: pointer; }
 .page-card details > h4 { margin: 16px 0 6px; }
 .empty { color: var(--muted); margin: 0; font-size: 14px; }
+.mutation-evidence p { margin: 0 0 16px; color: var(--muted); }
+.mutation-evidence h3 { margin-bottom: 8px; }
+.mutation-table-wrap { max-width: 100%; overflow-x: auto; margin-bottom: 16px; }
+.mutation-evidence table { width: 100%; min-width: 900px; border-collapse: collapse; text-align: left; font-size: 14px; }
+.mutation-evidence caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.mutation-evidence th, .mutation-evidence td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.mutation-evidence thead th { color: var(--muted); font-weight: 400; white-space: nowrap; }
+.mutation-evidence tbody th { font-weight: 600; width: 42%; }
+.mutation-evidence tbody th small { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; font-weight: 400; line-height: 1.45; }
+.mutation-evidence td:nth-child(2), .mutation-evidence td:nth-child(3), .mutation-evidence td:last-child { white-space: nowrap; }
+.mutation-evidence td:nth-child(4) { overflow-wrap: anywhere; }
+.mutation-evidence td.mutation-new { color: var(--accent); font-weight: 600; }
 .caveat { margin: 24px 0; padding-left: 12px; border-left: 2px solid #a6afad; font-size: 14px; line-height: 1.6; color: var(--muted); max-width: 90ch; }
 .loading { padding: 40px 0; }
 .footer-nav { display: flex; justify-content: space-between; gap: 20px; border-top: 1px solid var(--line); margin-top: 24px; padding-top: 14px; font-size: 14px; }
@@ -106,4 +120,12 @@ main { min-width: 0; padding: 0 clamp(18px, 3vw, 44px) 48px; max-width: 1800px; 
   .tabs { gap: 0 16px; }
   .tab { min-height: 44px; }
   .prose-section { grid-template-columns: 1fr; gap: 7px; }
+  .mutation-table-wrap { overflow: visible; }
+  .mutation-evidence table { min-width: 0; }
+  .mutation-evidence thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .mutation-evidence tbody, .mutation-evidence tbody tr, .mutation-evidence tbody th, .mutation-evidence tbody td { display: block; width: 100%; }
+  .mutation-evidence tbody tr { border-top: 1px solid var(--line); padding: 12px 0; }
+  .mutation-evidence tbody th, .mutation-evidence tbody td { border: 0; padding: 2px 0; white-space: normal; overflow-wrap: anywhere; }
+  .mutation-evidence tbody td:nth-child(2), .mutation-evidence tbody td:nth-child(3), .mutation-evidence tbody td:last-child { white-space: normal; }
+  .mutation-evidence tbody td::before { content: attr(data-label) ': '; color: var(--muted); font-weight: 400; }
 }

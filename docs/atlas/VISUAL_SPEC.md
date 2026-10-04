@@ -44,17 +44,26 @@ vertical window. Wide diagrams remain horizontally explorable on small screens.
   [`e2bfe2e`](https://github.com/okwalerie/rama-ai-learn/commit/e2bfe2e0dcca2a5b2683fe818acfe15b0c1b8dc5).
   README/protocol requirements and reference behavior are separate evidence.
 - `npm ci && npm run build` from `docs/atlas` reproduces the local Mermaid bundle.
-- `npm test` checks all 35 qualifying routes (8 README-provenance LeetCode
+- `npm test` checks all 44 qualifying routes (8 README-provenance LeetCode
   exclusions), source files and line ranges, edges, ownership views, four-column
-  overview boundaries, exemplar branch coverage, and invalid-grammar controls.
+  overview boundaries, exemplar branch coverage, invalid-grammar controls, and
+  the 25-mutant report's before/after rows against both run receipts.
 - Serve `docs/atlas`, open a browser, then run
   `import('./browser-check.mjs').then(m => m.run())` in its console. Repeat at desktop
-  and mobile widths. `window.atlasCheck` records every route/graph, five-tab coverage,
+  and mobile widths. `window.atlasCheck` records every route/graph, five base views
+  plus grader evidence for the 16 challenges with mutants,
   SVG bounds and label containment, overview column order, zoom/expand/Escape,
   accessibility, links, and hostile-label/error-fallback controls.
 - Browser geometry tests are supplemented by screenshot inspection of ChatApp,
   Fanout, File Sync, Stock Exchange, Metrics and Enterprise RAG. They do not prove
-  Rama runtime behavior: this atlas documents inspected source, not a new cluster run.
+  Rama runtime behavior: the diagrams document inspected source, not a new cluster run.
+
+The grader view reads `docs/mutant-kill-rate.json` through the Atlas server's
+read-only `/mutant-kill-rate.json` route. It displays the same 25 design mutants
+at graders `4bed04d` and `78b9872`, not the earlier functional controls in
+`reference-mutations.json`. Seven previously surviving mutants were killed by
+PR #11 NFR tests, increasing the kill rate from 6/25 to 13/25; all 16 references
+passed. Test outcomes stay separate from the architecture diagrams.
 
 Known source caveats are retained alongside the relevant diagrams: ChatApp reference
 presence is 30 seconds versus the protocol's 120 seconds; its derived reply gate

@@ -11,6 +11,26 @@ const expected = directories.filter(x => !/\*\*Source:\*\* leetcode/i.test(readF
 assert.equal(directories.length - expected.length, 8, 'LeetCode exclusions from README provenance');
 assert.deepEqual(entries.map(x => x.slug).sort(), expected);
 assert.deepEqual(Object.keys(flows).sort(), expected);
+const report = JSON.parse(readFileSync(`${root}docs/mutant-kill-rate.json`, 'utf8'));
+assert.deepEqual([report.summary.before.killed, report.summary.after.killed], [6, 13]);
+assert.equal(report.mutants.length, 25);
+assert.equal(report.references.length, 16);
+assert(report.references.every(r => r.before && r.after));
+assert(report.references.every(r => entries.some(item => item.slug === r.challenge)));
+const baseline = new Map(report['before-run'].challenges.flatMap(c => c.mutants.map(m => [`${c.challenge}/${m.id}`, m])));
+const after = new Map(report['after-run'].challenges.flatMap(c => c.mutants.map(m => [`${c.challenge}/${m.id}`, m])));
+assert.equal(baseline.size, 25);
+assert.equal(after.size, 25);
+assert.equal(new Set(report.mutants.map(m => `${m.challenge}/${m.mutant}`)).size, 25);
+for (const row of report.mutants) {
+  const key = `${row.challenge}/${row.mutant}`;
+  const before = baseline.get(key), current = after.get(key);
+  assert(before && current, `${key}: missing run evidence`);
+  assert.equal(row.before, before['killed?'] ? 'killed' : 'survived');
+  assert.equal(row.after, current['killed?'] ? 'killed' : 'survived');
+  assert.deepEqual(row['killing-test'], [...new Set(current['killed-by'].map(hit => hit.test))].sort());
+}
+assert.equal(report.mutants.filter(m => m.before === 'survived' && m.after === 'killed' && m['killed-by-pr11-nfr-test']).length, 7);
 const all = Object.values(flows).flat();
 assert.equal(new Set(all.map(g => g.id)).size, all.length);
 const errors = [];

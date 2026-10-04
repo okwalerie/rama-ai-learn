@@ -38,6 +38,15 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = unquote(urlsplit(self.path).path)
+        if path == "/mutant-kill-rate.json":
+            data = (ROOT / "docs/mutant-kill-rate.json").read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path.startswith("/source/"):
             try:
                 file = source_file(path.removeprefix("/source/"))
