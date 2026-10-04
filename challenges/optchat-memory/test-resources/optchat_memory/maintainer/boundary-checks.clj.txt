@@ -1,0 +1,48 @@
+;; Maintainer-only validation. This is not a solver grading test: it deliberately
+;; seeds boundary metadata without constructing 2^63 messages. The sparse state
+;; verifies scalar storage/arithmetic/command boundaries, not full coverage.
+(require '[clojure.test :as t]
+         '[com.rpl.rama.test :as rt]
+         '[com.rpl.rama.path :as path]
+         '[optchat-memory.module :as ref]
+         '[optchat-memory.protocol :as p]
+         '[rama-challenges.harness :as h])
+(defn boundary-meta []
+  {:watermark (dec Long/MAX_VALUE) :pending-nodes 0
+   :revision (biginteger "1208925819614629174706176")
+   :content-bytes (biginteger "1208925819614629174706176")
+   :rendered-bytes (biginteger "1208925819614629174706176")})
+(let [big (biginteger "1208925819614629174706176")
+      seed {:watermark (dec Long/MAX_VALUE) :pending-nodes 0 :revision big
+            :content-bytes big :rendered-bytes big}
+      msg {:kind :user :text "boundary é" :timestamp Long/MIN_VALUE}]
+  (binding [t/*report-counters* (ref t/*initial-report-counters*)]
+    (with-open [ps (rt/create-test-pstate {String ref/chat-schema})]
+      (rt/test-pstate-transform [(path/keypath "b" :meta) (path/termval seed)] ps)
+      (t/is (= seed (rt/test-pstate-select-one (path/keypath "b" :meta) ps)))
+      (t/is (= java.math.BigInteger (class (:revision (rt/test-pstate-select-one (path/keypath "b" :meta) ps))))))
+    (with-redefs [ref/fresh-meta boundary-meta]
+      (with-open [ipc (rt/create-ipc)]
+        (let [{:keys [module wrap-client]} (ref/create-module)]
+          (rt/launch-module! ipc module {:tasks 2 :threads 2 :workers 2})
+          (let [c (wrap-client ipc) index (dec Long/MAX_VALUE)]
+            (t/is (= {:ok {:index index}} (p/append! c "boundary" "last" msg)))
+            (h/wait-for-processing! c)
+            (t/is (= {:ok (assoc msg :index index)} (p/zoom c "boundary" index 1)))
+            (t/is (= {:ok Long/MIN_VALUE} (p/date c "boundary" index)))
+            (t/is (= {:error :capacity-exhausted} (p/append! c "boundary" "next" msg)))
+            (h/wait-for-processing! c)
+            (t/is (= {:ok {:index index}} (p/append! c "boundary" "last" msg)))
+            (h/wait-for-processing! c)
+            (t/is (= {:error :idempotency-conflict} (p/append! c "boundary" "last" (assoc msg :text "different"))))
+            (h/wait-for-processing! c)
+            (let [v (:ok (p/view c "boundary" {:revision (inc big) :start index}))]
+              (t/is (= Long/MAX_VALUE (:watermark v) (:covered-end v)))
+              (t/is (= (inc big) (:revision v)))
+              (t/is (= java.math.BigInteger (class (:revision v))))
+              (t/is (> (:content-bytes v) Long/MAX_VALUE))
+              (t/is (> (:rendered-bytes v) Long/MAX_VALUE))
+              (t/is (= 1 (count (:parts v))))
+              (rt/update-module! ipc module)
+              (t/is (= v (:ok (p/view (wrap-client ipc) "boundary" {:revision (inc big) :start index})))))))))
+    (println "BOUNDARY-CHECKS" @t/*report-counters*)))

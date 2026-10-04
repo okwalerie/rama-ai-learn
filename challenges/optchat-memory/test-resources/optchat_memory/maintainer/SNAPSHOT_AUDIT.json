@@ -1,0 +1,27 @@
+{
+  "files": 58,
+  "symlinks": [
+    ".agents/skills/rama",
+    ".claude/skills/rama",
+    ".codex/skills/rama"
+  ],
+  "categories": {
+    ".agents/skills/challenge-phase": 1,
+    ".claude/commands/challenge-phase.md": 1,
+    "challenges/optchat-memory/README.md": 1,
+    "challenges/optchat-memory/deps.edn": 1,
+    "challenges/optchat-memory/src": 1,
+    "deps.edn": 1,
+    "lib/harness/deps.edn": 1,
+    "lib/harness/src": 4,
+    "lib/rama-deps": 1,
+    "plugins/rama-skill/skills/rama": 45,
+    "scripts/import-kondo-configs.sh": 1
+  },
+  "violations": [],
+  "challenge-files": [
+    "challenges/optchat-memory/README.md",
+    "challenges/optchat-memory/deps.edn",
+    "challenges/optchat-memory/src/optchat_memory/protocol.clj"
+  ]
+}

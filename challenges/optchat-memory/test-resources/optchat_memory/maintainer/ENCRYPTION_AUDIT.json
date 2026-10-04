@@ -1,0 +1,25 @@
+{
+  "protected-files": [
+    "src/optchat_memory/test_support.clj",
+    "test-private/optchat_memory/contract_test.clj",
+    "test-resources/optchat_memory/maintainer/ENCRYPTION_AUDIT.json",
+    "test-resources/optchat_memory/maintainer/FULL_SPEC_REVIEW.md",
+    "test-resources/optchat_memory/maintainer/FULL_SPEC_TEST_RUN.log",
+    "test-resources/optchat_memory/maintainer/IMPLEMENTATION_VALIDATION-challenge-packaging.md",
+    "test-resources/optchat_memory/maintainer/PLAN-challenge-packaging.md",
+    "test-resources/optchat_memory/maintainer/PLAN_VALIDATION-challenge-packaging-revision1.md",
+    "test-resources/optchat_memory/maintainer/PLAN_VALIDATION-challenge-packaging.md",
+    "test-resources/optchat_memory/maintainer/SNAPSHOT_AUDIT.json",
+    "test-resources/optchat_memory/maintainer/TEST_RUN.log",
+    "test-resources/optchat_memory/maintainer/TEST_VALIDATION-challenge-packaging.md",
+    "test-resources/optchat_memory/maintainer/boundary-checks.clj.txt",
+    "test-resources/optchat_memory/module.clj",
+    "test/optchat_memory/public_test.clj"
+  ],
+  "encrypted-count-output": "15",
+  "decrypted-count-output": "15",
+  "plaintext-removed-during-encryption": true,
+  "restored-byte-identical": true,
+  "key": "synthetic test constant; no environment credential used",
+  "review-marker": "optchat-challenge-full-review"
+}
