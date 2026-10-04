@@ -6,6 +6,14 @@
   orb-run
   {:doc "Run one pinned challenge in an Amp Orb with fail-closed preflights"
    :task (apply shell "python3" "scripts/orb_run.py" *command-line-args*)}
+
+  run-archives
+  {:doc "Write (and with `upload --wave N`, upload) zstd run archives for an orb-run output directory"
+   :task (apply shell "python3" "scripts/run_archives.py" *command-line-args*)}
+
+  fetch-runs
+  {:doc "Fetch a wave's run archives (--wave N [--with-transcripts RUN] [--list]) into runs/"
+   :task (apply shell "python3" "scripts/fetch_runs.py" *command-line-args*)}
    
   verify-lcb-private-tests
   {:doc "Verify LCB challenges have migrated private-test alias/files/readme command"

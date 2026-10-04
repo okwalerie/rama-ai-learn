@@ -16,6 +16,8 @@ import sys
 import tarfile
 from datetime import datetime, timezone
 
+import run_archives
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -152,7 +154,28 @@ def collect_artifacts(opts, output, before):
                     and path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == phase["transcript-sha256"],
                     "Phase transcript is missing or corrupt")
             shutil.copy2(path, transcripts / path.name)
+    implementation = ROOT / "implementations" / opts.challenge
+    if implementation.is_dir():
+        for path in run_archives.visible_files(implementation):
+            target = output / "implementation" / path.relative_to(implementation)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+    require(run_archives.tree_sha256(output / "implementation")
+            == manifest["challenges"][0].get("implementation-sha256"),
+            "Implementation differs from the manifest implementation-sha256")
     return [path.name for path in paths]
+
+
+def publish(output, wave):
+    """Write both run archives; upload them to release wave-<wave> when given."""
+    rows = run_archives.write_archives(output)
+    print(run_archives.size_report(rows))
+    if wave is not None:
+        try:
+            tag = run_archives.upload_archives([row["path"] for row in rows], wave)
+        except RuntimeError as error:
+            raise RuntimeError(f"{error}; retry with `bb run-archives upload --wave {wave} {output}`") from error
+        print(f"Uploaded run archives to {run_archives.RUNS_REPO} release {tag}")
 
 
 def main(argv=None):
@@ -164,9 +187,18 @@ def main(argv=None):
         parser.add_argument(f"--{tier}-model", required=True)
         parser.add_argument(f"--{tier}-effort", required=True)
     parser.add_argument("--output", type=Path, help="Bundle directory, outside the repository")
+    upload = parser.add_mutually_exclusive_group(required=True)
+    upload.add_argument("--wave", type=int,
+                        help="Upload the run archives to release wave-<N> of the private runs repo")
+    upload.add_argument("--no-upload", action="store_true",
+                        help="Keep the archives in the output directory only (unscored or debugging runs)")
     parser.add_argument("--checked-out", action="store_true", help=argparse.SUPPRESS)
     opts = parser.parse_args(argv)
     require(re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", opts.challenge), "Invalid challenge name")
+    if opts.wave is not None:
+        run_archives.wave_tag(opts.wave)
+        # Check the destination before spending hours on the run, not after.
+        run_archives.require_private(run_archives.RUNS_REPO)
     if not opts.checked_out:
         pin_checkout(opts.pin)
         # The invoked launcher, not just the runner, must come from the pinned tree.
@@ -194,6 +226,7 @@ def main(argv=None):
             "fast": [opts.fast_model, opts.fast_effort], "slow": [opts.slow_model, opts.slow_effort]},
         "isolation": isolation, "files": files}, indent=2) + "\n")
     print(f"Complete run artifact bundle: {output}")
+    publish(output, opts.wave)
 
 
 if __name__ == "__main__":

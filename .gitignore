@@ -31,3 +31,4 @@ NOTES
 __pycache__/
 *.py[cod]
 .mkr/
+/runs
