@@ -3,9 +3,12 @@
 bundle that scripts/import_run_bundle.py accepts, and optionally upload it.
 
 Runs with the standard library only, so an orb checked out at an old pin can
-fetch and run the current copy:
+fetch and run the current copy. A freshly woken orb may be updating
+origin/master itself ("cannot lock ref"), so tolerate a failed fetch and read
+whatever origin/master now holds:
 
-  git fetch -q origin master && git show origin/master:scripts/recover_orb_artifacts.py > /tmp/recover.py
+  (git fetch -q origin master || git fetch -q origin master || true) && \
+    git show origin/master:scripts/recover_orb_artifacts.py > /tmp/recover.py
   python3 /tmp/recover.py --challenge NAME --provider claude --name BUNDLE [--upload]
 
 Collected from the repository and its parent workspace (paths kept relative
