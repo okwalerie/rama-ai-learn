@@ -26,6 +26,7 @@ Transcript selection:
 
 Commands:
   summary              - Run result, cost, duration, turn count
+  safe-review          - Allowlisted metadata JSON; no message/tool content or thinking
   events [index]       - Dump normalized JSONL, or one event by timeline line index
   plan                 - Show PLAN.md content
   validation           - Show PLAN_VALIDATION.md content
@@ -797,8 +798,14 @@ def cmd_run_overview(lines, args):
     print(f'wall clock first->last: {hms(wall)}')
     print(f'gap total (non-phase):  {hms(wall - total_dur)}')
 
+def cmd_safe_review(lines, args):
+    from review_index import safe_events
+    print(json.dumps(safe_events(lines), indent=2))
+
+
 COMMANDS = {
     'summary': cmd_summary,
+    'safe-review': cmd_safe_review,
     'events': cmd_events,
     'plan': cmd_plan,
     'validation': cmd_validation,

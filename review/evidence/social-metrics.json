@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "sha256": "fad72f09f4155b24db91e5be8e95dafcb8b2abdbaefa418333c84e8240dfb5f6",
+  "bytes": 2012,
+  "rows": [
+    {
+      "challenge": "social-graph-and-fanout",
+      "Status": "PASS",
+      "Private": "PASS",
+      "Score": 25.0,
+      "Iterations": 3.0,
+      "Duration": 9823.0,
+      "In Tokens": 2816.0,
+      "Out Tokens": 580176.0,
+      "Cache Create": 1952592.0,
+      "Cache Read": 38158556.0,
+      "Tool Uses": 446.0,
+      "Cost": 60.5322,
+      "Align": 1.0,
+      "TestAlign": 1.0
+    }
+  ]
+}

@@ -1,0 +1,184 @@
+{
+  "schema": 1,
+  "policy": "metadata-only; no thinking, message text, arguments, results, stderr or source_event",
+  "normalized_event_count": 43,
+  "events": [
+    {
+      "index": 5,
+      "time": null,
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 7,
+      "time": null,
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 8,
+      "time": null,
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 10,
+      "time": null,
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 11,
+      "time": null,
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 13,
+      "time": null,
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 14,
+      "time": null,
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 16,
+      "time": null,
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 18,
+      "time": null,
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 20,
+      "time": null,
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 21,
+      "time": null,
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 23,
+      "time": null,
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 24,
+      "time": null,
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 26,
+      "time": null,
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 27,
+      "time": null,
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 29,
+      "time": null,
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 31,
+      "time": null,
+      "kind": "tool_call",
+      "tool": "FileChange",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 33,
+      "time": null,
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 35,
+      "time": null,
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 36,
+      "time": null,
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 38,
+      "time": null,
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 40,
+      "time": null,
+      "kind": "usage",
+      "status": null,
+      "is_error": null,
+      "duration_ms": null,
+      "cost_usd": null,
+      "usage": {
+        "input_tokens": 780787,
+        "output_tokens": 11808,
+        "cache_read_input_tokens": 702464,
+        "cache_creation_input_tokens": 0
+      }
+    },
+    {
+      "index": 42,
+      "time": null,
+      "kind": "result",
+      "status": "completed",
+      "is_error": false,
+      "duration_ms": null,
+      "cost_usd": null,
+      "usage": {
+        "input_tokens": 780787,
+        "output_tokens": 11808,
+        "cache_read_input_tokens": 702464,
+        "cache_creation_input_tokens": 0
+      }
+    }
+  ]
+}

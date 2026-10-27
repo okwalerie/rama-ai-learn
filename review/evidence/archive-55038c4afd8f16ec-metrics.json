@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "sha256": "55038c4afd8f16ecce5d6815fc73fa874251f681b5c9e5a9e106bc691e71d160",
+  "bytes": 1127,
+  "rows": [
+    {
+      "challenge": "time-series-module-hard",
+      "Status": "FAIL",
+      "Private": "FAIL",
+      "Score": 0.0,
+      "Iterations": 1.0,
+      "Duration": 2629.0,
+      "In Tokens": 7003144.0,
+      "Out Tokens": 78965.0,
+      "Cache Create": 0.0,
+      "Cache Read": 6158336.0,
+      "Tool Uses": 124.0,
+      "Cost": 80.138,
+      "Align": null,
+      "TestAlign": null
+    }
+  ]
+}

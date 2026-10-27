@@ -1,0 +1,38 @@
+[
+  {
+    "id": "local-bank-terra-20260915",
+    "challenge": "bank-transfer-module",
+    "report": "archive-c599ea68f65ae6ce-metrics.json",
+    "capture_stamp": "2026-09-15-162909",
+    "slow": "gpt-5.6-terra / high (filename)",
+    "fast": "gpt-5.6-luna / medium (build filename)",
+    "summary": "The local report records runner FAIL, private FAIL and score zero. Five unique captures include a build. Reported cost is N/A, not zero."
+  },
+  {
+    "id": "local-time-series-report-only-20260915",
+    "challenge": "time-series-module-hard",
+    "report": "archive-f27d501f5328a316-metrics.json",
+    "capture_stamp": null,
+    "slow": "gpt-6-astra / medium (report filename)",
+    "fast": "Unavailable",
+    "summary": "This separate local report records runner FAIL, private '-' and zero duration and iterations. No matching phase captures were identified. It does not establish a private test failure."
+  },
+  {
+    "id": "local-bank-astra-20260915",
+    "challenge": "bank-transfer-module",
+    "report": "archive-ddaa7a0a6851c4d3-metrics.json",
+    "capture_stamp": "2026-09-15-204850",
+    "slow": "gpt-6-astra / medium (filename)",
+    "fast": "Unavailable; no build capture",
+    "summary": "The local report records runner FAIL, private FAIL and score zero. Ten unique captures show planning and validation through attempt4. No build capture was supplied."
+  },
+  {
+    "id": "local-time-series-astra-20260915",
+    "challenge": "time-series-module-hard",
+    "report": "archive-55038c4afd8f16ec-metrics.json",
+    "capture_stamp": "2026-09-15-213400",
+    "slow": "gpt-6-astra / medium (filename)",
+    "fast": "Unavailable; no build capture",
+    "summary": "The local report records runner FAIL, private FAIL and score zero. Ten unique captures show planning and validation through attempt4. No build capture was supplied."
+  }
+]

@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "sha256": "fa3a62bb509b5b937119fb976c24cb718b0b45a02226a382adbb5f658655cfe3",
+  "bytes": 2291,
+  "rows": [
+    {
+      "challenge": "auction-module",
+      "Status": "PASS",
+      "Private": "FAIL",
+      "Score": 0.0,
+      "Iterations": 2.0,
+      "Duration": 5435.0,
+      "In Tokens": 2304.0,
+      "Out Tokens": 332455.0,
+      "Cache Create": 1184160.0,
+      "Cache Read": 19076092.0,
+      "Tool Uses": 306.0,
+      "Cost": 34.3457,
+      "Align": 1.0,
+      "TestAlign": 4.0
+    }
+  ]
+}

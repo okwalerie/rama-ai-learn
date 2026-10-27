@@ -1,0 +1,316 @@
+{
+  "schema": 1,
+  "policy": "metadata-only; no thinking, message text, arguments, results, stderr or source_event",
+  "normalized_event_count": 369,
+  "events": [
+    {
+      "index": 3,
+      "time": "2026-09-16T11:18:59.322+00:00",
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 5,
+      "time": "2026-09-16T11:18:59.403+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 6,
+      "time": "2026-09-16T11:19:01.115+00:00",
+      "kind": "tool_call",
+      "tool": "Read",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 7,
+      "time": "2026-09-16T11:19:01.129+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 8,
+      "time": "2026-09-16T11:19:01.744+00:00",
+      "kind": "tool_call",
+      "tool": "Read",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 9,
+      "time": "2026-09-16T11:19:01.751+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 10,
+      "time": "2026-09-16T11:19:02.492+00:00",
+      "kind": "tool_call",
+      "tool": "Read",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 11,
+      "time": "2026-09-16T11:19:02.501+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 12,
+      "time": "2026-09-16T11:19:03.182+00:00",
+      "kind": "tool_call",
+      "tool": "Read",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 13,
+      "time": "2026-09-16T11:19:03.383+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 14,
+      "time": "2026-09-16T11:19:03.613+00:00",
+      "kind": "tool_call",
+      "tool": "Skill",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 15,
+      "time": "2026-09-16T11:19:03.638+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 17,
+      "time": "2026-09-16T11:19:04.797+00:00",
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 19,
+      "time": "2026-09-16T11:19:04.823+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 24,
+      "time": "2026-09-16T11:19:08.519+00:00",
+      "kind": "tool_call",
+      "tool": "Read",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 25,
+      "time": "2026-09-16T11:19:08.531+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 26,
+      "time": "2026-09-16T11:19:09.149+00:00",
+      "kind": "tool_call",
+      "tool": "Read",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 27,
+      "time": "2026-09-16T11:19:09.155+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 28,
+      "time": "2026-09-16T11:19:09.835+00:00",
+      "kind": "tool_call",
+      "tool": "Read",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 29,
+      "time": "2026-09-16T11:19:09.841+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 30,
+      "time": "2026-09-16T11:19:10.597+00:00",
+      "kind": "tool_call",
+      "tool": "Read",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 31,
+      "time": "2026-09-16T11:19:10.791+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 32,
+      "time": "2026-09-16T11:19:11.319+00:00",
+      "kind": "tool_call",
+      "tool": "Read",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 33,
+      "time": "2026-09-16T11:19:11.325+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 236,
+      "time": "2026-09-16T11:23:31.361+00:00",
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 237,
+      "time": "2026-09-16T11:23:31.476+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 239,
+      "time": "2026-09-16T11:23:41.147+00:00",
+      "kind": "tool_call",
+      "tool": "Edit",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 241,
+      "time": "2026-09-16T11:23:41.251+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 242,
+      "time": "2026-09-16T11:23:44.064+00:00",
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 246,
+      "time": "2026-09-16T11:24:22.926+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 303,
+      "time": "2026-09-16T11:25:14.602+00:00",
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 308,
+      "time": "2026-09-16T11:26:26.742+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 309,
+      "time": "2026-09-16T11:26:29.580+00:00",
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 310,
+      "time": "2026-09-16T11:26:30.818+00:00",
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 322,
+      "time": "2026-09-16T11:30:34.793+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 323,
+      "time": "2026-09-16T11:30:35.001+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 346,
+      "time": "2026-09-16T11:30:46.610+00:00",
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 347,
+      "time": "2026-09-16T11:30:46.836+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 363,
+      "time": "2026-09-16T11:31:28.163+00:00",
+      "kind": "tool_call",
+      "tool": "Write",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 364,
+      "time": "2026-09-16T11:31:28.192+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 365,
+      "time": "2026-09-16T11:31:36.801+00:00",
+      "kind": "tool_call",
+      "tool": "Bash",
+      "detail": "Arguments withheld"
+    },
+    {
+      "index": 366,
+      "time": "2026-09-16T11:31:36.828+00:00",
+      "kind": "tool_result",
+      "error": false,
+      "detail": "Result content withheld"
+    },
+    {
+      "index": 368,
+      "time": null,
+      "kind": "result",
+      "status": null,
+      "is_error": false,
+      "duration_ms": 769392,
+      "cost_usd": 4.295030000000001,
+      "usage": {
+        "input_tokens": 322,
+        "output_tokens": 30021,
+        "cache_read_input_tokens": 1009600,
+        "cache_creation_input_tokens": 126918
+      }
+    }
+  ]
+}

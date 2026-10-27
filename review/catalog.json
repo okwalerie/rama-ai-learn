@@ -1,0 +1,434 @@
+{
+  "schema": 1,
+  "audited_at": "2026-09-24",
+  "repository": "okwalerie/rama-ai-learn",
+  "audit_commit": "a8a520a970b84e207bc296076eb3e2f4f972d05d",
+  "skills_commit": "2edbc5b1b0dc91f74fcfa8fd8f7eaeb302e052ab",
+  "scope": "These 13 selected attempts cannot rank models. They include 5 completed runs from 16 September, 4 local runner-failed records from 15 September, and 4 stopped attempts from 23 September. Searches for 17 to 19 September found no matches. Local report-to-capture links are provisional; overlapping archive files are deduplicated by content. Other runs may exist. We did not rerun historical tests or regrade results.",
+  "privacy": "This site is for evaluators. Exports exclude raw transcripts, private tests, reference-based grading explanations, hidden reasoning, credentials and proxy diagnostics. A recovered agent implementation is visible. Do not mount this directory in a solver workspace.",
+  "runs": [
+    {
+      "id": "auction-20260916",
+      "challenge": "auction-module",
+      "date": "2026-09-16",
+      "group": "Historical Claude",
+      "harness": "Claude 2.1.273",
+      "thread": "T-01a0a963-4dc1-77e8-8731-7ce11c3df35e",
+      "classification": "completed",
+      "private": "FAIL",
+      "status": "PASS",
+      "slow": "claude-fable-5-1 / medium",
+      "fast": "claude-opus-5 / low",
+      "commit": null,
+      "metrics_file": "auction-metrics.json",
+      "metric_basis": "Numbers and statuses extracted from the recovered report. Tests were not rerun.",
+      "summary": "The runner reports a pass, but private tests failed and the challenge score is zero.",
+      "retry_note": "The fourth start completed after safeguards blocked 3 starts. The phase prompt changed between starts, so these are not independent samples.",
+      "isolation": "The owner reported encrypting and restoring files. No operating-system isolation record was recovered. The prompt changed; the original configuration is not fully recorded.",
+      "missing": "The owner reported 9 phase transcripts and an implementation; neither was transferred. No invoice, quota record or source commit record was recovered.",
+      "retrieval": ".amp/in/artifacts/auction-backend-20260916/completed-transcripts.tar.gz; implementations/auction-module/src/auction_module/module.clj. Request these through the owner thread. Inspect privately and export only approved metadata.",
+      "phase_basis": "Order and durations come from the owner thread, not phase transcripts. Start times were not reconstructed.",
+      "phases": [
+        ["phase0", 201],
+        ["decompose", 44],
+        ["listings · plan", 564],
+        ["listings · validate", 398],
+        ["listings · build", 1008],
+        ["expiration/notifications · plan", 736],
+        ["expiration/notifications · validate", 616],
+        ["expiration/notifications · build", 1045],
+        ["full-spec-review", 796]
+      ],
+      "decisions": [
+        "Report excerpt: auction-module | PASS | FAIL | 0 | 2 iterations.",
+        "The owner reported passing public checks and failing private tests. Private failure details are withheld."
+      ],
+      "evidence": [
+        {
+          "label": "Runner report: typed extract",
+          "file": "auction-metrics.json",
+          "origin": ".amp/in/artifacts/auction-backend-20260916/final-report.md",
+          "sha256": "fa3a62bb509b5b937119fb976c24cb718b0b45a02226a382adbb5f658655cfe3",
+          "bytes": 2291,
+          "kind": "transferred + extracted"
+        }
+      ]
+    },
+    {
+      "id": "social-20260916",
+      "challenge": "social-graph-and-fanout",
+      "date": "2026-09-16",
+      "group": "Historical Claude",
+      "harness": "Claude 2.1.273",
+      "thread": "T-01a0a963-542c-72e8-9b4b-14d48a44104e",
+      "classification": "completed",
+      "private": "PASS",
+      "status": "PASS",
+      "slow": "fable (Fable 5.1) / medium",
+      "fast": "opus (Opus 5) / low",
+      "commit": null,
+      "metrics_file": "social-metrics.json",
+      "events_file": "social-final-events.json",
+      "metric_basis": "Fields extracted from the recovered report. Only the final-review transcript was recovered and standardised, not the full run.",
+      "summary": "Private tests passed. The challenge score is 25 and structural alignment is 1/5. The runner counts 3 subsystem builds as iterations.",
+      "retry_note": "Safeguards blocked 2 phase0 starts before work began. The next run completed, with 12 reported successful phases and no phase retries.",
+      "isolation": "The owner reported restoring 5 private files and deleting the temporary key. The prompt had uncommitted changes at completion. No operating-system isolation record was recovered.",
+      "missing": "11 phase transcripts and the module source were not transferred. The source commit, billing and quota records are unknown.",
+      "retrieval": "latest-transcripts/2026-09-16-084753-*.jsonl; implementations/social-graph-and-fanout/src/social_graph_and_fanout/module.clj. The owner also prepared a complete-run archive. Do not serve the raw archive.",
+      "phase_basis": "Phase order and durations come from the owner thread. The recovered final-review transcript also provides event timestamps.",
+      "phases": [
+        ["phase0", 178],
+        ["decompose", 62],
+        ["social-graph · plan", 697],
+        ["social-graph · validate", 570],
+        ["social-graph · build", 968],
+        ["post-fanout · plan", 983],
+        ["post-fanout · validate", 591],
+        ["post-fanout · build", 1972],
+        ["timeline-recovery · plan", 877],
+        ["timeline-recovery · validate", 360],
+        ["timeline-recovery · build", 1760],
+        ["full-spec-review", 767]
+      ],
+      "decisions": [
+        "Report excerpt: social-graph-and-fanout | PASS | PASS | 25 | 3 iterations.",
+        "Test alignment was set to 1 because the agent tests referenced rama-challenges.harness. This penalty does not measure missing coverage.",
+        "The owner reported adding a test after final review identified missing coverage. That test is not shown here."
+      ],
+      "evidence": [
+        {
+          "label": "Runner report: typed extract",
+          "file": "social-metrics.json",
+          "origin": ".amp/in/artifacts/social-graph-and-fanout-run-report.md",
+          "sha256": "fad72f09f4155b24db91e5be8e95dafcb8b2abdbaefa418333c84e8240dfb5f6",
+          "bytes": 2012,
+          "kind": "transferred + extracted"
+        },
+        {
+          "label": "Final review: standardized events",
+          "file": "social-final-events.json",
+          "origin": "latest-transcripts/2026-09-16-084753-claude-fable-medium-social-graph-and-fanout-phasefull-spec-review.jsonl",
+          "sha256": "9f95df368bf702234a57cca5695296453f740da0d62d84fc8ca1a40c8542e17e",
+          "bytes": 656707,
+          "kind": "transferred + metadata-only export"
+        }
+      ]
+    },
+    {
+      "id": "attack-20260916",
+      "challenge": "attack",
+      "date": "2026-09-16",
+      "group": "Historical Claude",
+      "harness": "Claude 2.1.273",
+      "thread": "T-01a0a963-47cd-72f9-b2ec-82daa1cbb9b7",
+      "classification": "completed",
+      "private": "PASS",
+      "status": "PASS",
+      "slow": "claude-fable-5-1 / medium",
+      "fast": "claude-opus-5 / low",
+      "commit": null,
+      "metrics": {
+        "Score": 100,
+        "Iterations": 1,
+        "Cost": 6.2574,
+        "Align": 5,
+        "TestAlign": null,
+        "Duration": 854,
+        "Tool Uses": 82,
+        "In Tokens": 968,
+        "Out Tokens": 52544,
+        "Cache Create": 285394,
+        "Cache Read": 2979946
+      },
+      "metric_basis": "Metrics come only from the owner thread. The report is outside the workspace and was not transferred. Duration is reported elapsed runner time, not summed phase durations.",
+      "summary": "The owner reported private PASS and a score of 100. The implementation was recovered, but only the thread supports the reported metrics.",
+      "retry_note": "Safeguards blocked 3 starts before the fourth completed. The prompt changed to request concise evidence and outcome records.",
+      "isolation": "The owner reported restoring encrypted files. During the encrypted build, the public test alias ran zero tests. Implementation tests and restored checks ran separately. No operating-system isolation record was recovered.",
+      "missing": "6 phase transcripts and the original report were not transferred. The source commit, billing and quota records are unknown.",
+      "retrieval": "Report outside the repository: /home/user/workspace/reports/2026-09-16-090554-claude-claude-fable-5-1-medium.md. Ask the owner to place an approved extract inside its workspace for authenticated transfer.",
+      "phase_basis": "Order and durations come only from the owner thread. No phase transcripts were transferred.",
+      "phases": [
+        ["phase0", 81],
+        ["decompose", 20],
+        ["plan", 119],
+        ["validate", 132],
+        ["build", 346],
+        ["full-spec-review", 82]
+      ],
+      "decisions": [
+        "The owner reported 10 implementation tests with 1,226 assertions passed, plus restored public and private checks. We did not rerun them.",
+        "Agent source is available in Evidence. No reference implementation or baseline for a diff was recovered."
+      ],
+      "evidence": [
+        {
+          "label": "Recovered agent implementation",
+          "file": "attack-solution.clj",
+          "origin": "implementations/attack/src/attack/solution.clj",
+          "sha256": "b551ec166c081ecc4a8043eec3f36032ada618af1d3956ea1a025ade10fd5d66",
+          "bytes": 1331,
+          "kind": "transferred + reviewed source"
+        }
+      ]
+    },
+    {
+      "id": "A-url-01",
+      "challenge": "hld-url-shortener",
+      "date": "2026-09-23",
+      "group": "Configuration A",
+      "harness": "Claude",
+      "thread": "T-01a0cf74-e16b-7249-8d7c-18e913eb459f",
+      "classification": "stopped",
+      "status": "STOPPED",
+      "private": "UNKNOWN",
+      "slow": "claude-fable-5-1 / medium",
+      "fast": "claude-opus-5-5 / high",
+      "commit": "e2bfe2e0dcca2a5b2683fe818acfe15b0c1b8dc5",
+      "summary": "Stopped by the user at 18:59:24 UTC with exit 143. The owner reported 7 completed phase captures; the click-counting build was interrupted. This does not establish a provider rate or quota failure.",
+      "metric_basis": "No final metrics available.",
+      "metrics": {},
+      "retry_note": "One invocation. No retry used or authorised.",
+      "isolation": "The owner reported --isolate-network and no remaining child processes. Startup metadata was transferred, but no per-phase isolation records were transferred.",
+      "missing": "No final report or private verdict. The interrupted build has no completed JSONL capture. No separate saved proxy log or quota record.",
+      "retrieval": "../transcripts/2026-09-23-181448-*-hld-url-shortener-*.jsonl (7, owner-reported); implementations/hld-url-shortener/; .amp/in/artifacts/A-url-01/console.log. Request safe inventory/export from owner; sibling transcripts are outside transferable workspace root.",
+      "phase_basis": "Order comes from the owner thread; durations are unknown. The 7 completed captures do not establish 7 passing phases.",
+      "phases": [
+        ["phase0", null],
+        ["decompose", null],
+        ["link-lifecycle · plan", null],
+        ["link-lifecycle · validate", null],
+        ["link-lifecycle · build", null],
+        ["click-counting · plan", null],
+        ["click-counting · validate", null],
+        ["click-counting · build (interrupted)", null]
+      ],
+      "decisions": [
+        "The owner thread records the user-directed stop. Startup metadata alone does not establish how the run ended."
+      ],
+      "evidence": [
+        {
+          "label": "Start metadata",
+          "file": "a-url-metadata.txt",
+          "origin": ".amp/in/artifacts/A-url-01/run-metadata.txt",
+          "sha256": "9bece9514a993701784612bb23ffa11e9cbde6069a0d4583e19fa33d2cd2d334",
+          "bytes": 188,
+          "kind": "transferred"
+        }
+      ]
+    },
+    {
+      "id": "B-url-01",
+      "challenge": "hld-url-shortener",
+      "date": "2026-09-23",
+      "group": "Configuration B",
+      "harness": "OpenCode",
+      "thread": "T-01a0cf74-efcd-77da-912a-250c831c0132",
+      "classification": "stopped",
+      "status": "STOPPED",
+      "private": "UNKNOWN",
+      "slow": "openrouter/z-ai/glm-5.3 / high",
+      "fast": "openrouter/meta/muse-spark-1.3-contributor / high",
+      "commit": "e2bfe2e0dcca2a5b2683fe818acfe15b0c1b8dc5",
+      "summary": "Stopped by the user with exit 143. No child process remained at 18:59:31 UTC. The owner reported 6 completed phase captures, with no correctness verdict.",
+      "metric_basis": "No final metrics available.",
+      "metrics": {},
+      "retry_note": "One invocation. No retry.",
+      "isolation": "The owner reported isolated-network mode. Configuration metadata was transferred, but no runtime isolation record was recovered.",
+      "missing": "No final report, private verdict, runner-exit.txt or end-utc.txt. The active phase has no completed capture. No quota record.",
+      "retrieval": "../transcripts/2026-09-23-181353-*-hld-url-shortener-*.jsonl (6, owner-reported); .amp/hld-program/attempts/B-url-01/console.log; implementations/hld-url-shortener/.",
+      "phase_basis": "Order comes from the owner thread; durations are unknown. A completed capture does not establish a passing phase.",
+      "phases": [
+        ["phase0", null],
+        ["decompose", null],
+        ["create-outcomes · plan", null],
+        ["create-outcomes · validate", null],
+        ["create-outcomes · build", null],
+        ["lifecycle-resolve · plan", null],
+        ["Active phase interrupted · identity unverified", null]
+      ],
+      "decisions": [
+        "The usual end-marker files are missing. The owner thread records the stop and supports this classification."
+      ],
+      "evidence": [
+        {
+          "label": "Configuration metadata",
+          "file": "b-url-metadata.txt",
+          "origin": ".amp/hld-program/attempts/B-url-01/metadata.txt",
+          "sha256": "3b615e0cde50c62fd70b66147b5957e2f31e61f164e69af489b0f87c44000e84",
+          "bytes": 100,
+          "kind": "transferred"
+        }
+      ]
+    },
+    {
+      "id": "A-rate-01",
+      "challenge": "hld-rate-limiter",
+      "date": "2026-09-23",
+      "group": "Configuration A",
+      "harness": "Claude",
+      "thread": "T-01a0cf74-ff4d-7308-8b43-30b6090ed90f",
+      "classification": "stopped",
+      "status": "STOPPED",
+      "private": "UNKNOWN",
+      "slow": "claude-fable-5-1 / medium",
+      "fast": "claude-opus-5-5 / high",
+      "commit": "e2bfe2e0dcca2a5b2683fe818acfe15b0c1b8dc5",
+      "summary": "Stopped by the user at 18:59:29 UTC with exit 143. The owner reported 7 completed captures; the decisions build was interrupted. No solver child process remained.",
+      "metric_basis": "Owner thread only. No files recovered for this attempt.",
+      "metrics": {},
+      "retry_note": "One invocation. No retry.",
+      "isolation": "The owner reported --isolate-network and the source revision. No transferred metadata file supports that revision.",
+      "missing": "No report, results.edn, private verdict, interrupted-build JSONL or separate proxy log. Raw console logs were withheld because they may contain sensitive content.",
+      "retrieval": "../transcripts/2026-09-23-181349-*-hld-rate-limiter-*.jsonl (7, owner-reported); .amp/in/artifacts/A-rate-01/console.log; implementations/hld-rate-limiter/. Ask owner to stage metadata-only exports in its workspace.",
+      "phase_basis": "Order was reconstructed from phase labels in the owner thread. Durations are unknown.",
+      "phases": [
+        ["phase0", null],
+        ["decompose", null],
+        ["config-and-buckets · plan", null],
+        ["config-and-buckets · validate", null],
+        ["config-and-buckets · build", null],
+        ["decisions · plan", null],
+        ["decisions · validate", null],
+        ["decisions · build (interrupted)", null]
+      ],
+      "decisions": [
+        "No independent private check ran before or after the stop. Exclude this attempt from model pass and fail counts."
+      ],
+      "evidence": []
+    },
+    {
+      "id": "B-rate-01",
+      "challenge": "hld-rate-limiter",
+      "date": "2026-09-23",
+      "group": "Configuration B",
+      "harness": "OpenCode",
+      "thread": "T-01a0cf75-0ed9-718b-b83b-de443c4d0c47",
+      "classification": "stopped",
+      "status": "STOPPED",
+      "private": "UNKNOWN",
+      "slow": "openrouter/z-ai/glm-5.3 / high",
+      "fast": "openrouter/meta/muse-spark-1.3-contributor / high",
+      "commit": "e2bfe2e0dcca2a5b2683fe818acfe15b0c1b8dc5",
+      "summary": "Stopped by the user at 18:59:31 UTC with exit 143. The owner reported 7 completed captures and no remaining runner or OpenCode child processes.",
+      "metric_basis": "Startup metadata was transferred. The outcome and phase list come from the owner thread.",
+      "metrics": {},
+      "retry_note": "One invocation. No retry or second attempt.",
+      "isolation": "The owner reported --isolate-network. The startup and revision record was transferred, but no per-phase isolation record was recovered.",
+      "missing": "No final score, report, private verdict or separate proxy log. No cost or quota record. No tests or packaging after the stop.",
+      "retrieval": "../transcripts/2026-09-23-181353-*-hld-rate-limiter-*.jsonl (7, owner-reported); .amp/hld-program/runs/B-rate-01/console.log; implementations/hld-rate-limiter/.",
+      "phase_basis": "Phase order comes from the owner thread. Durations are unknown.",
+      "phases": [
+        ["phase0", null],
+        ["decompose", null],
+        ["user-aggregate · plan", null],
+        ["user-aggregate · validate", null],
+        ["user-aggregate · build", null],
+        ["decisions · plan", null],
+        ["decisions · validate", null],
+        ["decisions · build (interrupted)", null]
+      ],
+      "decisions": [
+        "The transferred operator log records the start time and source revision. The owner thread records the stop."
+      ],
+      "evidence": [
+        {
+          "label": "Operator start metadata",
+          "file": "b-rate-metadata.txt",
+          "origin": ".amp/hld-program/runs/B-rate-01/operator.log",
+          "sha256": "5a3c85aae5a949edd186b1eb5109080adc1797e58ac0445e3cc5c011ed5169b2",
+          "bytes": 106,
+          "kind": "transferred"
+        }
+      ]
+    },
+    {
+      "id": "bank-transfer-20260916",
+      "challenge": "bank-transfer-module",
+      "date": "2026-09-16",
+      "group": "Historical Claude Opus",
+      "harness": "Claude (version unavailable)",
+      "thread": "T-01a0a748-07f7-7133-9d59-3ace69905f87",
+      "classification": "completed",
+      "status": "PASS",
+      "private": "PASS",
+      "slow": "opus (Opus 5) / medium",
+      "fast": "opus (Opus 5) / medium",
+      "commit": null,
+      "metrics_file": "bank-metrics.json",
+      "metric_basis": "Fields extracted from the authenticated report transfer. Table Duration is 3584 seconds; owner-thread output separately reports Total elapsed as 60m 43s. Tests were not rerun.",
+      "summary": "The recovered report records runner PASS, private PASS and a score of 100. The agent implementation is also available.",
+      "retry_note": "The report counts one implementation iteration. Both model tiers used Opus with medium effort; infrastructure retries are not established.",
+      "isolation": "The owner reported a fresh encryption key for each run, restored private files and no remaining .enc files. No operating-system or network isolation record was recovered.",
+      "missing": "No Claude phase transcripts: latest-transcripts was missing on the owner orb. The supplied local archives contain separate Codex runs, not these missing phases. No source commit, billing or quota records.",
+      "retrieval": "Recovered .amp/in/artifacts/bank-transfer-opus-medium-report.md and implementations/bank-transfer-module/src/bank_transfer_module/module.clj through the owner thread. Original report: ../reports/2026-09-16-000520-claude-opus-medium.md. Ask the owner for missing Claude captures if another copy exists.",
+      "phase_basis": "No phase sequence verified. The owner thread records completion, but no phase transcripts are available.",
+      "phases": [],
+      "decisions": [
+        "The recovered report records private PASS. No tests were rerun for this audit.",
+        "The user identified this omitted run after the initial audit. Auction was planned in this owner thread but explicitly not run."
+      ],
+      "evidence": [
+        {
+          "label": "Report metrics",
+          "file": "bank-metrics.json",
+          "origin": ".amp/in/artifacts/bank-transfer-opus-medium-report.md",
+          "sha256": "699ddf06165282830f8e77409a75408de241a79fb7d0f172a1e103b2e67184af",
+          "bytes": 2088,
+          "kind": "transferred + extracted"
+        },
+        {
+          "label": "Recovered agent implementation",
+          "file": "bank-opus-module.clj",
+          "origin": "implementations/bank-transfer-module/src/bank_transfer_module/module.clj",
+          "sha256": "dd3c94fdb247e5a55ba7a84e572e70aeeee2dd388157ea434fe992bf3c0ad6fa",
+          "bytes": 10430,
+          "kind": "transferred + reviewed source"
+        }
+      ]
+    },
+    {
+      "id": "time-series-20260916",
+      "challenge": "time-series-module-hard",
+      "date": "2026-09-16",
+      "group": "Historical Claude Opus",
+      "harness": "Claude (version unavailable)",
+      "thread": "T-01a0a748-07f7-7133-9d59-3ace69905f87",
+      "classification": "completed",
+      "status": "PASS",
+      "private": "FAIL",
+      "slow": "opus (Opus 5) / medium",
+      "fast": "opus (Opus 5) / medium",
+      "commit": null,
+      "metrics_file": "time-series-metrics.json",
+      "metric_basis": "Fields extracted from the authenticated report transfer. Table Duration is 4716 seconds; owner-thread output separately reports Total elapsed as 79m 37s. Tests were not rerun.",
+      "summary": "The recovered report records runner PASS, private FAIL and a score of zero. The implementation is available; completion does not establish correctness.",
+      "retry_note": "The report counts one implementation iteration. Both model tiers used Opus with medium effort; infrastructure retries are not established.",
+      "isolation": "The owner reported a fresh encryption key for each run, restored private files and no remaining .enc files. No operating-system or network isolation record was recovered.",
+      "missing": "No Claude phase transcripts: latest-transcripts was missing on the owner orb. The supplied local archives contain separate Codex runs, not these missing phases. No source commit, billing or quota records.",
+      "retrieval": "Recovered .amp/in/artifacts/time-series-opus-medium-report.md and implementations/time-series-module-hard/src/time_series_module_hard/module.clj through the owner thread. Original report: ../reports/2026-09-16-013216-claude-opus-medium.md. Ask the owner for missing Claude captures if another copy exists.",
+      "phase_basis": "No phase sequence verified. The owner thread records completion, but no phase transcripts are available.",
+      "phases": [],
+      "decisions": [
+        "The recovered report records private FAIL. Private failure details are withheld; no tests were rerun for this audit.",
+        "This is a completed evaluation with failed private tests, not a stopped attempt. Auction was not run in this owner thread."
+      ],
+      "evidence": [
+        {
+          "label": "Report metrics",
+          "file": "time-series-metrics.json",
+          "origin": ".amp/in/artifacts/time-series-opus-medium-report.md",
+          "sha256": "bc94a9f7520e3252cc56ee1a8bd6cd064c41cc9454db12d719d77293fd63195c",
+          "bytes": 2082,
+          "kind": "transferred + extracted"
+        },
+        {
+          "label": "Recovered agent implementation",
+          "file": "time-series-opus-module.clj",
+          "origin": "implementations/time-series-module-hard/src/time_series_module_hard/module.clj",
+          "sha256": "6ac51c58d59910e45a0ee3385fe00a568c2b00dd781cda49a657994dd9d5fcdf",
+          "bytes": 12352,
+          "kind": "transferred + reviewed source"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rama · Evaluation review</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to review</a>
+    <header>
+      <a class="brand" href="#runs"
+        ><span class="mark">r</span> rama <span class="divider">/</span>
+        <span>Evaluation review</span></a
+      ><span class="edition">Reviewed 24 September 2026</span>
+    </header>
+    <div class="shell">
+      <div class="heading">
+        <div>
+          <p class="eyebrow">okwalerie / rama-ai-learn</p>
+          <h1>Review evaluation evidence</h1>
+        </div>
+        <button id="export">Export my reviews ↗</button>
+      </div>
+      <nav aria-label="Review views">
+        <a href="#runs">Historical runs <span>13</span></a
+        ><a href="#compare">Compare</a
+        ><a href="#audit">Audit findings <span>11</span></a
+        ><a href="#coverage">Coverage and method</a
+        ><a href="#sweep">Current sweep <span id="sweep-count">…</span></a>
+      </nav>
+      <div class="scope-strip">
+        <span
+          ><b>5</b> completed · <b>4</b> runner-failed ·
+          <b>4</b> user-stopped</span
+        ><span
+          ><b>8</b> reports · <b>26</b> unique phase captures recovered</span
+        ><span>No model ranking</span>
+      </div>
+      <main id="main" tabindex="-1"><p>Loading runs…</p></main>
+      <footer>
+        For evaluators only. <a href="#coverage">Evidence sources and limits</a
+        ><span id="progress"></span>
+      </footer>
+    </div>
+    <dialog id="viewer">
+      <div class="dialog-head">
+        <h2 id="viewer-title">Evidence</h2>
+        <button id="close-viewer" aria-label="Close evidence">Close ✕</button>
+      </div>
+      <div id="viewer-body"></div>
+    </dialog>
+    <div id="notice" role="status" aria-live="polite"></div>
+  </body>
+</html>

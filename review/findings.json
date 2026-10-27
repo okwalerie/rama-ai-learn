@@ -1,0 +1,257 @@
+{
+  "findings": [
+    {
+      "id": "F01",
+      "priority": "P0",
+      "area": "Outcome validity",
+      "title": "A passing headline can hide private failure",
+      "status": "Confirmed in the recovered report and code",
+      "observation": "Auction's report says Passed: 1, but Private is FAIL and the score is 0. Summary totals count phase status, which the runner stores separately from private test status.",
+      "impact": "Readers may mistake completion for correctness. A run with missing private tests can also receive a score above zero.",
+      "fix": "Report a correctness pass only when all required tests run and pass. Record phase completion and tests not run separately.",
+      "validation": "Test phase PASS with each private result: FAIL, SKIP and PASS. Check that the final result, summary, saved record and interface agree. Running zero tests must not count as a verified pass.",
+      "sources": [
+        ["scripts/run_challenges.bb", 846, 852],
+        ["scripts/run_challenges.bb", 1775, 1790],
+        ["scripts/run_challenges.bb", 2011, 2016]
+      ],
+      "runs": ["auction-20260916", "time-series-20260916"]
+    },
+    {
+      "id": "F02",
+      "priority": "P0",
+      "area": "Scoring design",
+      "title": "The score penalises builds for separate subsystems",
+      "status": "Confirmed in the recovered reports and code",
+      "observation": "The challenge score halves with each implementation iteration. phase3-iterations counts build phases, including builds for different subsystems. Social scored 25 after 3 subsystem builds, with no reported phase retries. Attack scored 100 after one build.",
+      "impact": "The runner treats splitting work into more subsystems like repeated failure. This score is separate from structural alignment and does not estimate pass probability.",
+      "fix": "Count subsystems, attempts to correct code and infrastructure retries separately. Report correctness as pass or fail. Report cost and subsystem count separately.",
+      "validation": "Compare one subsystem with 3 subsystems that each pass on the first attempt. The correctness score should stay the same.",
+      "sources": [
+        ["scripts/run_challenges.bb", 846, 852],
+        ["scripts/run_challenges.bb", 1335, 1340],
+        ["SCORING_RUBRIC.md", 3, 25]
+      ],
+      "runs": ["social-20260916", "attack-20260916"]
+    },
+    {
+      "id": "F03",
+      "priority": "P1",
+      "area": "Rubric validity",
+      "title": "Test alignment mixes coverage with a harness-use penalty",
+      "status": "Confirmed in the recovered report and code",
+      "observation": "Social received 1/5 for test alignment because its tests referenced rama-challenges.harness. This was an automatic penalty, not measured missing behaviour. Other penalties combine IPC counts, random task counts and worker setup with coverage.",
+      "impact": "A low score does not necessarily mean low coverage. Structural-alignment ratings have not been calibrated. A zero can mean either a missing reference or poor quality.",
+      "fix": "Score coverage, independence and runtime efficiency separately. Automate policy checks where possible and mark missing references unavailable. Ask a Rama expert to review anonymised implementations before relying on subjective scores.",
+      "validation": "Tests with identical behaviour coverage but different harness imports should receive the same coverage rating. Separately measure expert agreement on complexity ratings.",
+      "sources": [
+        ["scripts/run_challenges.bb", 951, 1010],
+        ["SCORING_RUBRIC.md", 3, 25]
+      ],
+      "runs": ["social-20260916"]
+    },
+    {
+      "id": "F04",
+      "priority": "P1",
+      "area": "Cost and retries",
+      "title": "Reported cost is neither full attempt cost nor a bill",
+      "status": "Gap in the code; no billing records recovered",
+      "observation": "Each transient retry saves a transcript, but run-phase! returns usage from only the final invocation. Totals sum these records, even when some costs are nil. Alignment grading calls are recorded separately from phase usage.",
+      "impact": "Missing retries, grading calls and usage can understate costs. Report estimates do not establish provider charges or remaining quota. Stopped attempts have no final totals.",
+      "fix": "Record usage for every solver, retry, judge and preflight call. Separate known subtotals, complete estimates, provider costs, invoices and quota records. Keep unknown values distinct from zero.",
+      "validation": "Use calls costing 2 and 3, followed by a call with unknown cost. Expect a known subtotal of 5 and an unavailable total. Include failed calls and retry delays in elapsed time.",
+      "sources": [
+        ["scripts/run_challenges.bb", 1248, 1333],
+        ["scripts/run_challenges.bb", 1795, 1804]
+      ],
+      "runs": ["auction-20260916", "A-url-01"]
+    },
+    {
+      "id": "F05",
+      "priority": "P1",
+      "area": "State and provenance",
+      "title": "Run records do not reliably link phases and source versions",
+      "status": "Gap in the code and historical evidence",
+      "observation": "Transcript names use timestamps rounded to seconds. results.edn lacks unique run IDs, prompt and source hashes, fast-model identity, and links to phase transcripts. Snapshot numbering counts existing files; gaps can cause overwrites. New runs delete earlier implementations.",
+      "impact": "Starts, code corrections, subsystem builds and infrastructure retries can be counted together despite measuring different things. This checkout lacks ignored implementations and reports stored outside the repository. Current HEAD does not identify historical run sources.",
+      "fix": "Assign unique run and invocation IDs before work and keep an append-only record. Record file hashes, both models, rubric, suite and CLI versions, uncommitted changes, isolation policy and artifact locations. Save each completed attempt before cleanup.",
+      "validation": "Test runs starting in the same second, gaps in snapshot numbering, interruption and restart. Check for unique IDs, no overwrites and report links to every invocation.",
+      "sources": [
+        ["scripts/run_challenges.bb", 545, 585],
+        ["scripts/run_challenges.bb", 1696, 1714],
+        ["scripts/run_challenges.bb", 2251, 2280],
+        ["scripts/save-attempt.sh", 30, 36]
+      ],
+      "runs": ["attack-20260916", "A-rate-01"]
+    },
+    {
+      "id": "F06",
+      "priority": "P1",
+      "area": "Isolation and contamination",
+      "title": "Encryption is not proof of solver isolation",
+      "status": "Current protection exists; historical evidence is incomplete",
+      "observation": "Isolated launches now allow only approved public files, reject symlinks and require bubblewrap. Encryption alone does not prove operating-system or network isolation. Owners reported encryption and prompt edits on 16 September, but we recovered no runtime isolation records. Owners reported isolated-network mode on 23 September.",
+      "impact": "Current protections do not establish how historical runs were isolated. No observed leak does not mean no contamination. Stops can interrupt cleanup, so keep stopped-run files separate from new runs.",
+      "fix": "Before each run, record visible paths and isolation policy. Test blocked file and network access with synthetic markers. Record cleanup and child-process termination after every exit. Keep evaluator exports outside solver-visible directories.",
+      "validation": "Try reading synthetic private files in sibling directories and history, and accessing blocked network destinations. Interrupt the process. Confirm blocked access, terminated children and recorded cleanup without using real private data.",
+      "sources": [
+        ["scripts/isolate_solver.py", 20, 104],
+        ["scripts/encrypt_challenges.bb", 34, 67],
+        ["scripts/run_challenges.bb", 1724, 1728]
+      ],
+      "runs": ["auction-20260916", "A-url-01", "B-url-01"]
+    },
+    {
+      "id": "F07",
+      "priority": "P1",
+      "area": "Execution contracts",
+      "title": "Private and judge subprocesses can outlive the phase budget",
+      "status": "Gap in the code",
+      "observation": "Private tests and alignment judges wait for processes without the time limits used for phases. Checking that Ran N tests reports a positive count prevents zero-test passes, but does not verify the expected suite ran.",
+      "impact": "A grader can hang indefinitely. Running only part of a suite may still count as a pass. IPC tests alone do not establish production behaviour during crashes, retries or scaling.",
+      "fix": "Set grader time limits and record timeouts, errors and tests not run separately. Record expected suite versions and discovered test names and counts without exposing test contents.",
+      "validation": "Test disposable commands that hang, exit successfully with zero tests, run part of a suite and complete normally. Check result classification and cleanup. Use separate fault-injection tests for production claims.",
+      "sources": [
+        ["scripts/run_challenges.bb", 895, 933],
+        ["scripts/run_challenges.bb", 994, 1035],
+        ["scripts/run_challenges.bb", 1080, 1094],
+        ["scripts/run_challenges.bb", 1775, 1790]
+      ]
+    },
+    {
+      "id": "F08",
+      "priority": "P1",
+      "area": "Judge validation",
+      "title": "Malformed QA judgments still produce scores",
+      "status": "Gap in the code; calibration evidence unavailable",
+      "observation": "QA grading warns about mismatched verdict counts but continues. It accepts strings starting YES and treats others as false. The scorer pairs claims and judgments; reports can omit unmatched claims or read beyond available claims. The default F1 threshold is 0.7. We found no calibration evidence from held-out examples.",
+      "impact": "Malformed judgments and how claims are split can change precision, recall and F1 without changing answer quality. We recovered no expert-labelled validation set or judge error estimates.",
+      "fix": "Reject mismatched counts, schemas and labels. Version the reviewed claims. Define one binary criterion per judgment, with an explanation before the verdict. Collect 20 Pass and 20 Fail training examples before writing a new judge; do not deploy it yet.",
+      "validation": "Test invalid labels, wrong judgment counts, and duplicated, negated or split claims. Collect about 100 expert labels, with separate training, development and test sets. Report true-positive and true-negative rates with uncertainty intervals. Do not rely on accuracy alone or correct for bias before calibration.",
+      "sources": [
+        ["scripts/qa_score.bb", 26, 125],
+        ["scripts/qa_extract.bb", 79, 118],
+        ["scripts/qa_report.bb", 32, 56]
+      ]
+    },
+    {
+      "id": "F09",
+      "priority": "P1",
+      "area": "Model comparisons",
+      "title": "This corpus cannot rank models",
+      "status": "Limit of the recovered evidence",
+      "observation": "The corpus includes 5 completed Claude runs and 4 local runner-failed records. All 4 A/B attempts stopped. Local Codex captures are linked to reports provisionally by challenge, model and filename stamp. Some prompts changed; source commits are unknown, and alignment scoring receives the candidate model. Challenges, budgets and subsystem counts also differ.",
+      "impact": "These records cannot support model win rates, confidence intervals or pass@k estimates. The 5 completed runs are not a random sample. The initial omissions show that thread discovery was incomplete. Repeated blocked starts are not independent trials.",
+      "fix": "Before an authorised benchmark, fix challenge, source, prompt, suite and judge versions. Pair challenges across models and use equal budgets. Set infrastructure retry and stopping rules in advance. Retain stopped and ineligible attempts in the attempt record, but exclude them from correctness estimates.",
+      "validation": "Compare paired results for each challenge. Resample at challenge level only with enough independent examples. Report included and excluded counts, missing data, cost completeness and how exclusions affect conclusions. Do not calculate a success rate from these 13 records.",
+      "sources": [
+        ["scripts/run_challenges.bb", 895, 905],
+        ["scripts/run_challenges.bb", 994, 1009],
+        ["scripts/run_challenges.bb", 2251, 2280]
+      ],
+      "runs": [
+        "A-url-01",
+        "B-url-01",
+        "A-rate-01",
+        "B-rate-01",
+        "bank-transfer-20260916",
+        "time-series-20260916"
+      ]
+    },
+    {
+      "id": "F10",
+      "priority": "P2",
+      "area": "Transcript analysis",
+      "title": "Transcript adapters have limited evidence from real runs",
+      "status": "Offline tests plus one Claude and 25 Codex phase captures",
+      "observation": "Adapters recognise Claude, Codex, Pi and OpenCode and remove duplicate snapshots. Unknown formats fall back to Claude; OpenClaw has no adapter. Codex cost may be absent, while cache-create defaults to zero. Overview labels infer subsystems from filenames, and phase selection can use file modification times.",
+      "impact": "An unsupported format can appear empty. Missing usage can appear measured. Recovered Codex captures lack event timestamps and build phases. One Claude final-review file and 25 Codex captures cannot validate every harness in production.",
+      "fix": "Record adapter versions, source indices and unsupported-event counts. Use recorded phase IDs rather than inferred filenames. Export only approved metadata: raw source_event retains sensitive content.",
+      "validation": "Test all 4 supported formats with duplicates, truncated files, malformed rows, missing usage and synthetic sensitive fields. Mark OpenClaw unsupported until a verified adapter exists.",
+      "sources": [
+        ["scripts/transcript_events.py", 39, 51],
+        ["scripts/transcript_events.py", 138, 224],
+        ["scripts/analyze-latest-transcript.py", 84, 123],
+        ["scripts/analyze-latest-transcript.py", 720, 797]
+      ]
+    },
+    {
+      "id": "F11",
+      "priority": "P2",
+      "area": "Public contracts",
+      "title": "Public tests cover only part of the backend contract",
+      "status": "Contract inspected; private content not audited",
+      "observation": "The public harness varies task counts and defines Synchronizable waiting. Event assertions match partial maps in order but allow extra events. Auction's :test runs implementation tests; :test-private adds hidden tests, while :test-private-harness also adds reference resources. Its protocol requires visibility within 5ms and expiration in production, beyond a generic IPC pass. We did not read or change private tests or references.",
+      "impact": "An ordered match can pass despite duplicate or extra events. Random topology changes help testing, but repeating them without a recorded seed is not reproducible.",
+      "fix": "Check event counts and forbid extra events where the public specification requires this. Preserve synchronisation guarantees and record topology seeds and configuration. Review private suite contents in a separate restricted evaluator process.",
+      "validation": "A synthetic duplicate event should fail an exactly-once requirement even when the expected sequence appears. Test waiting behaviour and varying task counts independently with public fixture modules.",
+      "sources": [
+        ["lib/harness/src/rama_challenges/harness.clj", 16, 72],
+        ["lib/harness/src/rama_challenges/event_assertions.clj", 34, 81],
+        ["challenges/auction-module/deps.edn", 1, 28],
+        ["challenges/auction-module/src/auction_module/protocol.clj", 1, 33]
+      ]
+    }
+  ],
+  "skills": [
+    {
+      "name": "evals-start",
+      "use": "Used to select eval-audit for the existing pipeline, and error-discovery and build-review-interface for reviewing artifacts."
+    },
+    {
+      "name": "eval-audit",
+      "use": "Applied all 6 diagnostic areas to public code, recovered reports, transcript coverage and calibration gaps. Findings separate confirmed defects, risks in the code and unknowns."
+    },
+    {
+      "name": "error-discovery",
+      "use": "Reviewed 13 records across completed, runner-failed and stopped attempts, using Claude, Codex and OpenCode. The user identified 2 runs missed by the initial search. Added event review and free-text notes. The proposed failure categories need human review; this sample does not establish that all failure types were found."
+    },
+    {
+      "name": "build-review-interface",
+      "use": "Built run and phase views, evidence files, comparison, Pass/Fail/Defer reviews, autosave, export and keyboard navigation. Excluded private references and hidden reasoning as requested."
+    },
+    {
+      "name": "write-judge-prompt",
+      "use": "Checked whether each rubric criterion measures one thing, alongside output schemas, example sources and rule-based alternatives. Proposed binary criteria. Writing a new judge requires human-labelled examples; no judge ran."
+    },
+    {
+      "name": "validate-evaluator",
+      "use": "Proposed separate calibration and test sets, true-positive and true-negative rates, disagreement review and uncertainty estimates. Calibration and bias correction require human labels and independent validation."
+    },
+    {
+      "name": "generate-synthetic-data",
+      "use": "Designed offline extraction fixtures across CLI format, completion state and sensitive-field location. These test the exporter, not model performance. No model-generated dataset or solver runs were produced. Domain examples need human review first."
+    },
+    {
+      "name": "evaluate-rag",
+      "use": "Checked applicability. The inspected QA pipeline scores claims against a corpus; we found no retrieval stage or query-to-chunk labels. Retrieval Recall@k and MRR do not apply. Answer-claim recall is a different measure."
+    }
+  ],
+  "adapters": [
+    {
+      "name": "Claude",
+      "state": "Offline fixture and one recovered phase transcript",
+      "limit": "Reasoning and tool contents are withheld. Historical isolation records may be missing."
+    },
+    {
+      "name": "Codex",
+      "state": "Offline fixture and 25 unique local phase captures",
+      "limit": "Native events have no timestamps. Report associations are provisional. Usage events are available, but transcript cost is absent; cache-create defaults to zero in the shared adapter."
+    },
+    {
+      "name": "OpenCode",
+      "state": "Offline fixture and 2 stopped-run owner reports",
+      "limit": "No stopped-run transcript transferred. Partial phases do not establish model performance."
+    },
+    {
+      "name": "Pi",
+      "state": "Offline fixture only",
+      "limit": "No real run recovered. The companion thread reports Pi is not installed, so runtime skill discovery remains unverified."
+    },
+    {
+      "name": "OpenClaw",
+      "state": "Unsupported",
+      "limit": "No adapter, launch contract or transcript recovered. Do not process this format as Claude."
+    }
+  ]
+}

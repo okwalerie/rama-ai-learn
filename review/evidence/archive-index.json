@@ -1,0 +1,872 @@
+{
+  "schema": 1,
+  "archives": [
+    {
+      "name": "sept15.tar.gz",
+      "sha256": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+      "compressed_bytes": 2462776,
+      "member_count": 32,
+      "uncompressed_bytes": 9484896,
+      "secret_marker_files": 0,
+      "policy": "No links, special files, traversal, duplicate paths or oversized members. Secret scan is heuristic; free text is withheld regardless."
+    },
+    {
+      "name": "sept16.tar.gz",
+      "sha256": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+      "compressed_bytes": 2273607,
+      "member_count": 36,
+      "uncompressed_bytes": 8028446,
+      "secret_marker_files": 0,
+      "policy": "No links, special files, traversal, duplicate paths or oversized members. Secret scan is heuristic; free text is withheld regardless."
+    }
+  ],
+  "files": [
+    {
+      "sha256": "c599ea68f65ae6ce2642def35e3d7398aa9d1c52c58d6d465eacdc9f9ec1336e",
+      "bytes": 1088,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "reports/2026-09-15-170023-codex-gpt-5.6-terra-high.md",
+          "mtime_utc": "2026-09-15T23:00:23+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "typed report",
+      "export": "archive-c599ea68f65ae6ce-metrics.json"
+    },
+    {
+      "sha256": "25e88fc436113b375599f694fa1fa2d3c75ea5fe60289d076a1ddc5191c1815a",
+      "bytes": 1848,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "reports/results.edn",
+          "mtime_utc": "2026-09-16T04:18:00+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "withheld document"
+    },
+    {
+      "sha256": "f27d501f5328a316b3f1884a1776216d1465a5ee054e47ae4a452391d483a7ce",
+      "bytes": 733,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "reports/2026-09-15-204704-codex-gpt-6-astra-medium.md",
+          "mtime_utc": "2026-09-16T02:47:04+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "typed report",
+      "export": "archive-f27d501f5328a316-metrics.json"
+    },
+    {
+      "sha256": "ddaa7a0a6851c4d30adb9a33f8c8ae2555aa6a89f07a476d71ba00c352b01009",
+      "bytes": 1117,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "reports/2026-09-15-213356-codex-gpt-6-astra-medium.md",
+          "mtime_utc": "2026-09-16T03:33:56+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "typed report",
+      "export": "archive-ddaa7a0a6851c4d3-metrics.json"
+    },
+    {
+      "sha256": "55038c4afd8f16ecce5d6815fc73fa874251f681b5c9e5a9e106bc691e71d160",
+      "bytes": 1127,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "reports/2026-09-15-221800-codex-gpt-6-astra-medium.md",
+          "mtime_utc": "2026-09-16T04:18:00+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "typed report",
+      "export": "archive-55038c4afd8f16ec-metrics.json"
+    },
+    {
+      "sha256": "17e779c6324f33cca2f861c8bff5e96187fc14bf96fa1ee82772d41afc361e0e",
+      "bytes": 69212,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-162909-codex-gpt-5.6-terra-high-bank-transfer-module-phase0.jsonl",
+          "mtime_utc": "2026-09-15T22:31:08+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-17e779c6324f33cc-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 15,
+      "normalized_event_count": 31,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "567d092a98078979ca8ac6f6191db4698dfa3bdd42c58e8319fb85ef081650c6",
+      "bytes": 131135,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-162909-codex-gpt-5.6-terra-high-bank-transfer-module-phasedecompose.jsonl",
+          "mtime_utc": "2026-09-15T22:32:35+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-567d092a98078979-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 15,
+      "normalized_event_count": 30,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "8547a83ef0eca70faae66862e118ccbdbcbc7995dfa9e53da6620ec871c453c3",
+      "bytes": 351638,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-162909-codex-gpt-5.6-terra-high-bank-transfer-module-phase1.jsonl",
+          "mtime_utc": "2026-09-15T22:36:29+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-8547a83ef0eca70f-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 23,
+      "normalized_event_count": 43,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "e0a49b1f60662060e1a2672c8e1e18600798526262b1a023d1b9f661995a9ad1",
+      "bytes": 281158,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-162909-codex-gpt-5.6-terra-high-bank-transfer-module-phase2.jsonl",
+          "mtime_utc": "2026-09-15T22:42:33+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-e0a49b1f60662060-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 23,
+      "normalized_event_count": 46,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "052c0f0cac3967f3950c57eb625687f28161c93547a345714c87983649624218",
+      "bytes": 1074353,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-162909-codex-gpt-5.6-luna-medium-bank-transfer-module-phasebuild.jsonl",
+          "mtime_utc": "2026-09-15T23:00:04+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-052c0f0cac3967f3-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 154,
+      "normalized_event_count": 256,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "416ace60720463b7e2285ceeac70db676901fd0089c6dc34841a0613b11059f8",
+      "bytes": 110301,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase0.jsonl",
+          "mtime_utc": "2026-09-16T02:51:13+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase0.jsonl",
+          "mtime_utc": "2026-09-16T02:51:13+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcript.jsonl",
+          "mtime_utc": "2026-09-16T02:51:13+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-416ace60720463b7-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 20,
+      "normalized_event_count": 35,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "1363246b97d9e68a7389b54a68ffde04a0b089b5c2c035daaf60bc03858e7038",
+      "bytes": 104236,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phasedecompose.jsonl",
+          "mtime_utc": "2026-09-16T02:52:01+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phasedecompose.jsonl",
+          "mtime_utc": "2026-09-16T02:52:01+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-1363246b97d9e68a-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 17,
+      "normalized_event_count": 31,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "388dc45d67074604786f6961a59acc04d58d4b00e34233cd9ad842bb28dc66dc",
+      "bytes": 459059,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase1.jsonl",
+          "mtime_utc": "2026-09-16T02:59:32+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase1.jsonl",
+          "mtime_utc": "2026-09-16T02:59:32+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-388dc45d67074604-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 36,
+      "normalized_event_count": 61,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "1126ecdd47da601cc8c907aa288165767e5d6ebc3ced722fb6f5a3613b488de3",
+      "bytes": 318116,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase2.jsonl",
+          "mtime_utc": "2026-09-16T03:04:42+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase2.jsonl",
+          "mtime_utc": "2026-09-16T03:04:42+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-1126ecdd47da601c-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 22,
+      "normalized_event_count": 42,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "3bc3cefed5f058a12c3f134bff6c7ca432ae8df343016bb50122af093151186a",
+      "bytes": 635494,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase1-attempt2.jsonl",
+          "mtime_utc": "2026-09-16T03:13:23+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase1-attempt2.jsonl",
+          "mtime_utc": "2026-09-16T03:13:23+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-3bc3cefed5f058a1-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 40,
+      "normalized_event_count": 68,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "c4029b1d1bdabe74d806a3c16ec0cf6e1ad6614e68fe3ff7fd896789e1055ba3",
+      "bytes": 353657,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase2-attempt2.jsonl",
+          "mtime_utc": "2026-09-16T03:17:27+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase2-attempt2.jsonl",
+          "mtime_utc": "2026-09-16T03:17:27+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-c4029b1d1bdabe74-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 26,
+      "normalized_event_count": 46,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "4e2f182f302841bf2467140466cd74b6e115158a896019ffc37afe91a9ee2900",
+      "bytes": 545689,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase1-attempt3.jsonl",
+          "mtime_utc": "2026-09-16T03:20:59+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase1-attempt3.jsonl",
+          "mtime_utc": "2026-09-16T03:20:59+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-4e2f182f302841bf-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 44,
+      "normalized_event_count": 73,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "103911ae57966ee74139836118a792a157a273081802b499b4989edfd26b1222",
+      "bytes": 426757,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase2-attempt3.jsonl",
+          "mtime_utc": "2026-09-16T03:23:46+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase2-attempt3.jsonl",
+          "mtime_utc": "2026-09-16T03:23:46+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-103911ae57966ee7-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 26,
+      "normalized_event_count": 45,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "4c75ecf4d627a053e2f683f68f2c7b87986669f33ae1fec864f49b73105076ac",
+      "bytes": 582985,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase1-attempt4.jsonl",
+          "mtime_utc": "2026-09-16T03:30:46+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase1-attempt4.jsonl",
+          "mtime_utc": "2026-09-16T03:30:46+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-4c75ecf4d627a053-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 46,
+      "normalized_event_count": 76,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "48f6a79b825ecc965dcd637a051ad9df05ffad642df15711da5a49d893f22f6d",
+      "bytes": 425269,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase2-attempt4.jsonl",
+          "mtime_utc": "2026-09-16T03:33:48+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-204850-codex-gpt-6-astra-medium-bank-transfer-module-phase2-attempt4.jsonl",
+          "mtime_utc": "2026-09-16T03:33:48+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-48f6a79b825ecc96-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 28,
+      "normalized_event_count": 49,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "6bcb701412a6c33c5130dbcc92e2fa57a8d4fbe7960ed38de3bba9b2d790e65b",
+      "bytes": 119113,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase0.jsonl",
+          "mtime_utc": "2026-09-16T03:36:30+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase0.jsonl",
+          "mtime_utc": "2026-09-16T03:36:30+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-6bcb701412a6c33c-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 18,
+      "normalized_event_count": 33,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "079453dab7cc303b3e0d2e105c065c110d34588eb95ff0456cd67eb8d52f1b39",
+      "bytes": 97631,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phasedecompose.jsonl",
+          "mtime_utc": "2026-09-16T03:37:36+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phasedecompose.jsonl",
+          "mtime_utc": "2026-09-16T03:37:36+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-079453dab7cc303b-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 19,
+      "normalized_event_count": 34,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "6424a3ccf9501f914270a72470d8db2ee3577671b00d21273945611cfc4f9544",
+      "bytes": 338346,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase1.jsonl",
+          "mtime_utc": "2026-09-16T03:43:27+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase1.jsonl",
+          "mtime_utc": "2026-09-16T03:43:27+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-6424a3ccf9501f91-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 26,
+      "normalized_event_count": 46,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "b1fd966669df3a0fc8164676622e9229930a63d5ff2dd7baff1f2bc84b405839",
+      "bytes": 273768,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase2.jsonl",
+          "mtime_utc": "2026-09-16T03:48:28+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase2.jsonl",
+          "mtime_utc": "2026-09-16T03:48:28+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-b1fd966669df3a0f-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 26,
+      "normalized_event_count": 45,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "8bf1858acc6d95d7c74f3bc0e69df0c34720892ffaf36d51e0cc7a506f6ffd92",
+      "bytes": 504100,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase1-attempt2.jsonl",
+          "mtime_utc": "2026-09-16T03:56:21+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase1-attempt2.jsonl",
+          "mtime_utc": "2026-09-16T03:56:21+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-8bf1858acc6d95d7-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 30,
+      "normalized_event_count": 52,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "61abcc03aa8cb9e9818a94d7ee9dea2b5927539682e6d389c97c4c4109bd338a",
+      "bytes": 405484,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase2-attempt2.jsonl",
+          "mtime_utc": "2026-09-16T04:01:58+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase2-attempt2.jsonl",
+          "mtime_utc": "2026-09-16T04:01:58+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-61abcc03aa8cb9e9-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 34,
+      "normalized_event_count": 57,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "bb6d2e48b500d6dd5f5cc1d170063c23dcefa04b959617414430989574576d98",
+      "bytes": 621365,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase1-attempt3.jsonl",
+          "mtime_utc": "2026-09-16T04:08:50+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase1-attempt3.jsonl",
+          "mtime_utc": "2026-09-16T04:08:50+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-bb6d2e48b500d6dd-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 38,
+      "normalized_event_count": 65,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "1761762f919e8db70f4d48b5c5b3e5960c7604777c5c049e52184625459f5e6c",
+      "bytes": 442690,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase2-attempt3.jsonl",
+          "mtime_utc": "2026-09-16T04:15:21+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase2-attempt3.jsonl",
+          "mtime_utc": "2026-09-16T04:15:21+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-1761762f919e8db7-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 28,
+      "normalized_event_count": 49,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "ce9277da5eeb3ef8c866ade3acc115ca17605aaab3a8e213925af990da3b3166",
+      "bytes": 368815,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase1-attempt4.jsonl",
+          "mtime_utc": "2026-09-16T04:16:14+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase1-attempt4.jsonl",
+          "mtime_utc": "2026-09-16T04:16:14+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-ce9277da5eeb3ef8-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 21,
+      "normalized_event_count": 37,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "7d6bd79df3606eb824113340d95f04d3452fc5ed4b6e1e005a51333ccd67086b",
+      "bytes": 438612,
+      "origins": [
+        {
+          "archive": "74655304f76591553fd4f69f646462b0301f72c39b98d0843ab88f7d76291334",
+          "path": "transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase2-attempt4.jsonl",
+          "mtime_utc": "2026-09-16T04:17:53+00:00"
+        },
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "latest-transcripts/2026-09-15-213400-codex-gpt-6-astra-medium-time-series-module-hard-phase2-attempt4.jsonl",
+          "mtime_utc": "2026-09-16T04:17:53+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "metadata-only transcript",
+      "export": "archive-7d6bd79df3606eb8-events.json",
+      "format": "codex",
+      "malformed_lines": 0,
+      "ends_with_newline": true,
+      "event_count": 30,
+      "normalized_event_count": 51,
+      "first_time": null,
+      "last_time": null
+    },
+    {
+      "sha256": "b6fbf057be5bd8b569d93aba2c66d21637000a78259b5f9ecfd64fceaabc710f",
+      "bytes": 32686,
+      "origins": [
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "implementations/bank-transfer-module/REASONING.md",
+          "mtime_utc": "2026-09-16T03:33:43+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "withheld document"
+    },
+    {
+      "sha256": "3e0eb702fcaf162ed5eb9dd0d588bda59fe75239974743564c2f06500f5563e8",
+      "bytes": 15488,
+      "origins": [
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "implementations/bank-transfer-module/IMPLICIT_SPEC.md",
+          "mtime_utc": "2026-09-16T02:50:56+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "withheld document"
+    },
+    {
+      "sha256": "eea81e87d73fcca57f4c9e8640841ec676e7b603783e6c20359802577baffd0a",
+      "bytes": 73,
+      "origins": [
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "implementations/bank-transfer-module/DECOMPOSITION.json",
+          "mtime_utc": "2026-09-16T02:51:54+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "withheld document"
+    },
+    {
+      "sha256": "12f3884267946ec3e5e08181125eb9e559a7025f02a9c965f14b800a8a8076bb",
+      "bytes": 55690,
+      "origins": [
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "implementations/bank-transfer-module/PLAN.md",
+          "mtime_utc": "2026-09-16T03:30:41+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "withheld document"
+    },
+    {
+      "sha256": "7703f47e4f51013788a822dbb077bc85eaee82d6f6d69a7c9a7e279d23c5529a",
+      "bytes": 56978,
+      "origins": [
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "implementations/bank-transfer-module/PLAN_VALIDATION.md",
+          "mtime_utc": "2026-09-16T03:33:19+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "withheld document"
+    },
+    {
+      "sha256": "a4c8b5e815a909b236728a1f141d57568e20a298c1cdc4184c1df3c34cab4a9c",
+      "bytes": 29799,
+      "origins": [
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "implementations/time-series-module-hard/REASONING.md",
+          "mtime_utc": "2026-09-16T04:17:47+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "withheld document"
+    },
+    {
+      "sha256": "93db7a5cbab3bfeee12401fb5f7ee994ddae190159048796508ab3b1f0a05d3e",
+      "bytes": 12986,
+      "origins": [
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "implementations/time-series-module-hard/IMPLICIT_SPEC.md",
+          "mtime_utc": "2026-09-16T03:36:09+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "withheld document"
+    },
+    {
+      "sha256": "b35cc8e957565eebfc3eb4e27b5657c604639d725c2ad004db3c75f1270b0443",
+      "bytes": 311,
+      "origins": [
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "implementations/time-series-module-hard/DECOMPOSITION.json",
+          "mtime_utc": "2026-09-16T03:37:30+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "withheld document"
+    },
+    {
+      "sha256": "cf1fca974fab42defa01d0432d636119c66e58389a0ca0fc98572a94f70f9e62",
+      "bytes": 54107,
+      "origins": [
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "implementations/time-series-module-hard/PLAN.md",
+          "mtime_utc": "2026-09-16T04:16:04+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "withheld document"
+    },
+    {
+      "sha256": "49e1ab998214caeb7298d7161e10004850fe8f6eee4e37f75990b51ccebefc9f",
+      "bytes": 72214,
+      "origins": [
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "implementations/time-series-module-hard/PLAN_VALIDATION.md",
+          "mtime_utc": "2026-09-16T04:17:47+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "withheld document"
+    },
+    {
+      "sha256": "b40e7569c298cc363488bd6f5b7ac0ad74d172b3061ac97685a9be06e3bda56f",
+      "bytes": 16326,
+      "origins": [
+        {
+          "archive": "18784515ecd650cf8adfb38dfe37ef26d3cb6e49032d70f9112fe944e6e2c95a",
+          "path": "amp-orbs-report.md",
+          "mtime_utc": "2026-09-24T02:20:25+00:00"
+        }
+      ],
+      "secret_marker_detected": false,
+      "disposition": "withheld document"
+    }
+  ],
+  "counts": {
+    "file_occurrences": 62,
+    "unique_files": 41,
+    "duplicate_occurrences": 21
+  }
+}

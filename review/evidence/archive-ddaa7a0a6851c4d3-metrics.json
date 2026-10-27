@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "sha256": "ddaa7a0a6851c4d30adb9a33f8c8ae2555aa6a89f07a476d71ba00c352b01009",
+  "bytes": 1117,
+  "rows": [
+    {
+      "challenge": "bank-transfer-module",
+      "Status": "FAIL",
+      "Private": "FAIL",
+      "Score": 0.0,
+      "Iterations": 1.0,
+      "Duration": 2693.0,
+      "In Tokens": 8553114.0,
+      "Out Tokens": 82096.0,
+      "Cache Create": 0.0,
+      "Cache Read": 7636608.0,
+      "Tool Uses": 142.0,
+      "Cost": 97.2725,
+      "Align": null,
+      "TestAlign": null
+    }
+  ]
+}
