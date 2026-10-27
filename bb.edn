@@ -72,6 +72,10 @@
   {:doc "Run error-catalog tests to verify Rama troubleshooting signals"
    :task (shell {:dir "lib/error-catalog"} "clojure" "-X:test")}
 
+  lint-references
+  {:doc "Lint challenge reference impls with the Rama clj-kondo hooks (bundled in the Rama jar)"
+   :task (do (load-file "scripts/lint_references.bb") ((resolve '-main) *command-line-args*))}
+
   error-diagnostics
   {:doc "Report line-info quality for each cataloged Rama error"
    :task (shell {:dir "lib/error-catalog"} "clojure" "-M" "-m" "error-catalog.diagnostics")}

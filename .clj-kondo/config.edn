@@ -1,1 +1,11 @@
-{:lint-as {rama-challenges.harness/with-module clojure.core/with-open}}
+{:lint-as {rama-challenges.harness/with-module clojure.core/with-open}
+ ;; Public com.rpl.rama vars missing from the bundled Rama hooks
+ ;; (rama-clj-kondo e4ffcf7 / Rama 1.9.0); remove once upstream covers them.
+ :linters {:unresolved-symbol
+           {:exclude [set-launch-depot-dynamic-option!
+                      set-launch-topology-dynamic-option!
+                      set-launch-module-dynamic-option!
+                      set-launch-pstate-dynamic-option!
+                      foreign-object-info
+                      foreign-depot-partition-info
+                      migrated]}}}
