@@ -2,13 +2,13 @@
 
 <!-- Phase 1 Step 6. Fill in after PLAN.md is complete. After all items pass, write the file skeleton (Step 7), then implement topologies (Phase 2), then foreign client (Phase 3), then fill in IMPLEMENTATION_VALIDATION.md (Phase 4). -->
 
-Read `PLAN.md` first, then fill in each item below. Extract the relevant data from the plan and state pass or fail with evidence. If any item fails, fix `PLAN.md` and re-validate.
+Read `PLAN.md` first, then fill in each item below. Extract the relevant data from the plan and state PASS, FAIL or N/A with evidence. A check whose premise doesn't apply to this plan, or that concerns a property only another subsystem can provide, is N/A. Every FAIL gets a reason code from `phase-2-plan-validate.md` (`SPEC`, `PRINCIPLE`, `IMPLICIT`, `OPEN-Q`), and the `## Failures` table at the end lists them all. If any item fails, fix `PLAN.md` and re-validate.
 
 ## Query topology: <name>
 - Input examples present: <yes/no>
-- Example 1: N=<total reads>, M=<meaningful reads>. N == M? <yes/no>
+- Example 1: N=<total reads>, M=<meaningful reads, counting a lookup whose "not found" decides the answer as meaningful>. N == M? <yes/no>
 - Example 2: N=<total reads>, M=<meaningful reads>. N == M? <yes/no>
-- If any N > M: FAIL — query issues wasted reads. Fix the plan.
+- If any N > M: could the query have known before issuing each extra read that it would contribute nothing (padding to a fixed count, probing partitions that can't hold the key)? <if yes, FAIL (PRINCIPLE) — query issues avoidable wasted reads. If the extra read is a lookup no design can avoid, it is meaningful: recount M.>
 - M values across examples: <list>. All same? <yes/no>
 - If M differs: must be marked variable with dynamic approach. Is it? <yes/no>
 
@@ -103,7 +103,7 @@ Rules:
 
 ## Spec coverage — trace every operation and constraint
 
-Enumerate every operation in the protocol/spec AND every constraint, prohibition, invariant, and edge case from the spec and `IMPLICIT_SPEC.md`. For each one, fill in a block below. Do NOT collapse multiple items into one block. Do NOT replace any block with a single-bullet "covered" claim — that bypasses the check.
+Enumerate every operation in the protocol/spec AND every constraint, prohibition, invariant, and edge case from the spec and `IMPLICIT_SPEC.md`. Label each one's source: a FAIL against an `IMPLICIT_SPEC.md` inference is `IMPLICIT` and at most a minor-fail. For each one, fill in a block below. Do NOT collapse multiple items into one block. Do NOT replace any block with a single-bullet "covered" claim — that bypasses the check.
 
 For each operation and each constraint:
 
@@ -119,9 +119,15 @@ For each operation and each constraint:
   - Events arriving out of order at a partition due to partitioner hops
 - **Flaws found**: list every way the trace, fault-tolerance, or race analysis shows the plan failing to satisfy the source. If none, write "none found, with reasoning: <reasoning>".
 - **Verdict**: PASS | FAIL
-- **If FAIL**: the specific plan change required.
+- **If FAIL**: the reason code, and the specific plan change required.
 
 ### Anti-patterns that must FAIL this section
 
 - Skipping the fault-tolerance check because "the spec doesn't mention it." Worker restart and retry are always in scope; the plan must hold under them.
 - Skipping the race-condition check because "tests are single-threaded." Production has concurrent clients; the plan must hold under them.
+
+## Failures
+
+| Check | Reason code | Severity | Requirement (quoted) or rule (named) | PLAN.md line |
+|---|---|---|---|---|
+| <one row per FAIL, or `none`> | | | | |
