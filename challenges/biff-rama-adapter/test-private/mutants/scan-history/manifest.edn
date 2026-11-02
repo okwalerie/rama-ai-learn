@@ -1,0 +1,6 @@
+{:id "scan-history"
+ :challenge "biff-rama-adapter"
+ :targets-nfr "entity read cost independent of history length"
+ :wrong-design "Keeps the versioned layout but reads an entity by iterating every version at or below the basis instead of seeking the newest one."
+ :expected :killed
+ :functional-preserved? true}

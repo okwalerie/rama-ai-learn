@@ -67,3 +67,6 @@
 - top-users-module
 - rest-api-integration-module
 - music-catalog-migration
+
+## Batch 11: Framework Integrations
+- biff-rama-adapter

@@ -1,0 +1,6 @@
+{:id "serial-writes"
+ :challenge "biff-rama-adapter"
+ :targets-nfr "concurrent transactions share commits"
+ :wrong-design "Serializes every transact call behind one client-side lock, so each transaction waits for its own microbatch round trip and concurrent writers queue."
+ :expected :killed
+ :functional-preserved? true}
