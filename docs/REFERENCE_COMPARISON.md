@@ -94,6 +94,59 @@ Design notes:
   reference uses 2 depots. The probe found no ordering failure (40 of 40
   deposit-then-transfer pairs succeeded), so this is a style difference here
 
+### One PState or three
+
+The PState split is not just style. The reference keeps 3 PStates keyed by
+user id on the same partitioning: `$$funds`, `$$outgoing-transfers` and
+`$$incoming-transfers`. The Rama skill says to merge data that shares a key and
+a partitioner into one PState with a `fixed-keys-schema`, because every PState
+partition costs memory on every task (`references/phase-1-plan.md`). The 3
+agent solutions follow that rule with one accounts record. The reference does
+not. We think Marz split them for teaching clarity, one PState per client read
+(guess).
+
+What each design gains or loses:
+
+- reads cost the same. In one record the histories are subindexed fields,
+  stored apart from the balance, so reading the balance does not load them
+  (inferred)
+- atomicity is the same. Both write in one microbatch, so all 3 PStates commit
+  together (inferred from Rama semantics)
+- the split costs some memory on every task and buys nothing in this contract
+  (inferred, not measured)
+- the split lets different topologies own different pieces. A PState has one
+  owning topology, so balances could stay in a microbatch topology while
+  history is written by a stream topology. One record forces one owner. This
+  contract does not need that, but a larger system might (inferred)
+- separate PStates can be migrated or dropped on their own. A change to one
+  record's schema touches the whole value (inferred)
+
+### Swapping one implementation for another
+
+All 4 implementations provide the same protocol through `create-module` and
+`:wrap-client`. The test suites already swap them, so a caller that only uses
+the protocol can switch implementation (measured). Behaviour still differs at
+the edges: the reference accepts a −50 transfer and most agent solutions
+reject it (measured, see the probes below).
+
+Inside Rama they do not swap (inferred):
+
+- another module would read them through mirrors, which name specific depots
+  and PStates. A module that mirrors the reference's `$$funds` or
+  `*transfer-depot` breaks against an agent module with `$$accounts` and one
+  events depot
+- depot records differ in shape: a `Deposit` record in the reference, event
+  maps in the agent solutions
+- moving live data means a migration. A new module's PStates start empty, so
+  it would need to rebuild state from the old depots' history through an
+  adapter for the old record shapes. That assumes the depots still hold their
+  full history. We have not checked how to start a topology from the beginning
+  of a mirrored depot
+
+To keep implementations swappable, make the protocol the only point of
+contact. Anything that mirrors a module's internals is tied to that
+implementation.
+
 ## Side by side: auction-module
 
 The contract: listings, bids that only replace a bidder's lower bid, expiry
