@@ -16,6 +16,9 @@ reference as one more contestant and scores both against the same rubric,
 - Agent code is longer (1.0 to 1.5 times the lines in the 3 hand-read
   challenges) and puts test-only synchronisation state inside the production
   module. The references do not.
+- Agents use Specter paths correctly and with more navigators than the
+  references, but none puts a condition inside a path (`selected?`, `pred<`).
+  They read, branch and write instead.
 - The references are teaching code. They are compact, idiomatic and correct on
   the happy path. They skip validation, and two of them keep dead or lossy
   state. Treat them as a design baseline, not as a correctness baseline.
@@ -289,6 +292,77 @@ Stream topologies retry from the failure point, so a retry can append the same
 post twice. All 4 passing agent solutions write posts in a microbatch
 topology, or as keyed writes. This code is unchanged from the book.
 
+## Specter path usage
+
+Rama reads and writes PStates through Specter paths. We counted the
+navigators in all 44 passing agent modules and the 8 references with
+`scripts/specter_usage.bb`, then read the outliers by hand.
+
+The agents use Specter correctly and more broadly than the references. We
+found no path that gives a wrong result. The gap is in style: agents rarely
+put a decision inside a path.
+
+### Navigator adoption
+
+Files that use each navigator at least once (measured):
+
+| Navigator | Agent modules (44) | References (8) |
+|---|---|---|
+| `nil->val` | 19 | 2 |
+| `multi-path` | 16 | 2 |
+| `view` | 16 | 3 |
+| `term` | 16 | 0 |
+| `subselect` | 12 | 1 |
+| `NONE-ELEM` | 10 | 3 |
+| `sorted-set-range-from` | 9 | 1 |
+| `sorted-map-range` | 8 | 1 |
+| `submap` | 8 | 0 |
+| `AFTER-ELEM` | 6 | 2 |
+| `if-path` | 2 | 0 |
+| `selected?` | 0 | 1 |
+| `pred<` | 0 | 1 |
+| `filterer` | 0 | 0 |
+| `{:allow-yield? true}` | 24 | 2 |
+
+Most of the extra breadth follows from the agents' larger designs, such as
+range reads over the progress state they add for tests. It is not evidence of
+better path design on its own.
+
+### What the agents do well
+
+- every module reads through `keypath` to the value it needs. None loads a
+  whole PState value and searches it in Clojure (measured by count, checked by
+  reading the outliers)
+- counters use `(term inc)` with no separate read, which is the cheaper write
+  (measured: 6 sites)
+- range queries use the sorted range navigators, as the references do. All 6
+  time-series solutions read the same way as the reference (measured)
+- about half of agent modules mark large reads `{:allow-yield? true}`, against
+  2 of 8 references (measured)
+
+### Where the agents fall short
+
+No agent module uses `selected?`, `pred<` or `filterer`, and only 2 use
+`if-path` (measured). Agents read a value, branch with `<<if`, then write.
+The auction reference keeps the highest bid with one transform:
+`(selected? :amount (nil->val 0) (pred< *amount))`. The agent pattern costs an
+extra navigation and more code. We do not think it changes results (inferred).
+
+5 of 6 profile-module agents read the whole profile, merge the edits in
+Clojure and write the whole map back (measured). The reference writes each
+field with `(keypath *user-id *field)`. The profile is one non-subindexed
+value, so both cost one read and one write (inferred). The cost is code: agent
+modules are 79 to 175 lines against the reference's 40.
+
+Some `(view count)` calls count test-plumbing state. Two scan a whole
+partition: `fanout-opus-medium-build-haiku-medium-orb` line 542 and
+`fanout-opus-low-20261028-relaxed` line 360 (measured). That work is off the
+request path, but it is the same plumbing noted earlier.
+
+A static judge for this would look for a read, an `<<if` and a write to the
+same key, where one transform with a path condition would do. We have not
+built it.
+
 ## Are the references good?
 
 Labels: measured means we ran something and saw it. Inferred means we read the
@@ -363,6 +437,13 @@ Judge a module:
 
 ```bash
 bb scripts/static_judges.bb REF:bank=challenges/bank-transfer-module/test-resources/bank_transfer_module/module.clj
+```
+
+Count Specter navigators, or summarise adoption across files whose labels
+start `REF` and the rest:
+
+```bash
+bb scripts/specter_usage.bb --adoption REF:bank=challenges/bank-transfer-module/test-resources/bank_transfer_module/module.clj
 ```
 
 Run the bank-transfer probes against the reference:
