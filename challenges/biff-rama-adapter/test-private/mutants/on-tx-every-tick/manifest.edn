@@ -1,0 +1,6 @@
+{:id "on-tx-every-tick"
+ :challenge "biff-rama-adapter"
+ :targets-nfr "on-tx fires only after transactions"
+ :wrong-design "Publishes the visible basis on every microbatch, including empty ticks, so every node's on-tx fires continuously while no transactions happen."
+ :expected :killed
+ :functional-preserved? true}

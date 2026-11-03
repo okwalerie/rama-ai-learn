@@ -1,0 +1,6 @@
+{:id "stream-latest-only"
+ :challenge "biff-rama-adapter"
+ :targets-nfr "atomic multi-partition transactions and snapshot reads"
+ :wrong-design "Applies each transaction in an acked stream topology that overwrites one latest value per entity, with no versions, so wrap-db-snapshot cannot pin a state and readers can see one task's writes before another's."
+ :expected :killed
+ :functional-preserved? :unverified}

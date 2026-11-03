@@ -165,7 +165,7 @@ Phases 2, build, and full-spec-review emit verdicts as the LAST non-empty line o
   ```
 - **full-spec-review** — binary verdict reflecting whether the whole module + test suite satisfies the whole spec (default fail). This is a single session that reviews AND fixes, looping until it finds nothing new; there is no separate fix invocation and no round cap. `pass` means a full pass found nothing and the suite is green.
 
-Default to FAIL (or `major-fail` for phases 2, 4, and 6). PASS only after the criteria in the per-phase doc are met.
+Default to FAIL (or `major-fail` for phases 4 and 6). PASS only after the criteria in the per-phase doc are met. Phase 2 has no default verdict: `phase-2-plan-validate.md` says when each verdict applies.
 
 Other phases (0, decompose, 1) do not emit a verdict — the runner moves on once the output artifact exists.
 
