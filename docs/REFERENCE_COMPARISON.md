@@ -16,10 +16,9 @@ reference as one more contestant and scores both against the same rubric,
 - Agent code is longer (1.0 to 1.5 times the lines in the 3 hand-read
   challenges) and puts test-only synchronisation state inside the production
   module. The references do not.
-- Agents use Specter paths correctly and with more navigators than the
-  references. Only 2 of 44 put a condition inside a path, and none uses
-  `selected?` or `pred<`.
-  They read, branch and write instead.
+- Agents use paths correctly and with more navigators than the references.
+  Only 2 of 44 put a condition inside a path, and none uses `selected?` or
+  `pred<`. They read, branch and write instead.
 - The references are teaching code. They are compact, idiomatic and correct on
   the happy path. They skip validation, and two of them keep dead or lossy
   state. Treat them as a design baseline, not as a correctness baseline.
@@ -293,13 +292,16 @@ Stream topologies retry from the failure point, so a retry can append the same
 post twice. All 4 passing agent solutions write posts in a microbatch
 topology, or as keyed writes. This code is unchanged from the book.
 
-## Specter path usage
+## Path usage
 
-Rama reads and writes PStates through Specter paths. We counted the
-navigators in all 44 passing agent modules and the 8 references with
-`scripts/specter_usage.bb`, then read the outliers by hand.
+Paths work the same way in all 3 places a module uses them: on plain Clojure
+data, on PStates in dataflow (`local-select>`, `local-transform>`), and on
+PStates from a client (`foreign-select`). So we treat path usage as one
+question. We counted the navigators in every context, in all 44 passing agent
+modules and the 8 references, with `scripts/path_usage.bb`. Then we read the
+outliers by hand.
 
-The agents use Specter correctly and more broadly than the references. We
+The agents use paths correctly and more broadly than the references. We
 found no path that gives a wrong result. The gap is in style: agents rarely
 put a decision inside a path.
 
@@ -440,11 +442,11 @@ Judge a module:
 bb scripts/static_judges.bb REF:bank=challenges/bank-transfer-module/test-resources/bank_transfer_module/module.clj
 ```
 
-Count Specter navigators, or summarise adoption across files whose labels
+Count path navigators, or summarise adoption across files whose labels
 start `REF` and the rest:
 
 ```bash
-bb scripts/specter_usage.bb --adoption REF:bank=challenges/bank-transfer-module/test-resources/bank_transfer_module/module.clj
+bb scripts/path_usage.bb --adoption REF:bank=challenges/bank-transfer-module/test-resources/bank_transfer_module/module.clj
 ```
 
 Run the bank-transfer probes against the reference:

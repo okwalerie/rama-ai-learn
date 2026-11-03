@@ -1,9 +1,10 @@
 #!/usr/bin/env bb
-;; Counts Specter path usage in Rama module files.
+;; Counts path usage in Rama module files, in every context: plain Clojure
+;; data, PStates in dataflow and PStates from a client.
 ;;
 ;; Usage, from the repo root:
-;;   bb scripts/specter_usage.bb <label>=<module.clj> ...
-;;   bb scripts/specter_usage.bb --adoption <label>=<module.clj> ...
+;;   bb scripts/path_usage.bb <label>=<module.clj> ...
+;;   bb scripts/path_usage.bb --adoption <label>=<module.clj> ...
 ;;
 ;; Prints one EDN map per file: line count, path operations (local-select>,
 ;; local-transform>, foreign-select and so on), navigator frequencies, calls to
