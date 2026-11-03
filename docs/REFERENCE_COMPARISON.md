@@ -17,7 +17,8 @@ reference as one more contestant and scores both against the same rubric,
   challenges) and puts test-only synchronisation state inside the production
   module. The references do not.
 - Agents use Specter paths correctly and with more navigators than the
-  references, but none puts a condition inside a path (`selected?`, `pred<`).
+  references. Only 2 of 44 put a condition inside a path, and none uses
+  `selected?` or `pred<`.
   They read, branch and write instead.
 - The references are teaching code. They are compact, idiomatic and correct on
   the happy path. They skip validation, and two of them keep dead or lossy
